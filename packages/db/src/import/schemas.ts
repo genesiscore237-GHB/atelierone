@@ -20,14 +20,13 @@ import {
  * Chaque fichier contient UNE entité, sous forme de tableau JSON (array) ou JSONL (1 objet par ligne).
  */
 
-export const TYPE_PRODUIT = ["MANUEL", "FOURNITURE"] as const;
+export const TYPE_PRODUIT = ["PIECE", "SERVICE"] as const;
 export const STATUT_CYCLE_VIE = ["ACTIF", "BROUILLON", "SUSPENDU", "DISCONTINUE", "ARCHIVE"] as const;
 export const STATUT_PRODUIT = ["actif", "inactif", "rupture", "a_commander", "bloque", "suspendu", "archive"] as const;
-export const TYPE_BRANCHE = ["MANUEL", "FOURNITURE", "SERVICE", "AUTRE"] as const;
+export const TYPE_BRANCHE = ["PIECE", "SERVICE", "AUTRE"] as const;
 export const TYPE_UNITE = ["QUANTITE", "POIDS", "LONGUEUR", "SURFACE", "VOLUME", "TEMPS"] as const;
 export const TYPE_TARIF = ["PUBLIC", "ECOLE", "GROSSISTE", "REVENDEUR", "PROMO"] as const;
 export const TYPE_PRIX_HISTORIQUE = ["VENTE", "ACHAT", "MINIMUM", "REGLEMENTE"] as const;
-export const TYPE_MANUEL = ["OFFICIEL", "RECOMMANDE", "COMPLEMENTAIRE", "AUTRE"] as const;
 
 /** categories.jsonl — références : parentCode */
 export const categoriesSchema = z.object({
@@ -50,15 +49,6 @@ export const unitesSchema = z.object({
   refSource,
 }).strict();
 
-/** editeurs.jsonl — références : agenceCode ; clé d'upsert : nom normalisé */
-export const editeursSchema = z.object({
-  nom: texteRequis.max(255, "Nom trop long (max 255)"),
-  emailContact: texteOptionnel,
-  telephoneContact: texteOptionnel,
-  agenceCode: code.optional(),
-  refSource,
-}).strict();
-
 /** fournisseurs.jsonl — références : agenceCode ; clé d'upsert : code */
 export const fournisseursSchema = z.object({
   code,
@@ -78,15 +68,8 @@ export const fournisseursSchema = z.object({
 export const produitsSchema = z.object({
   codeBarre: texteRequis.max(100, "Code-barres trop long (max 100)"),
   nomCode: texteOptionnelMax(100),
-  typeProduit: z.enum(TYPE_PRODUIT).default("FOURNITURE"),
+  typeProduit: z.enum(TYPE_PRODUIT).default("PIECE"),
   titre: texteRequis.max(500, "Titre trop long (max 500)"),
-  isbn: texteOptionnel,
-  auteur: texteOptionnel,
-  editeur: texteOptionnel,
-  collection: texteOptionnel,
-  niveauScolaire: texteOptionnel,
-  matiere: texteOptionnel,
-  langue: texteOptionnel,
   etat: texteOptionnel,
   description: texteOptionnel,
   categorieCode: code,
@@ -112,17 +95,6 @@ export const produitsSchema = z.object({
   photos: z.array(z.string()).optional(),
   imageUrl: texteOptionnel,
   isActive: booleen,
-  refSource,
-}).strict();
-
-/** manuels_scolaires.jsonl — références : codeBarre (produit), editeurNom, anneeImport ; clé : codeBarre */
-export const manuelsSchema = z.object({
-  codeBarre: texteRequis.max(100),
-  typeManuel: z.enum(TYPE_MANUEL).default("OFFICIEL"),
-  editeurNom: texteOptionnel,
-  prixReglemente: booleen,
-  prixReglementeValeur: montantOptionnel,
-  anneeImport: texteOptionnel,
   refSource,
 }).strict();
 
@@ -200,10 +172,8 @@ export const stocksSchema = z.object({
 
 export type CategorieImport = z.infer<typeof categoriesSchema>;
 export type UniteImport = z.infer<typeof unitesSchema>;
-export type EditeurImport = z.infer<typeof editeursSchema>;
 export type FournisseurImport = z.infer<typeof fournisseursSchema>;
 export type ProduitImport = z.infer<typeof produitsSchema>;
-export type ManuelImport = z.infer<typeof manuelsSchema>;
 export type ProduitUniteImport = z.infer<typeof produitsUnitesSchema>;
 export type ProduitFournisseurImport = z.infer<typeof produitsFournisseursSchema>;
 export type TarifImport = z.infer<typeof tarifsSchema>;

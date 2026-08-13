@@ -30,7 +30,7 @@
     "migrate": "drizzle-kit migrate",
     "generate": "drizzle-kit generate",
     "studio": "drizzle-kit studio",
-    "seed": "tsx src/seed-full.ts",
+    "seed": "tsx src/seed-install.ts",
     "seed:old": "tsx src/seed.ts",
     "seed:install": "tsx src/seed-install.ts",
     "reset": "tsx src/reset-db.ts",

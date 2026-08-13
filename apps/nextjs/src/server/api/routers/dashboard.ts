@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
-import { db, ventes, stocks, produits, clients, caisses, sessionsCaisse, ventesLignes, niveaux, faitsVentesQuotidiens, faitsStockQuotidiens, faitsCaisseQuotidiens } from "@atelierone/db";
+import { db, ventes, stocks, produits, clients, caisses, sessionsCaisse, ventesLignes, faitsVentesQuotidiens, faitsStockQuotidiens, faitsCaisseQuotidiens } from "@atelierone/db";
 import { eq, and, sql, lt, desc, type SQL } from "drizzle-orm";
 
 export const dashboardRouter = createTRPCRouter({
@@ -139,16 +139,13 @@ export const dashboardRouter = createTRPCRouter({
 
       const ventesParNiveauRows = await db
         .select({
-          niveauId: produits.niveauId,
-          libelle: niveaux.libelle,
+          typeProduit: produits.typeProduit,
           total: sql<number>`COALESCE(SUM(${ventesLignes.totalLigne}), 0)`,
         })
         .from(ventesLignes)
         .innerJoin(ventes, eq(ventesLignes.venteId, ventes.id))
         .innerJoin(produits, eq(ventesLignes.produitId, produits.id))
-        .leftJoin(niveaux, eq(produits.niveauId, niveaux.id))
         .where(and(eq(ventes.agenceId, agenceId), eq(ventes.statut, "termine"), ...dateFilters))
-        .groupBy(produits.niveauId, niveaux.libelle);
 
       const prevDateFilters: (SQL | undefined)[] = [];
       if (input?.dateDebut) {
@@ -188,8 +185,8 @@ export const dashboardRouter = createTRPCRouter({
           total: Number(r.total),
         })),
         ventesParNiveau: ventesParNiveauRows.map(r => ({
-          niveauId: r.niveauId ?? "",
-          libelle: r.libelle ?? "Sans niveau",
+          typeProduit: String(r.typeProduit ?? ""),
+          libelle: String(r.typeProduit ?? "Sans type"),
           total: Number(r.total),
         })),
         comparatif: {
@@ -329,8 +326,7 @@ export const dashboardRouter = createTRPCRouter({
 
       const rows = await db
         .select({
-          niveauId: produits.niveauId,
-          libelle: niveaux.libelle,
+          typeProduit: produits.typeProduit,
           anN: sql<number>`COALESCE(SUM(CASE WHEN ${ventes.createdAt} >= ${anDebut} AND ${ventes.createdAt} <= ${anFin} THEN ${ventesLignes.totalLigne} ELSE 0 END), 0)`,
           anN1: sql<number>`COALESCE(SUM(CASE WHEN ${ventes.createdAt} >= ${prevDebut} AND ${ventes.createdAt} <= ${prevFin} THEN ${ventesLignes.totalLigne} ELSE 0 END), 0)`,
           stockN1: sql<number>`0`,
@@ -338,16 +334,14 @@ export const dashboardRouter = createTRPCRouter({
         .from(ventesLignes)
         .innerJoin(ventes, eq(ventesLignes.venteId, ventes.id))
         .innerJoin(produits, eq(ventesLignes.produitId, produits.id))
-        .leftJoin(niveaux, eq(produits.niveauId, niveaux.id))
         .where(and(eq(ventes.agenceId, agenceId), eq(ventes.statut, "termine")))
-        .groupBy(produits.niveauId, niveaux.libelle);
 
       const header = "Niveau;Ventes N-1;Ventes N;Évolution\n";
       const csv = header + rows.map(r => {
         const n1 = Number(r.anN1);
         const n = Number(r.anN);
         const evol = n1 > 0 ? ((n - n1) / n1 * 100).toFixed(1) + "%" : "—";
-        return `${r.libelle ?? "Sans niveau"};${n1};${n};${evol}\n`;
+        return `${r.typeProduit ?? "Sans type"};${n1};${n};${evol}\n`;
       }).join("");
       const bom = "\uFEFF";
       return { csv: bom + csv, filename: "comparatif_annuel.csv" };

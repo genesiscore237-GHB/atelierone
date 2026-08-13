@@ -18,22 +18,20 @@ import { alertRouter } from "~/server/api/routers/alert";
 import { organizationRouter } from "~/server/api/routers/organization";
 import { governanceRouter } from "~/server/api/routers/governance";
 import { rhRouter } from "~/server/api/routers/rh";
-import { schoolListsRouter } from "~/server/api/routers/schoolLists";
-import { bourseRouter } from "~/server/api/routers/bourse";
 import { partnerRouter } from "~/server/api/routers/partner";
-import { referenceRouter } from "~/server/api/routers/reference";
 import { stockRouter } from "~/server/api/routers/stock";
 import { margeRouter } from "~/server/api/routers/marge";
 import { profitRouter } from "~/server/api/routers/profit";
 import { exportRouter } from "~/server/api/routers/export";
-import { rayonsRouter } from "~/server/api/routers/rayons";
 import { reportsRouter } from "~/server/api/routers/reports";
+import { referenceRouter } from "~/server/api/routers/reference";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 
 export const appRouter = createTRPCRouter({
   user: userRouter,
   settings: settingsRouter,
   catalog: catalogRouter,
+  reference: referenceRouter,
   inventory: inventoryRouter,
   pos: posRouter,
   finance: financeRouter,
@@ -51,15 +49,11 @@ export const appRouter = createTRPCRouter({
   organization: organizationRouter,
   governance: governanceRouter,
   rh: rhRouter,
-  schoolLists: schoolListsRouter,
-  reference: referenceRouter,
   stock: stockRouter,
-  bourse: bourseRouter,
   partner: partnerRouter,
   marge: margeRouter,
   profit: profitRouter,
   export: exportRouter,
-  rayons: rayonsRouter,
   reports: reportsRouter,
 });
 

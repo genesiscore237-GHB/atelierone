@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
-import { ventes, ventesLignes, produits, retours, lignesRetour, utilisateurs, niveaux, lots, stocksLots, fournisseurs, pertesFinancieres } from "@atelierone/db";
+import { ventes, ventesLignes, produits, retours, lignesRetour, utilisateurs, lots, stocksLots, fournisseurs, pertesFinancieres } from "@atelierone/db";
 import { eq, and, gte, lte, sql, desc, asc, inArray, type SQL, type SQLWrapper } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 
@@ -449,12 +449,11 @@ export const margeRouter = createTRPCRouter({
     .input(z.object({
       dateDebut: z.string().optional(),
       dateFin: z.string().optional(),
-      groupePar: z.enum(["type", "niveau"]).default("type"),
     }))
     .query(async ({ ctx, input }) => {
       const rows = await db.select({
-        groupe: input.groupePar === "niveau" ? produits.niveauId : produits.typeProduit,
-        libelle: input.groupePar === "niveau" ? niveaux.libelle : produits.typeProduit,
+        groupe: produits.typeProduit,
+        libelle: produits.typeProduit,
         ca: sql<number>`sum(${ventesLignes.totalLigne})`,
         cout: sql<number>`sum(${coutLigne})`,
         marge: sql<number>`sum(${margeLigne})`,
@@ -462,10 +461,8 @@ export const margeRouter = createTRPCRouter({
       .from(ventesLignes)
       .innerJoin(ventes, eq(ventesLignes.venteId, ventes.id))
       .innerJoin(produits, eq(ventesLignes.produitId, produits.id))
-      .leftJoin(niveaux, eq(produits.niveauId, niveaux.id))
       .where(and(...periodeFilters({ ...input, agenceId: ctx.user.agenceId })))
-      .groupBy(input.groupePar === "niveau" ? produits.niveauId : produits.typeProduit,
-              input.groupePar === "niveau" ? niveaux.libelle : produits.typeProduit)
+      .groupBy(produits.typeProduit, produits.typeProduit)
       .orderBy(desc(sql`sum(${margeLigne})`));
 
       return rows.map((r) => ({

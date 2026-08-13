@@ -169,7 +169,7 @@ export default function CatalogDashboardPage() {
               {ventesNiveau.map((item, i) => {
                 const pct = totalCaParType > 0 ? Math.round(item.total / totalCaParType * 100) : 0;
                 return (
-                  <div key={item.niveauId || i} className="block">
+                  <div key={item.typeProduit || i} className="block">
                     <div className="flex justify-between text-muted-foreground mb-1">
                       <span>{item.libelle}</span>
                       <span className="font-mono text-foreground">{item.total.toLocaleString()} F</span>

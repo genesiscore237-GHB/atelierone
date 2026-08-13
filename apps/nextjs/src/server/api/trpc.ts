@@ -56,7 +56,7 @@ const isAdmin = t.middleware(async ({ ctx, next }) => {
     throw new TRPCError({ code: "UNAUTHORIZED", message: "Vous devez être connecté." });
   }
   const user = ctx.user as ExtendedUser;
-  if (user.role !== "admin_reseau" && user.role !== "responsable_agence") {
+  if (user.role !== "superadmin" && user.role !== "directeur") {
     throw new TRPCError({ code: "FORBIDDEN", message: "Accès réservé aux administrateurs." });
   }
   return next({ ctx: { ...ctx, user, role: user.role } });
@@ -116,17 +116,17 @@ const auditMiddlware = t.middleware(async ({ ctx, next, path, type, input }) => 
 export const publicProcedure = t.procedure.use(timingMiddleware);
 export const protectedProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(auditMiddlware);
 export const adminProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(isAdmin).use(auditMiddlware);
-export const posProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["operateur_pos", "caissier", "admin_reseau", "responsable_agence"])).use(auditMiddlware);
-export const caisseProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["caissier", "operateur_pos", "comptable", "admin_reseau", "responsable_agence"])).use(auditMiddlware);
-export const stockProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["magasinier", "admin_reseau", "responsable_agence"])).use(auditMiddlware);
-export const financeProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["comptable", "admin_reseau", "responsable_agence"])).use(auditMiddlware);
-export const rhProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["rh", "admin_reseau", "responsable_agence"])).use(auditMiddlware);
+export const posProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["secretaire", "secretaire", "superadmin", "directeur"])).use(auditMiddlware);
+export const caisseProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["secretaire", "secretaire", "comptable", "superadmin", "directeur"])).use(auditMiddlware);
+export const stockProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["magasinier", "superadmin", "directeur"])).use(auditMiddlware);
+export const financeProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["comptable", "superadmin", "directeur"])).use(auditMiddlware);
+export const rhProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["rh", "superadmin", "directeur"])).use(auditMiddlware);
 
 export function requirePermissionProcedure(...permissions: string[]) {
   const permissionCheck = t.middleware(async ({ ctx, next }) => {
     if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
     const user = ctx.user as ExtendedUser;
-    if (user.role === "admin_reseau") return next({ ctx });
+    if (user.role === "superadmin") return next({ ctx });
     for (const perm of permissions) {
       const has = await requirePermission(user.id, perm, String(user.agenceId ?? ""));
       if (has) return next({ ctx });

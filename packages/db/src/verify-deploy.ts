@@ -17,20 +17,18 @@ import type { EntiteCle } from "./import/engine";
  */
 
 // Entités optionnelles : leur fichier peut être absent sans bloquer le déploiement.
-const OPTIONNELS: EntiteCle[] = ["tarifs", "prix_historique"];
+const OPTIONNELS: EntiteCle[] = ["tarifs", "prix_historique", "produits_fournisseurs"];
 
 const args = process.argv.slice(2).filter((a) => a !== "--");
-const dossier = args.find((a) => !a.startsWith("--")) ?? "DOC/donnéés papeterie/import-atelierone";
+const dossier = args.find((a) => !a.startsWith("--")) ?? "DOC/import-atelierone";
 const avecData = args.includes("--data");
 const dossierAbs = path.resolve(process.cwd(), dossier);
 
 const FICHIER: Record<EntiteCle, string> = {
   unites: "unites.jsonl",
   categories: "categories.jsonl",
-  editeurs: "editeurs.jsonl",
   fournisseurs: "fournisseurs.jsonl",
   produits: "produits.jsonl",
-  manuels: "manuels.jsonl",
   produits_unites: "produits_unites.jsonl",
   produits_fournisseurs: "produits_fournisseurs.jsonl",
   tarifs: "tarifs.jsonl",
@@ -89,18 +87,10 @@ async function verifierData(): Promise<void> {
   await inv("rôles", "select count(*)::int as n from roles");
   await inv("permissions", "select count(*)::int as n from permissions");
   await inv("unités de mesure", "select count(*)::int as n from unites_mesure");
-  await inv("sous-systèmes", "select count(*)::int as n from sous_systemes");
-  await inv("niveaux", "select count(*)::int as n from niveaux");
-  await inv("classes", "select count(*)::int as n from classes");
-  await inv("matières", "select count(*)::int as n from matieres");
-  await inv("ministères", "select count(*)::int as n from ministeres");
-  await inv("années scolaires", "select count(*)::int as n from annees_scolaires");
   await inv("catégories", "select count(*)::int as n from categories");
-  await inv("éditeurs", "select count(*)::int as n from editeurs");
   await inv("fournisseurs", "select count(*)::int as n from fournisseurs");
   await inv("produits", "select count(*)::int as n from produits");
   await inv("produits avec nom_code", "select count(*)::int as n from produits where nom_code is not null and nom_code <> ''");
-  await inv("manuel_scolaire_detail", "select count(*)::int as n from manuel_scolaire_detail");
   await inv("produit_unites", "select count(*)::int as n from produit_unites");
   await inv("produits_fournisseurs", "select count(*)::int as n from produits_fournisseurs");
   await inv("stocks", "select count(*)::int as n from stocks");
@@ -113,13 +103,6 @@ async function verifierData(): Promise<void> {
     where not exists (select 1 from produit_unites pu where pu.produit_id = p.id and pu.est_unite_base)`;
   console.log(`  ${sansUnite.n === 0 ? "✓" : "✗"} produits sans unité de base: ${sansUnite.n}`);
   if (sansUnite.n !== 0) erreurs++;
-
-  // Conformité : tout manuel a sa ligne manuel_scolaire_detail (RG-004)
-  const [manuelsSansDetail] = await raw`select count(*)::int as n from produits p
-    where p.type_produit = 'MANUEL'
-    and not exists (select 1 from manuel_scolaire_detail md where md.produit_id = p.id)`;
-  console.log(`  ${manuelsSansDetail.n === 0 ? "✓" : "✗"} manuels sans détail manuel_scolaire_detail: ${manuelsSansDetail.n}`);
-  if (manuelsSansDetail.n !== 0) erreurs++;
 
   // Unicité des codeBarre et nom_code
   const [dupBarres] = await raw`select count(*)::int as n from (

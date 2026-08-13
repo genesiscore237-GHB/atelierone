@@ -1,17 +1,15 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, adminProcedure, stockProcedure } from "~/server/api/trpc";
-import { db, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, modelesEmballage, fournisseurs, ministeres, produitsFournisseurs, agences, niveaux, manuelScolaireDetail, classes, sousSystemes } from "@atelierone/db";
+import { db, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, modelesEmballage, fournisseurs, produitsFournisseurs, agences } from "@atelierone/db";
 import { eq, ilike, and, desc, sql, inArray, ne, getTableColumns, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { generateBarcode, autoGenerateBarcode, ensureBarcodeSequence } from "@atelierone/db/utils";
 import { appendFileSync } from "fs";
 import { join } from "path";
 
-const ADMIN_ROLES = ["admin_reseau", "responsable_agence"];
-const SECONDARY_NIVEAU_CODES = ["SEC", "SECONDARY"];
+const ADMIN_ROLES = ["superadmin", "directeur", "admin"];
 
 function detectBarcodeType(v: string): string {
-  if (/^97[89]\d{10}$/.test(v) || /^\d{9}[Xx]$/.test(v)) return "ISBN";
   if (/^\d{13}$/.test(v)) return "EAN13";
   if (/^\d{8}$/.test(v)) return "EAN8";
   return "INTERNE";
@@ -19,7 +17,7 @@ function detectBarcodeType(v: string): string {
 
 // Bornes de validation commune (create + update) : le type de produit doit être
 // une valeur connue et le prix de vente strictement positif (0 FCFA interdit).
-const typeProduitEnum = z.enum(["MANUEL", "FOURNITURE"]);
+const typeProduitEnum = z.enum(["PIECE", "SERVICE"]);
 const prixVenteRefine = z.string().refine(v => Number(v) > 0, { message: "Le prix de vente doit être strictement positif" });
 const photoDataUrl = z.string().refine(v => v.startsWith("data:image/") && v.length <= 3_000_000, { message: "Photo invalide ou trop volumineuse (max 2 Mo)" });
 const photosInput = z.array(photoDataUrl).max(3, "3 photos maximum").optional();
@@ -45,28 +43,12 @@ function formatProduct(p: typeof produits.$inferSelect) {
     id: String(p.id),
     typeProduit: p.typeProduit,
     codeBarre: p.codeBarre,
-    isbn: p.isbn,
     titre: p.titre,
-    auteur: p.auteur,
     editeur: p.editeur,
-    collection: p.collection,
-    niveauScolaire: p.niveauScolaire,
-    matiere: p.matiere,
-    langue: p.langue,
     etat: p.etat,
     description: p.description,
     categorieId: p.categorieId,
     fournisseurId: p.fournisseurId,
-    sousSystemeId: p.sousSystemeId,
-    niveauId: p.niveauId,
-    filiereId: p.filiereId,
-    classeId: p.classeId,
-    matiereId: p.matiereId,
-    anneeListeId: p.anneeListeId,
-    ministereId: p.ministereId,
-    statutOfficiel: p.statutOfficiel,
-    prixReglemente: p.prixReglemente,
-    prixReglementeValeur: p.prixReglementeValeur ? String(p.prixReglementeValeur) : null,
     uniteBaseId: p.uniteBaseId,
     prixVente: String(p.prixVente),
     prixMinimumVente: p.prixMinimumVente ? String(p.prixMinimumVente) : null,
@@ -82,7 +64,6 @@ function formatProduct(p: typeof produits.$inferSelect) {
     statut: p.statut,
     uniteVente: p.uniteVente,
     uniteAchat: p.uniteAchat,
-    // FOURNITURE-specific
     marque: p.marque,
     referenceFabricant: p.referenceFabricant,
     couleur: p.couleur,
@@ -100,7 +81,6 @@ function formatProduct(p: typeof produits.$inferSelect) {
     defaultPrice: Number(p.prixVente),
     salePrice: Number(p.prixVente),
     purchasePrice: Number(p.prixAchat ?? 0),
-    author: p.auteur ?? "",
     status: p.statut ?? "actif",
     categoryId: p.categorieId ? String(p.categorieId) : null,
   };
@@ -111,19 +91,11 @@ export const catalogRouter = createTRPCRouter({
     .input(z.object({
       query: z.string().optional(),
       categorieId: z.string().optional(),
-      niveauScolaire: z.string().optional(),
-      matiere: z.string().optional(),
       statut: z.string().optional(),
       etat: z.string().optional(),
       page: z.number().default(1),
       limit: z.number().default(50),
-      type: z.enum(["MANUEL", "FOURNITURE"]).optional(),
-      sousSystemeId: z.string().optional(),
-      niveauId: z.string().optional(),
-      filiereId: z.string().optional(),
-      classeId: z.string().optional(),
-      matiereId: z.string().optional(),
-      anneeListeId: z.string().optional(),
+      type: z.enum(["PIECE", "SERVICE"]).optional(),
       stockBas: z.boolean().optional(),
     }))
     .query(async ({ input }) => {
@@ -142,16 +114,8 @@ export const catalogRouter = createTRPCRouter({
         if (orExpr) conditions.push(orExpr);
       }
       if (uuidFiltre(input.categorieId)) conditions.push(eq(produits.categorieId, Number(uuidFiltre(input.categorieId))));
-      if (input.niveauScolaire) conditions.push(eq(produits.niveauScolaire, input.niveauScolaire));
-      if (input.matiere) conditions.push(eq(produits.matiere, input.matiere));
       if (input.etat) conditions.push(eq(produits.etat, input.etat));
       if (input.type) conditions.push(eq(produits.typeProduit, input.type));
-      if (uuidFiltre(input.sousSystemeId)) conditions.push(eq(produits.sousSystemeId, uuidFiltre(input.sousSystemeId)!));
-      if (uuidFiltre(input.niveauId)) conditions.push(eq(produits.niveauId, uuidFiltre(input.niveauId)!));
-      if (uuidFiltre(input.filiereId)) conditions.push(eq(produits.filiereId, uuidFiltre(input.filiereId)!));
-      if (uuidFiltre(input.classeId)) conditions.push(eq(produits.classeId, uuidFiltre(input.classeId)!));
-      if (uuidFiltre(input.matiereId)) conditions.push(eq(produits.matiereId, uuidFiltre(input.matiereId)!));
-      if (uuidFiltre(input.anneeListeId)) conditions.push(eq(produits.anneeListeId, uuidFiltre(input.anneeListeId)!));
       if (input.stockBas) {
         conditions.push(
           sql`(SELECT COALESCE(SUM(${stocks.quantite}), 0) FROM ${stocks} WHERE ${stocks.produitId} = ${produits.id}) < ${produits.seuilAlerte}`
@@ -231,23 +195,17 @@ export const catalogRouter = createTRPCRouter({
         .limit(1);
       const [item] = await query;
       if (!item) throw new TRPCError({ code: "NOT_FOUND" });
-      const [barres, productUnits, extras, fournisseurRows, manuelDetail] = await Promise.all([
+      const [barres, productUnits, extras, fournisseurRows] = await Promise.all([
         db.select().from(codesBarres).where(eq(codesBarres.produitId, input.id)),
         db.select().from(produitUnites)
           .where(and(eq(produitUnites.produitId, Number(input.id)), eq(produitUnites.statut, "ACTIF"))),
         db.select({
           categorieNom: categories.nom,
           fournisseurNom: fournisseurs.nom,
-          ministereNom: ministeres.libelle,
-          classeNom: classes.libelle,
-          sousSystemeNom: sousSystemes.libelle,
         })
           .from(produits)
           .leftJoin(categories, eq(categories.id, produits.categorieId))
           .leftJoin(fournisseurs, eq(fournisseurs.id, produits.fournisseurId))
-          .leftJoin(ministeres, eq(ministeres.id, produits.ministereId))
-          .leftJoin(classes, eq(classes.id, produits.classeId))
-          .leftJoin(sousSystemes, eq(sousSystemes.id, produits.sousSystemeId))
           .where(eq(produits.id, input.id))
           .limit(1),
         db.select({
@@ -263,7 +221,6 @@ export const catalogRouter = createTRPCRouter({
           .from(produitsFournisseurs)
           .innerJoin(fournisseurs, eq(fournisseurs.id, produitsFournisseurs.fournisseurId))
           .where(and(eq(produitsFournisseurs.produitId, Number(input.id)), eq(produitsFournisseurs.isActive, true))),
-        db.select().from(manuelScolaireDetail).where(eq(manuelScolaireDetail.produitId, Number(input.id))).limit(1),
       ]);
       return {
         ...formatProduct(item),
@@ -271,11 +228,7 @@ export const catalogRouter = createTRPCRouter({
         productUnits,
         categorieNom: extras[0]?.categorieNom ?? null,
         fournisseurNom: extras[0]?.fournisseurNom ?? null,
-        ministereNom: extras[0]?.ministereNom ?? null,
-        classeNom: extras[0]?.classeNom ?? null,
-        sousSystemeNom: extras[0]?.sousSystemeNom ?? null,
         fournisseurs: fournisseurRows,
-        manuelDetail: manuelDetail[0] ?? null,
       };
     }),
 
@@ -303,14 +256,8 @@ export const catalogRouter = createTRPCRouter({
     .input(z.object({
       codeBarre: z.string().optional(),
       nomCode: z.string().optional(),
-      isbn: z.string().optional(),
       titre: z.string().min(1),
-      auteur: z.string().optional(),
       editeur: z.string().optional(),
-      collection: z.string().optional(),
-      niveauScolaire: z.string().optional(),
-      matiere: z.string().optional(),
-      langue: z.string().optional(),
       etat: z.string().default("neuf"),
       description: z.string().optional(),
       categorieId: z.string().optional(),
@@ -327,22 +274,12 @@ export const catalogRouter = createTRPCRouter({
       uniteAchat: z.string().default("unite"),
       typeProduit: typeProduitEnum.optional(),
       statutCycleVie: z.enum(["BROUILLON", "ACTIF", "SUSPENDU", "DISCONTINUE", "ARCHIVE"]).optional(),
-      sousSystemeId: z.string().optional(),
-      niveauId: z.string().optional(),
-      filiereId: z.string().optional(),
-      classeId: z.string().optional(),
-      matiereId: z.string().optional(),
-      anneeListeId: z.string().optional(),
-      ministereId: z.string().optional(),
-      prixReglemente: z.boolean().optional(),
-      prixReglementeValeur: z.string().optional(),
       uniteBaseId: z.string().optional(),
       marque: z.string().optional(),
       referenceFabricant: z.string().optional(),
       couleur: z.string().optional(),
       format: z.string().optional(),
       matiereComposition: z.string().optional(),
-      statutOfficiel: z.string().optional(),
       fournisseurs: z.array(z.object({
         fournisseurId: z.number(),
         uniteId: z.string().optional(),
@@ -362,10 +299,6 @@ export const catalogRouter = createTRPCRouter({
       // Le flux validation BROUILLON → ACTIF reste disponible via setStatutCycleVie.
       if (!values.statutCycleVie) values.statutCycleVie = "ACTIF";
 
-      if (values.typeProduit === "MANUEL" && !values.prixMinimumVente) {
-        values.prixMinimumVente = values.prixVente;
-      }
-
       if (values.categorieId) {
         const [cat] = await db.select({ typeBranche: categories.typeBranche, parentId: categories.parentId })
           .from(categories)
@@ -384,18 +317,6 @@ export const catalogRouter = createTRPCRouter({
         }
       }
 
-      if (values.filiereId) {
-        if (!values.niveauId) throw new TRPCError({ code: "BAD_REQUEST", message: "Une filière ne peut être sélectionnée que pour un niveau secondaire (RG-006)" });
-        const [niveau] = await db.select({ code: niveaux.code }).from(niveaux).where(eq(niveaux.id, values.niveauId)).limit(1);
-        if (!niveau || !SECONDARY_NIVEAU_CODES.includes(niveau.code)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Une filière ne peut être associée qu'à un niveau secondaire (RG-006)" });
-        }
-      }
-
-      if (values.isbn) {
-        const [dupIsbn] = await db.select({ id: produits.id }).from(produits).where(eq(produits.isbn, values.isbn)).limit(1);
-        if (dupIsbn) throw new TRPCError({ code: "CONFLICT", message: "Un produit avec cet ISBN existe déjà (RG-009)" });
-      }
       if (inputCodeBarre) {
         const [dupBarcode] = await db.select({ id: produits.id }).from(produits).where(eq(produits.codeBarre, inputCodeBarre)).limit(1);
         if (dupBarcode) throw new TRPCError({ code: "CONFLICT", message: "Ce code-barres est déjà utilisé par un autre produit (RG-010)" });
@@ -413,9 +334,6 @@ export const catalogRouter = createTRPCRouter({
       if (values.prixAchat && !values.prixAchatReference) {
         values.prixAchatReference = values.prixAchat;
       }
-      if (values.prixReglemente && values.prixReglementeValeur && !values.prixVente) {
-        values.prixVente = values.prixReglementeValeur;
-      }
 
       let p: typeof produits.$inferSelect;
       try {
@@ -424,9 +342,6 @@ export const catalogRouter = createTRPCRouter({
       } catch (err: any) {
         if (String(err.message ?? "").includes("code_barre") && String(err.message ?? "").includes("duplicate")) {
           throw new TRPCError({ code: "CONFLICT", message: "Ce code-barres est déjà utilisé par un autre produit (RG-010)" });
-        }
-        if (String(err.message ?? "").includes("isbn") && String(err.message ?? "").includes("duplicate")) {
-          throw new TRPCError({ code: "CONFLICT", message: "Un produit avec cet ISBN existe déjà (RG-009)" });
         }
         throw err;
       }
@@ -496,34 +411,6 @@ export const catalogRouter = createTRPCRouter({
         }
       }
 
-      if (input.typeProduit === "MANUEL") {
-        await db.insert(manuelScolaireDetail).values({
-          produitId: p.id,
-          typeManuel: input.statutOfficiel ?? null,
-          prixReglemente: input.prixReglemente ?? false,
-          prixReglementeValeur: input.prixReglementeValeur ? String(input.prixReglementeValeur) : null,
-          anneeImport: input.anneeListeId ?? null,
-        } as any);
-      }
-
-      if (input.typeProduit === "MANUEL" && input.prixVente) {
-        const prixRachat = String(Math.round(Number(input.prixVente) * 0.5 * 100) / 100);
-        const [existingRachat] = await db.select().from(tarifs)
-          .where(and(eq(tarifs.produitId, String(p.id)), eq(tarifs.type, "maximum_rachat")))
-          .limit(1);
-        if (existingRachat) {
-          await db.update(tarifs).set({ prix: prixRachat }).where(eq(tarifs.id, existingRachat.id));
-        } else {
-          await db.insert(tarifs).values({
-            produitId: String(p.id),
-            type: "maximum_rachat",
-            prix: prixRachat,
-            label: "Rachat (50% du prix vente)",
-            isActive: true,
-          });
-        }
-      }
-
       await db.insert(auditLogs).values({
         userId: ctx.user!.id,
         action: "catalog.create",
@@ -544,14 +431,8 @@ export const catalogRouter = createTRPCRouter({
       id: z.string(),
       codeBarre: z.string().optional(),
       nomCode: z.string().optional(),
-      isbn: z.string().optional(),
       titre: z.string().optional(),
-      auteur: z.string().optional(),
       editeur: z.string().optional(),
-      collection: z.string().optional(),
-      niveauScolaire: z.string().optional(),
-      matiere: z.string().optional(),
-      langue: z.string().optional(),
       etat: z.string().optional(),
       description: z.string().optional(),
       categorieId: z.string().optional(),
@@ -570,22 +451,12 @@ export const catalogRouter = createTRPCRouter({
       imageUrl: z.string().optional(),
       isActive: z.boolean().optional(),
       typeProduit: typeProduitEnum.optional(),
-      sousSystemeId: z.string().optional(),
-      niveauId: z.string().optional(),
-      filiereId: z.string().optional(),
-      classeId: z.string().optional(),
-      matiereId: z.string().optional(),
-      anneeListeId: z.string().optional(),
-      ministereId: z.string().optional(),
-      prixReglemente: z.boolean().optional(),
-      prixReglementeValeur: z.string().optional(),
       uniteBaseId: z.string().optional(),
       marque: z.string().optional(),
       referenceFabricant: z.string().optional(),
       couleur: z.string().optional(),
       format: z.string().optional(),
       matiereComposition: z.string().optional(),
-      statutOfficiel: z.string().optional(),
       unites: z.array(z.object({
         unite_id: z.string(),
         facteur_conversion: z.number().optional(),
@@ -613,12 +484,6 @@ export const catalogRouter = createTRPCRouter({
         .limit(1);
       if (!old) throw new TRPCError({ code: "NOT_FOUND" });
 
-      if (old.prixReglemente && data.prixVente && Number(data.prixVente) !== Number(old.prixVente)) {
-        if (!ADMIN_ROLES.includes(ctx.user.role)) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Le prix d'un produit réglementé ne peut être modifié que par un administrateur (RG-015)" });
-        }
-      }
-
       if (data.categorieId && String(data.categorieId) !== String(old.categorieId)) {
         const [cat] = await db.select({ typeBranche: categories.typeBranche, parentId: categories.parentId })
           .from(categories)
@@ -637,33 +502,14 @@ export const catalogRouter = createTRPCRouter({
         }
       }
 
-      if (data.filiereId) {
-        const niveauId = data.niveauId ?? old.niveauId;
-        if (!niveauId) throw new TRPCError({ code: "BAD_REQUEST", message: "Une filière ne peut être sélectionnée que pour un niveau secondaire (RG-006)" });
-        const [niveau] = await db.select({ code: niveaux.code }).from(niveaux).where(eq(niveaux.id, niveauId)).limit(1);
-        if (!niveau || !SECONDARY_NIVEAU_CODES.includes(niveau.code)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Une filière ne peut être associée qu'à un niveau secondaire (RG-006)" });
-        }
-      }
-
-      if (data.isbn && data.isbn !== old.isbn) {
-        const [dupIsbn] = await db.select({ id: produits.id }).from(produits).where(and(eq(produits.isbn, data.isbn), ne(produits.id, Number(id)))).limit(1);
-        if (dupIsbn) throw new TRPCError({ code: "CONFLICT", message: "Un produit avec cet ISBN existe déjà (RG-009)" });
-      }
       if (inputCodeBarre && inputCodeBarre !== old.codeBarre) {
         const [dupBarcode] = await db.select({ id: produits.id }).from(produits).where(and(eq(produits.codeBarre, inputCodeBarre), ne(produits.id, Number(id)))).limit(1);
         if (dupBarcode) throw new TRPCError({ code: "CONFLICT", message: "Ce code-barres est déjà utilisé par un autre produit (RG-010)" });
       }
 
-      if (data.typeProduit === "MANUEL" && data.prixVente && !data.prixMinimumVente) {
-        data.prixMinimumVente = data.prixVente;
-      }
-      if (photos !== undefined) data.photos = photos;
-      if (data.prixAchat && !data.prixAchatReference) {
-        data.prixAchatReference = data.prixAchat;
-      }
-      if (data.prixReglemente && data.prixReglementeValeur && !data.prixVente) {
-        data.prixVente = data.prixReglementeValeur;
+      if (photos !== undefined) (data as any).photos = photos;
+      if (data.prixAchat && !(data as any).prixAchatReference) {
+        (data as any).prixAchatReference = data.prixAchat;
       }
 
       const result = await db.update(produits)
@@ -775,44 +621,6 @@ export const catalogRouter = createTRPCRouter({
               estPrincipal: f.estPrincipal,
             } as any);
           }
-        }
-      }
-
-      const isManuel = old?.typeProduit === "MANUEL" || input.typeProduit === "MANUEL";
-      if (isManuel) {
-        await db.insert(manuelScolaireDetail).values({
-          produitId: Number(id),
-          typeManuel: input.statutOfficiel ?? old.statutOfficiel ?? null,
-          prixReglemente: data.prixReglemente ?? old.prixReglemente ?? false,
-          prixReglementeValeur: data.prixReglementeValeur ?? (old.prixReglementeValeur ? String(old.prixReglementeValeur) : null),
-          anneeImport: data.anneeListeId ?? old.anneeListeId ?? null,
-        } as any).onConflictDoUpdate({
-          target: manuelScolaireDetail.produitId,
-          set: {
-            typeManuel: sql`EXCLUDED.type_manuel`,
-            prixReglemente: sql`EXCLUDED.prix_reglemente`,
-            prixReglementeValeur: sql`EXCLUDED.prix_reglemente_valeur`,
-            anneeImport: sql`EXCLUDED.annee_import`,
-            updatedAt: sql`now()`,
-          },
-        });
-      }
-
-      if (isManuel && input.prixVente) {
-        const prixRachat = String(Math.round(Number(input.prixVente) * 0.5 * 100) / 100);
-        const [existingRachat] = await db.select().from(tarifs)
-          .where(and(eq(tarifs.produitId, id), eq(tarifs.type, "maximum_rachat")))
-          .limit(1);
-        if (existingRachat) {
-          await db.update(tarifs).set({ prix: prixRachat }).where(eq(tarifs.id, existingRachat.id));
-        } else {
-          await db.insert(tarifs).values({
-            produitId: id,
-            type: "maximum_rachat",
-            prix: prixRachat,
-            label: "Rachat (50% du prix vente)",
-            isActive: true,
-          });
         }
       }
 
@@ -1070,7 +878,7 @@ export const catalogRouter = createTRPCRouter({
         titre: input.name,
         codeBarre: barcode,
         prixVente: String(input.defaultPrice),
-        isbn: input.sku ?? null,
+        referenceFabricant: input.sku ?? null,
       }).returning();
       const p = result[0];
       if (!p) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
@@ -1181,94 +989,6 @@ export const catalogRouter = createTRPCRouter({
         .where(and(eq(produits.isActive, true), eq(produits.statutCycleVie, "ACTIF")))
         .orderBy(desc(produits.createdAt));
       return items.map(formatProduct);
-    }),
-
-  bulkImport: adminProcedure
-    .input(z.object({
-      items: z.array(z.object({
-        titre: z.string().min(1),
-        auteur: z.string().optional(),
-        editeur: z.string().optional(),
-        niveauScolaire: z.string().optional(),
-        matiere: z.string().optional(),
-        categorieCode: z.string().optional(),
-      prixVente: prixVenteRefine,
-        priorite: z.enum(["obligatoire", "suggere"]).default("obligatoire"),
-      })).min(1).max(1000),
-      nomListe: z.string().min(1),
-      anneeScolaire: z.string().default("2026-2027"),
-      ministere: z.enum(["MINESEC", "MINEDUB"]).default("MINESEC"),
-    }))
-    .mutation(async ({ input }) => {
-      await ensureBarcodeSequence();
-      let created = 0;
-      let skipped = 0;
-      const errors: { titre: string; raison: string }[] = [];
-
-      // TC-020 : détection des doublons — intra-lot et contre le catalogue existant
-      const titresUniques = [...new Set(input.items.map((i: { titre: string }) => i.titre.trim().toLowerCase()))];
-      const existants = titresUniques.length
-        ? await db.select({ titre: produits.titre })
-          .from(produits)
-          .where(inArray(sql`lower(${produits.titre})`, titresUniques))
-          .limit(titresUniques.length)
-        : [];
-      const dejaEnBase = new Set(existants.map((p) => p.titre.toLowerCase()));
-      const vus = new Set<string>();
-
-      for (const item of input.items) {
-        const titreNormalise = item.titre.trim().toLowerCase();
-        let raison: string | null = null;
-        if (!item.titre.trim()) raison = "Titre vide";
-        else if (vus.has(titreNormalise)) raison = "Doublon dans le fichier";
-        else if (dejaEnBase.has(titreNormalise)) raison = "Produit déjà existant";
-        if (raison) {
-          skipped++;
-          errors.push({ titre: item.titre, raison });
-          continue;
-        }
-        vus.add(titreNormalise);
-        try {
-          let catId: number | undefined;
-          if (item.categorieCode) {
-            const [existing] = await db.select()
-              .from(categories)
-              .where(eq(categories.code, item.categorieCode))
-              .limit(1);
-            if (existing) {
-              catId = existing.id;
-            }
-          }
-
-          const barcode = await generateBarcode();
-          const [prod] = await db.insert(produits).values({
-            titre: item.titre,
-            auteur: item.auteur ?? null,
-            editeur: item.editeur ?? null,
-            niveauScolaire: item.niveauScolaire ?? null,
-            matiere: item.matiere ?? null,
-            prixVente: item.prixVente,
-            codeBarre: barcode,
-            categorieId: catId,
-            statut: "actif",
-          }).returning();
-
-          if (prod) {
-            await db.insert(codesBarres).values({
-              produitId: prod.id,
-              type: "SYSTEME",
-              valeur: barcode,
-              estDefaut: true,
-            });
-            created++;
-          }
-        } catch {
-          skipped++;
-          errors.push({ titre: item.titre, raison: "Échec d'insertion" });
-        }
-      }
-
-      return { success: true, created, skipped, total: input.items.length, errors };
     }),
 
   // Lifecycle transitions

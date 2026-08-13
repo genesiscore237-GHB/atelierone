@@ -20,23 +20,15 @@ import { CommanderProduitDialog } from "./_components/CommanderProduitDialog";
 type Filters = {
   query: string;
   debouncedQuery: string;
-  type: "MANUEL" | "FOURNITURE" | "";
+  type: "PIECE" | "SERVICE" | "";
   categorieParentId: string;
   categorieId: string;
-  sousSystemeId: string;
-  niveauId: string;
-  filiereId: string;
-  classeId: string;
-  matiereId: string;
-  anneeListeId: string;
   statut: string;
 };
 
 const defaultFilters: Filters = {
   query: "", debouncedQuery: "", type: "",
   categorieParentId: "", categorieId: "",
-  sousSystemeId: "", niveauId: "", filiereId: "",
-  classeId: "", matiereId: "", anneeListeId: "",
   statut: "",
 };
 
@@ -74,12 +66,6 @@ export default function CatalogPage() {
     query: f.debouncedQuery || undefined,
     type: f.type || undefined,
     categorieId: f.categorieId || undefined,
-    sousSystemeId: f.sousSystemeId || undefined,
-    niveauId: f.niveauId || undefined,
-    filiereId: f.filiereId || undefined,
-    classeId: f.classeId || undefined,
-    matiereId: f.matiereId || undefined,
-    anneeListeId: f.anneeListeId || undefined,
     statut: f.statut && f.statut !== "all" ? f.statut : undefined,
     page,
     limit: 20,
@@ -88,12 +74,6 @@ export default function CatalogPage() {
   const { data, isLoading, error } = api.catalog.list.useQuery(queryInput);
   const refStaleTime = 15 * 60 * 1000;
   const { data: categories } = api.catalog.listCategories.useQuery(undefined, { staleTime: refStaleTime, gcTime: 60 * 60 * 1000 });
-  const { data: niveaux } = api.reference.listNiveaux.useQuery(undefined, { staleTime: refStaleTime, gcTime: 60 * 60 * 1000 });
-  const { data: filieres } = api.reference.listFilieres.useQuery(undefined, { staleTime: refStaleTime, gcTime: 60 * 60 * 1000 });
-  const { data: sousSystemes } = api.reference.listSousSystemes.useQuery(undefined, { staleTime: refStaleTime, gcTime: 60 * 60 * 1000 });
-  const { data: classes } = api.reference.listClasses.useQuery(undefined, { staleTime: refStaleTime, gcTime: 60 * 60 * 1000 });
-  const { data: matieres } = api.reference.listMatieres.useQuery(undefined, { staleTime: refStaleTime, gcTime: 60 * 60 * 1000 });
-  const { data: anneesScolaires } = api.reference.listAnneesScolaires.useQuery(undefined, { staleTime: refStaleTime, gcTime: 60 * 60 * 1000 });
 
   useEffect(() => {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
@@ -124,11 +104,7 @@ export default function CatalogPage() {
             className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/20">
             <BarChart3 className="size-4" /> Tableau de bord
           </Link>
-          <Link href="/dashboard/catalog/import"
-            className="inline-flex items-center gap-2 rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm font-medium text-foreground hover:bg-accent">
-            <Upload className="size-4" /> Import
-          </Link>
-          <Link href="/dashboard/catalog/categories"
+                  <Link href="/dashboard/catalog/categories"
             className="inline-flex items-center gap-2 rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm font-medium text-foreground hover:bg-accent">
             <BookOpen className="size-4" /> Catégories
           </Link>
@@ -151,14 +127,9 @@ export default function CatalogPage() {
             <div className="mb-3">
               <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Type de produit</label>
               <div className="flex gap-1 rounded-lg bg-muted p-1">
-                {(["", "MANUEL", "FOURNITURE"] as const).map(t => (
+                {(["", "PIECE", "SERVICE"] as const).map(t => (
                   <button key={t} onClick={() => {
                     setFilter("type", t);
-                    setFilter("sousSystemeId", "");
-                    setFilter("niveauId", "");
-                    setFilter("filiereId", "");
-                    setFilter("classeId", "");
-                    setFilter("matiereId", "");
                     setFilter("categorieParentId", "");
                     setFilter("categorieId", "");
                   }}
@@ -166,87 +137,37 @@ export default function CatalogPage() {
                       ? "bg-primary text-foreground"
                       : "text-muted-foreground hover:text-foreground"
                       }`}>
-                    {t === "" ? "Tous" : t === "MANUEL" ? "Manuels" : "Fourn."}
+                    {t === "" ? "Tous" : t === "PIECE" ? "Pièces" : "Services"}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Cascade MANUEL */}
-            {(f.type === "" || f.type === "MANUEL") && (
-              <div className="space-y-2.5 mb-3">
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Sous-système</label>
-                  <Select value={f.sousSystemeId} onValueChange={v => { setFilter("sousSystemeId", v); setFilter("niveauId", ""); setFilter("classeId", ""); setFilter("matiereId", ""); }}>
-                    <SelectTrigger className="h-8 border-border bg-muted text-xs text-foreground"><SelectValue placeholder="Tous" /></SelectTrigger>
-                    <SelectContent className="border-border bg-card text-foreground">
-                      <SelectItem value="all">Tous</SelectItem>
-                      {sousSystemes?.map(s => <SelectItem key={s.id} value={s.id}>{s.code === "FR" ? "Francophone" : "Anglophone"}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Niveau</label>
-                  <Select value={f.niveauId} onValueChange={v => { setFilter("niveauId", v); setFilter("classeId", ""); setFilter("matiereId", ""); }}>
-                    <SelectTrigger className="h-8 border-border bg-muted text-xs text-foreground"><SelectValue placeholder="Tous" /></SelectTrigger>
-                    <SelectContent className="border-border bg-card text-foreground">
-                      <SelectItem value="all">Tous</SelectItem>
-                      {niveaux?.map(n => <SelectItem key={n.id} value={n.id}>{n.libelle}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Classe</label>
-                  <Select value={f.classeId} onValueChange={v => { setFilter("classeId", v); setFilter("matiereId", ""); }}>
-                    <SelectTrigger className="h-8 border-border bg-muted text-xs text-foreground"><SelectValue placeholder="Tous" /></SelectTrigger>
-                    <SelectContent className="border-border bg-card text-foreground">
-                      <SelectItem value="all">Tous</SelectItem>
-                      {niveaux?.find(n => n.id === f.niveauId) && classes?.filter(c => c.niveauId === f.niveauId).map(c =>
-                        <SelectItem key={c.id} value={c.id}>{c.libelle}</SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Matière</label>
-                  <Select value={f.matiereId} onValueChange={v => setFilter("matiereId", v)}>
-                    <SelectTrigger className="h-8 border-border bg-muted text-xs text-foreground"><SelectValue placeholder="Tous" /></SelectTrigger>
-                    <SelectContent className="border-border bg-card text-foreground">
-                      <SelectItem value="all">Tous</SelectItem>
-                      {matieres?.map(m => <SelectItem key={m.id} value={m.id}>{m.libelle}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
+            {/* Catégorie */}
+            <div className="space-y-2.5 mb-3">
+              <div>
+                <label className="mb-1 block text-xs text-muted-foreground">Catégorie</label>
+                <Select value={f.categorieParentId} onValueChange={v => { setFilter("categorieParentId", v); setFilter("categorieId", ""); }}>
+                  <SelectTrigger className="h-8 border-border bg-muted text-xs text-foreground"><SelectValue placeholder="Toutes" /></SelectTrigger>
+                  <SelectContent className="border-border bg-card text-foreground">
+                    <SelectItem value="all">Toutes</SelectItem>
+                    {parentCats.map(c => <SelectItem key={c.id} value={c.id}>{c.nom}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
-            )}
-
-            {/* Cascade FOURNITURE */}
-            {(f.type === "" || f.type === "FOURNITURE") && (
-              <div className="space-y-2.5 mb-3">
+              {f.categorieParentId && (
                 <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Catégorie</label>
-                  <Select value={f.categorieParentId} onValueChange={v => { setFilter("categorieParentId", v); setFilter("categorieId", ""); }}>
+                  <label className="mb-1 block text-xs text-muted-foreground">Sous-catégorie</label>
+                  <Select value={f.categorieId} onValueChange={v => setFilter("categorieId", v)}>
                     <SelectTrigger className="h-8 border-border bg-muted text-xs text-foreground"><SelectValue placeholder="Toutes" /></SelectTrigger>
                     <SelectContent className="border-border bg-card text-foreground">
                       <SelectItem value="all">Toutes</SelectItem>
-                      {parentCats.map(c => <SelectItem key={c.id} value={c.id}>{c.nom}</SelectItem>)}
+                      {childCats.map(c => <SelectItem key={c.id} value={c.id}>{c.nom}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
-                {f.categorieParentId && (
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Sous-catégorie</label>
-                    <Select value={f.categorieId} onValueChange={v => setFilter("categorieId", v)}>
-                      <SelectTrigger className="h-8 border-border bg-muted text-xs text-foreground"><SelectValue placeholder="Toutes" /></SelectTrigger>
-                      <SelectContent className="border-border bg-card text-foreground">
-                        <SelectItem value="all">Toutes</SelectItem>
-                        {childCats.map(c => <SelectItem key={c.id} value={c.id}>{c.nom}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+            </div>
 
             <div className="space-y-2.5">
               <div>
@@ -260,16 +181,6 @@ export default function CatalogPage() {
                     <SelectItem value="SUSPENDU">Suspendu</SelectItem>
                     <SelectItem value="DISCONTINUE">Discontinué</SelectItem>
                     <SelectItem value="ARCHIVE">Archivé</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-muted-foreground">Année scolaire</label>
-                <Select value={f.anneeListeId} onValueChange={v => setFilter("anneeListeId", v)}>
-                  <SelectTrigger className="h-8 border-border bg-muted text-xs text-foreground"><SelectValue placeholder="Toutes" /></SelectTrigger>
-                  <SelectContent className="border-border bg-card text-foreground">
-                    <SelectItem value="all">Toutes</SelectItem>
-                    {anneesScolaires?.map(a => <SelectItem key={a.id} value={a.id}>{a.libelle}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -368,8 +279,7 @@ export default function CatalogPage() {
                             <Link href={`/dashboard/catalog/${p.id}`} className="font-medium text-foreground hover:text-primary transition-colors">
                               {p.titre}
                             </Link>
-                            {p.auteur && <p className="text-xs text-muted-foreground mt-0.5">{p.auteur}</p>}
-                          </td>
+                                                    </td>
                           <td className="max-w-28 truncate px-3 py-3 text-xs text-muted-foreground" title={p.categorieNom || ""}>
                             {p.categorieNom || "—"}
                           </td>

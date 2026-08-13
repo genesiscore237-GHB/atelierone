@@ -10,6 +10,8 @@ export const clients = pgTable("clients", {
   adresse: text("adresse"),
   codeClient: varchar("code_client", { length: 50 }).unique(),
   agenceId: integer("agence_id").references(() => agences.id),
+  // Particulier / Entreprise ponctuelle / Entreprise sous contrat
+  typeClient: varchar("type_client", { length: 30 }).default("particulier"),
   categoriePrix: varchar("categorie_prix", { length: 50 }).default("public"),
   plafondCredit: numeric("plafond_credit", { precision: 12, scale: 2 }).default("0"),
   notes: text("notes"),

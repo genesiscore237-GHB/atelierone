@@ -1,21 +1,7 @@
 import { z } from "zod";
 import { sql, type SQL } from "drizzle-orm";
 import {
-  ventes,
-  ventesLignes,
-  produits,
-  clients,
-  utilisateurs,
-  agences,
-  categories,
-  fournisseurs,
-  niveaux,
-  filieres,
-  classes,
-  sousSystemes,
-  caisses,
-  sessionsCaisse,
-} from "@atelierone/db";
+  ventes, ventesLignes, produits, clients, utilisateurs, agences, categories, fournisseurs, caisses, sessionsCaisse } from "@atelierone/db";
 
 export const coutLigne = sql`${ventesLignes.quantite} * COALESCE(${ventesLignes.coutUnitaire}, ${produits.prixAchat} * ${ventesLignes.facteurConversion}, 0)`;
 export const margeLigne = sql`${ventesLignes.totalLigne} - ${coutLigne}`;
@@ -62,61 +48,6 @@ export const REPORT_DIMENSIONS = {
     select: () => ({
       dimId: sql`${produits.typeProduit}`,
       dimLabel: sql`${produits.typeProduit}`,
-    }),
-    joins: () => [] as SQL[],
-  },
-  niveau: {
-    key: "niveau",
-    label: "Niveau scolaire",
-    group: "scolaire",
-    groupBy: () => [produits.niveauId, niveaux.libelle],
-    select: () => ({
-      dimId: sql`${produits.niveauId}`,
-      dimLabel: sql`${niveaux.libelle}`,
-    }),
-    joins: () => [sql`left join ${niveaux} on ${niveaux.id} = ${produits.niveauId}`] as SQL[],
-  },
-  classe: {
-    key: "classe",
-    label: "Classe",
-    group: "scolaire",
-    groupBy: () => [produits.classeId, classes.libelle],
-    select: () => ({
-      dimId: sql`${produits.classeId}`,
-      dimLabel: sql`${classes.libelle}`,
-    }),
-    joins: () => [sql`left join ${classes} on ${classes.id} = ${produits.classeId}`] as SQL[],
-  },
-  filiere: {
-    key: "filiere",
-    label: "Filière",
-    group: "scolaire",
-    groupBy: () => [produits.filiereId, filieres.libelle],
-    select: () => ({
-      dimId: sql`${produits.filiereId}`,
-      dimLabel: sql`${filieres.libelle}`,
-    }),
-    joins: () => [sql`left join ${filieres} on ${filieres.id} = ${produits.filiereId}`] as SQL[],
-  },
-  sousSysteme: {
-    key: "sousSysteme",
-    label: "Sous-système",
-    group: "scolaire",
-    groupBy: () => [produits.sousSystemeId, sousSystemes.libelle],
-    select: () => ({
-      dimId: sql`${produits.sousSystemeId}`,
-      dimLabel: sql`${sousSystemes.libelle}`,
-    }),
-    joins: () => [sql`left join ${sousSystemes} on ${sousSystemes.id} = ${produits.sousSystemeId}`] as SQL[],
-  },
-  editeur: {
-    key: "editeur",
-    label: "Éditeur",
-    group: "produit",
-    groupBy: () => [produits.editeur],
-    select: () => ({
-      dimId: sql`${produits.editeur}`,
-      dimLabel: sql`${produits.editeur}`,
     }),
     joins: () => [] as SQL[],
   },
@@ -237,11 +168,6 @@ export const OPTION_RESOURCES = [
   "produits",
   "categories",
   "typesProduit",
-  "niveaux",
-  "classes",
-  "filieres",
-  "sousSystemes",
-  "editeurs",
   "fournisseurs",
   "clients",
   "vendeurs",
@@ -257,11 +183,6 @@ export const reportFiltersSchema = z.object({
   codesBarres: z.array(z.string().min(1).max(100)).max(1000).optional(),
   categories: z.array(z.number().int()).max(200).optional(),
   typesProduit: z.array(z.string().min(1).max(50)).max(50).optional(),
-  niveaux: z.array(z.string().uuid()).max(200).optional(),
-  classes: z.array(z.string().uuid()).max(200).optional(),
-  filieres: z.array(z.string().uuid()).max(200).optional(),
-  sousSystemes: z.array(z.string().uuid()).max(200).optional(),
-  editeurs: z.array(z.string().min(1).max(255)).max(200).optional(),
   fournisseurs: z.array(z.number().int()).max(200).optional(),
   clients: z.array(z.number().int()).max(500).optional(),
   vendeurs: z.array(z.number().int()).max(500).optional(),

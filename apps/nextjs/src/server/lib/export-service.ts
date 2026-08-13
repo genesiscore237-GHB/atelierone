@@ -51,7 +51,7 @@ export class ExportService {
       .select({
         codeBarre: produits.codeBarre,
         titre: produits.titre,
-        auteur: produits.auteur,
+        editeur: produits.editeur,
         prixVente: produits.prixVente,
         stock: stocks.quantite,
         seuil: produits.seuilAlerte,

@@ -35,7 +35,7 @@ export function usePermission() {
   const can = useCallback((permission: string, scope?: string) => {
     if (!user) return false;
 
-    if (user.role === 'admin_reseau') return true;
+    if (user.role === 'superadmin') return true;
 
     if (!user.role) return false;
     const permissions = rolePermissions[user.role] || [];

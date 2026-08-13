@@ -170,7 +170,7 @@ export const cashRouter = createTRPCRouter({
 
     return rows.map((c) => {
       const perm = permsByCaisse.get(c.id);
-      const isGestionnaire = ctx.user.role === "admin_reseau" || ctx.user.role === "responsable_agence";
+      const isGestionnaire = ctx.user.role === "superadmin" || ctx.user.role === "directeur";
       const permissions = isGestionnaire ? {
         peutOuvrir: true, peutFermer: true, peutDepenser: true, peutVoirMouvements: true,
       } : {

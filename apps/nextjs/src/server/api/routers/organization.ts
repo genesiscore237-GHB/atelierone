@@ -63,7 +63,7 @@ export const organizationRouter = createTRPCRouter({
         const [adminRole] = await db
           .select({ id: roles.id })
           .from(roles)
-          .where(eq(roles.code, "admin_reseau"))
+          .where(eq(roles.code, "superadmin"))
           .limit(1);
         if (adminRole) {
           await db.insert(utilisateurs).values({

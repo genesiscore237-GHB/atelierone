@@ -7,7 +7,7 @@
  *   node scripts/deploy.mjs supabase       → déploie sur la base Supabase cloud
  *   node scripts/deploy.mjs all            → déploie local PUIS supabase, puis compare
  *   node scripts/deploy.mjs backup         → sauvegarde uniquement (local + supabase)
- *   node scripts/deploy.mjs --catalogue <dossier>   → autre dossier d'import (défaut: DOC/donnéés papeterie/import-atelierone)
+ *   node scripts/deploy.mjs --catalogue <dossier>   → autre dossier d'import (défaut: DOC/import-atelierone)
  *
  * Chaîne exécutée par cible (tout échec interrompt le déploiement) :
  *   1. BACKUP    : pg_dump de la base cible dans backups/
@@ -30,7 +30,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CATALOGUE = (() => {
   const rel = process.argv.includes("--catalogue")
     ? process.argv[process.argv.indexOf("--catalogue") + 1]
-    : "DOC/donnéés papeterie/import-atelierone";
+    : "DOC/import-atelierone";
   // Chemin ABSOLU : les scripts pnpm s'exécutent depuis packages/db.
   return resolve(ROOT, rel);
 })();

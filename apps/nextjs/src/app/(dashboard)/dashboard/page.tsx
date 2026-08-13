@@ -28,7 +28,7 @@ export default async function DashboardPage() {
   const roleLabel = ROLE_LABELS[session.user.role] ?? session.user.role;
   const canAdmin =
     (session.user.permissions ?? []).some((p) => p.startsWith("admin.")) ||
-    session.user.role === "admin_reseau";
+    session.user.role === "superadmin";
 
   return (
     <div className="min-h-screen bg-background font-sans text-foreground selection:bg-primary/30">

@@ -263,7 +263,6 @@ type PrixAjustement = {
   prixAchat?: number | null;
   prixVente?: number | null;
   prixMinimumVente?: number | null;
-  prixReglementeValeur?: number | null;
   prixMaximumRachat?: number | null;
   tva?: number | null;
 };
@@ -318,15 +317,6 @@ async function appliquerPrixCatalogue(
       if (nouveau !== ancien) {
         setProduit.prixMinimumVente = String(nouveau);
         changements.push({ produitId: a.produitId, typePrix: "MINIMUM_VENTE", ancienPrix: String(ancien), nouveauPrix: String(nouveau), uniteId });
-        touched = true;
-      }
-    }
-    if (a.prixReglementeValeur != null) {
-      const ancien = Number(produit.prixReglementeValeur ?? 0);
-      const nouveau = Number(a.prixReglementeValeur);
-      if (nouveau !== ancien) {
-        setProduit.prixReglementeValeur = String(nouveau);
-        changements.push({ produitId: a.produitId, typePrix: "PRIX_REGLEMENTE", ancienPrix: String(ancien), nouveauPrix: String(nouveau), uniteId });
         touched = true;
       }
     }
@@ -739,8 +729,6 @@ export const procurementRouter = createTRPCRouter({
           facteurConversion: achatsLignes.facteurConversion,
           titre: produits.titre,
           typeProduit: produits.typeProduit,
-          prixReglemente: produits.prixReglemente,
-          prixReglementeValeur: produits.prixReglementeValeur,
           prixVente: produits.prixVente,
           prixMinimumVente: produits.prixMinimumVente,
           prixAchat: produits.prixAchat,
@@ -788,8 +776,6 @@ export const procurementRouter = createTRPCRouter({
             uniteId: l.uniteId ? String(l.uniteId) : null,
             facteurConversion: Number(l.facteurConversion ?? 1),
             typeProduit: l.typeProduit,
-            prixReglemente: !!l.prixReglemente,
-            prixReglementeValeur: l.prixReglementeValeur ? String(l.prixReglementeValeur) : null,
             prixVente: l.prixVente ? String(l.prixVente) : null,
             prixMinimumVente: l.prixMinimumVente ? String(l.prixMinimumVente) : null,
             prixAchat: l.prixAchat ? String(l.prixAchat) : null,

@@ -39,7 +39,6 @@ export function RoleFilters({
           <SelectValue placeholder="Niveau" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">Tous les niveaux</SelectItem>
           <SelectItem value="1">Niveau 1</SelectItem>
           <SelectItem value="2">Niveau 2</SelectItem>
           <SelectItem value="3">Niveau 3</SelectItem>

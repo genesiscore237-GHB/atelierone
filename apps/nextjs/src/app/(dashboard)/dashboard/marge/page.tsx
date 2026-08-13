@@ -21,7 +21,6 @@ export default function MargePage() {
   const [typeProduit, setTypeProduit] = useState<string>("");
   const [operateurId, setOperateurId] = useState<string>("");
   const [groupBy, setGroupBy] = useState<"day" | "month">("day");
-  const [groupePar, setGroupePar] = useState<"type" | "niveau">("type");
   const [sortBy, setSortBy] = useState<"marge" | "ca" | "quantite" | "tauxMarge" | "cout">("marge");
   const [offset, setOffset] = useState(0);
   const [exporting, setExporting] = useState(false);
@@ -32,7 +31,7 @@ export default function MargePage() {
 
   const { data: kpis, isLoading: kpisLoading } = api.marge.getMargeKpis.useQuery({ dateDebut, dateFin });
   const { data: series, isLoading: seriesLoading } = api.marge.getMargeSeries.useQuery({ dateDebut, dateFin, groupBy });
-  const { data: repartition, isLoading: repartitionLoading } = api.marge.getMargeParType.useQuery({ dateDebut, dateFin, groupePar });
+  const { data: repartition, isLoading: repartitionLoading } = api.marge.getMargeParType.useQuery({ dateDebut, dateFin });
   const { data: table, isLoading: tableLoading } = api.marge.getMargeParProduit.useQuery({ ...filters, sortBy, limit: 50, offset });
   const { data: sousCout, isLoading: sousCoutLoading } = api.marge.getVentesSousCout.useQuery({ dateDebut, dateFin, limit: 10 });
   const { data: retoursData, isLoading: retoursLoading } = api.marge.getMargeRetours.useQuery({ dateDebut, dateFin });
@@ -301,18 +300,7 @@ export default function MargePage() {
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h3 className="text-lg font-semibold text-foreground">Répartition de la marge</h3>
-              <p className="text-sm text-muted-foreground">Par type de produit ou niveau</p>
-            </div>
-            <div className="flex gap-1">
-              {(["type", "niveau"] as const).map((g) => (
-                <button
-                  key={g}
-                  onClick={() => setGroupePar(g)}
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium ${groupePar === g ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent/50"}`}
-                >
-                  {g === "type" ? "Type" : "Niveau"}
-                </button>
-              ))}
+              <p className="text-sm text-muted-foreground">Par type de produit (pièce / service)</p>
             </div>
           </div>
           <div className="h-64">

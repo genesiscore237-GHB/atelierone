@@ -52,14 +52,7 @@ export const updateUserSchema = createUserSchema.partial().omit({ password: true
 
 const productBaseSchema = z.object({
   codeBarre: z.string().max(100).optional(),
-  isbn: z.string().max(20).optional(),
   titre: z.string().min(1, "Titre requis").max(500),
-  auteur: z.string().max(255).optional(),
-  editeur: z.string().max(255).optional(),
-  collection: z.string().max(255).optional(),
-  niveauScolaire: z.string().max(100).optional(),
-  matiere: z.string().max(255).optional(),
-  langue: z.string().max(100).optional(),
   etat: z.enum(["neuf", "occasion", "vieux"]).default("neuf"),
   description: z.string().optional(),
   categorieId: z.number().positive().optional(),

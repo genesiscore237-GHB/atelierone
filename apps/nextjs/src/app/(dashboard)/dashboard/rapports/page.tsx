@@ -61,17 +61,7 @@ const FILTER_GROUPS: { titre: string; filters: { key: string; label: string; res
       { key: "produits", label: "Produits", resource: "produits" },
       { key: "categories", label: "Catégories", resource: "categories" },
       { key: "typesProduit", label: "Types de produit", resource: "typesProduit" },
-      { key: "editeurs", label: "Éditeurs", resource: "editeurs" },
       { key: "fournisseurs", label: "Fournisseurs", resource: "fournisseurs" },
-    ],
-  },
-  {
-    titre: "Scolaire",
-    filters: [
-      { key: "niveaux", label: "Niveaux", resource: "niveaux" },
-      { key: "classes", label: "Classes", resource: "classes" },
-      { key: "filieres", label: "Filières", resource: "filieres" },
-      { key: "sousSystemes", label: "Sous-systèmes", resource: "sousSystemes" },
     ],
   },
   {

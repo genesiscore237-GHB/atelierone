@@ -1,0 +1,5 @@
+{"code":"PCE","libelle":"Pièce","symbole":"pce","type":"QUANTITE","isActive":true,"refSource":"demo-atelierone"}
+{"code":"HEU","libelle":"Heure","symbole":"h","type":"TEMPS","isActive":true,"refSource":"demo-atelierone"}
+{"code":"DOZ","libelle":"Douzaine","symbole":"dz","type":"QUANTITE","isActive":true,"refSource":"demo-atelierone"}
+{"code":"BOI","libelle":"Boîte","symbole":"bt","type":"QUANTITE","isActive":true,"refSource":"demo-atelierone"}
+{"code":"CTN","libelle":"Carton","symbole":"ctn","type":"QUANTITE","isActive":true,"refSource":"demo-atelierone"}

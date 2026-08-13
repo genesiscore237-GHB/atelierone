@@ -18,10 +18,8 @@ import type { LigneValidation, RapportValidation, ResultatImport, ImportContext 
 export type EntiteCle =
   | "unites"
   | "categories"
-  | "editeurs"
   | "fournisseurs"
   | "produits"
-  | "manuels"
   | "produits_unites"
   | "produits_fournisseurs"
   | "tarifs"
@@ -31,10 +29,8 @@ export type EntiteCle =
 export const ORDRE_IMPORT: EntiteCle[] = [
   "unites",
   "categories",
-  "editeurs",
   "fournisseurs",
   "produits",
-  "manuels",
   "produits_unites",
   "produits_fournisseurs",
   "tarifs",
@@ -45,10 +41,8 @@ export const ORDRE_IMPORT: EntiteCle[] = [
 const FICHIER_PAR_ENTITE: Record<EntiteCle, string> = {
   unites: "unites.jsonl",
   categories: "categories.jsonl",
-  editeurs: "editeurs.jsonl",
   fournisseurs: "fournisseurs.jsonl",
   produits: "produits.jsonl",
-  manuels: "manuels.jsonl",
   produits_unites: "produits_unites.jsonl",
   produits_fournisseurs: "produits_fournisseurs.jsonl",
   tarifs: "tarifs.jsonl",
@@ -124,10 +118,8 @@ export function schemaParEntite(cle: EntiteCle): z.ZodType {
   const map: Record<EntiteCle, z.ZodType> = {
     unites: schemas.unitesSchema,
     categories: schemas.categoriesSchema,
-    editeurs: schemas.editeursSchema,
     fournisseurs: schemas.fournisseursSchema,
     produits: schemas.produitsSchema,
-    manuels: schemas.manuelsSchema,
     produits_unites: schemas.produitsUnitesSchema,
     produits_fournisseurs: schemas.produitsFournisseursSchema,
     tarifs: schemas.tarifsSchema,
@@ -143,11 +135,9 @@ function cleUpsert(cle: EntiteCle, row: Record<string, unknown>): string | null 
     case "categories":
     case "fournisseurs":
       return String(row.code ?? "");
-    case "editeurs":
       return String(row.nom ?? "").trim().toLowerCase();
     case "produits":
       return String(row.codeBarre ?? "");
-    case "manuels":
       return String(row.codeBarre ?? "");
     case "produits_unites":
       return row.codeBarre && row.uniteCode ? `${row.codeBarre}|${row.uniteCode}` : "";
@@ -168,30 +158,24 @@ interface Maps {
   categories: Map<string, number>;
   unites: Map<string, string>;
   fournisseurs: Map<string, number>;
-  editeurs: Map<string, string>;
   produits: Map<string, number>;
   agences: Map<string, number>;
-  annees: Map<string, string>;
 }
 
 export async function preparerMaps(): Promise<Maps> {
-  const [cats, unis, four, edis, prods, agences, annees] = await Promise.all([
+  const [cats, unis, four, prods, agences] = await Promise.all([
     db.select({ code: schema.categories.code, id: schema.categories.id }).from(schema.categories),
     db.select({ code: schema.unitesMesure.code, id: schema.unitesMesure.id }).from(schema.unitesMesure),
     db.select({ code: schema.fournisseurs.code, id: schema.fournisseurs.id }).from(schema.fournisseurs),
-    db.select({ nom: schema.editeurs.nom, id: schema.editeurs.id }).from(schema.editeurs),
     db.select({ codeBarre: schema.produits.codeBarre, id: schema.produits.id }).from(schema.produits),
     db.select({ code: schema.agences.code, id: schema.agences.id }).from(schema.agences),
-    db.select({ libelle: schema.anneesScolaires.libelle, id: schema.anneesScolaires.id }).from(schema.anneesScolaires),
   ]);
   return {
     categories: new Map(cats.map((c) => [c.code, c.id])),
     unites: new Map(unis.map((u) => [u.code, u.id])),
     fournisseurs: new Map(four.map((f) => [f.code, f.id])),
-    editeurs: new Map(edis.map((e) => [e.nom.trim().toLowerCase(), e.id])),
     produits: new Map(prods.map((p) => [p.codeBarre, p.id])),
     agences: new Map(agences.map((a) => [a.code, a.id])),
-    annees: new Map(annees.map((a) => [a.libelle, a.id])),
   };
 }
 
@@ -218,10 +202,8 @@ export async function importerEntite(cle: EntiteCle, rows: unknown[], ctx: Impor
     switch (cle) {
       case "unites": ({ creees, skippees } = await upsertUnites(batch, ctx, maps, creees, skippees, details)); break;
       case "categories": ({ creees, skippees } = await upsertCategories(batch, ctx, maps, creees, skippees, details)); break;
-      case "editeurs": ({ creees, skippees } = await upsertEditeurs(batch, ctx, maps, creees, skippees, details)); break;
       case "fournisseurs": ({ creees, skippees } = await upsertFournisseurs(batch, ctx, maps, creees, skippees, details)); break;
       case "produits": ({ creees, skippees } = await upsertProduits(batch, ctx, maps, creees, skippees, details)); break;
-      case "manuels": ({ creees, skippees } = await upsertManuels(batch, ctx, maps, creees, skippees, details)); break;
       case "produits_unites": ({ creees, skippees } = await upsertProduitsUnites(batch, ctx, maps, creees, skippees, details)); break;
       case "produits_fournisseurs": ({ creees, skippees } = await upsertProduitsFournisseurs(batch, ctx, maps, creees, skippees, details)); break;
       case "tarifs": ({ creees, skippees } = await upsertTarifs(batch, ctx, maps, creees, skippees, details)); break;
@@ -385,31 +367,6 @@ async function upsertCategories(batch: unknown[], ctx: ImportContext, maps: Maps
   return { creees, skippees };
 }
 
-async function upsertEditeurs(batch: unknown[], ctx: ImportContext, maps: Maps, creees: number, skippees: number, details: string[]) {
-  const lignes = batch.map(mapValide<schemas.EditeurImport>("editeurs")).filter((l): l is schemas.EditeurImport => l !== null);
-  for (const ligne of lignes) {
-    const cle = ligne.nom.trim().toLowerCase();
-    const agenceId = ligne.agenceCode ? maps.agences.get(ligne.agenceCode) ?? null : null;
-    if (ctx.dryRun) { creees++; details.push(`editeur ${ligne.nom} : à créer`); continue; }
-    if (maps.editeurs.has(cle)) {
-      const id = maps.editeurs.get(cle)!;
-      await db.update(schema.editeurs).set({ emailContact: ligne.emailContact, telephoneContact: ligne.telephoneContact, updatedAt: new Date() })
-        .where(eq(schema.editeurs.id, id));
-      skippees++; details.push(`editeur ${ligne.nom} : existant`);
-      continue;
-    }
-    const [ins] = await db.insert(schema.editeurs).values({
-      nom: ligne.nom,
-      emailContact: ligne.emailContact,
-      telephoneContact: ligne.telephoneContact,
-      agenceId,
-    }).returning({ id: schema.editeurs.id });
-    if (ins) { maps.editeurs.set(cle, ins.id); creees++; }
-    else skippees++;
-  }
-  return { creees, skippees };
-}
-
 async function upsertFournisseurs(batch: unknown[], ctx: ImportContext, maps: Maps, creees: number, skippees: number, details: string[]) {
   const lignes = batch.map(mapValide<schemas.FournisseurImport>("fournisseurs")).filter((l): l is schemas.FournisseurImport => l !== null);
   for (const ligne of lignes) {
@@ -453,14 +410,7 @@ async function upsertProduits(batch: unknown[], ctx: ImportContext, maps: Maps, 
         typeProduit: ligne.typeProduit,
         codeBarre: ligne.codeBarre,
         nomCode: ligne.nomCode,
-        isbn: ligne.isbn,
         titre: ligne.titre,
-        auteur: ligne.auteur,
-        editeur: ligne.editeur,
-        collection: ligne.collection,
-        niveauScolaire: ligne.niveauScolaire,
-        matiere: ligne.matiere,
-        langue: ligne.langue,
         etat: ligne.etat ?? "neuf",
         description: ligne.description,
         categorieId,
@@ -520,50 +470,6 @@ async function upsertProduits(batch: unknown[], ctx: ImportContext, maps: Maps, 
     if (connusAvant.has(r.codeBarre)) { skippees++; details.push(`produit ${r.codeBarre} : mis à jour`); }
     else { creees++; details.push(`produit ${r.codeBarre} : créé`); }
   }
-  return { creees, skippees };
-}
-
-async function upsertManuels(batch: unknown[], ctx: ImportContext, maps: Maps, creees: number, skippees: number, details: string[]) {
-  const lignes = batch.map(mapValide<schemas.ManuelImport>("manuels")).filter((l): l is schemas.ManuelImport => l !== null);
-  const prets: { ligne: schemas.ManuelImport; valeurs: Record<string, unknown>; produitId: number }[] = [];
-  for (const ligne of lignes) {
-    const produitId = maps.produits.get(ligne.codeBarre);
-    if (!produitId) { skippees++; details.push(`manuel ${ligne.codeBarre} : REFUSÉ (produit inconnu)`); continue; }
-    const editeurId = ligne.editeurNom ? maps.editeurs.get(ligne.editeurNom.trim().toLowerCase()) ?? null : null;
-    const anneeImport = ligne.anneeImport ? maps.annees.get(ligne.anneeImport) ?? null : null;
-    prets.push({
-      ligne,
-      produitId,
-      valeurs: {
-        produitId,
-        typeManuel: ligne.typeManuel,
-        editeurId,
-        prixReglemente: ligne.prixReglemente ?? false,
-        prixReglementeValeur: ligne.prixReglementeValeur,
-        anneeImport,
-      },
-    });
-  }
-  if (prets.length === 0) return { creees, skippees };
-  if (ctx.dryRun) {
-    for (const p of prets) { creees++; details.push(`manuel ${p.ligne.codeBarre} : à créer`); }
-    return { creees, skippees };
-  }
-  const ins = await db.insert(schema.manuelScolaireDetail)
-    .values(prets.map((p) => p.valeurs) as any[])
-    .onConflictDoUpdate({
-      target: schema.manuelScolaireDetail.produitId,
-      set: {
-        typeManuel: sql`excluded.type_manuel`,
-        editeurId: sql`excluded.editeur_id`,
-        prixReglemente: sql`excluded.prix_reglemente`,
-        prixReglementeValeur: sql`excluded.prix_reglemente_valeur`,
-        anneeImport: sql`excluded.annee_import`,
-        updatedAt: new Date(),
-      } as any,
-    })
-    .returning({ produitId: schema.manuelScolaireDetail.produitId });
-  for (const r of ins) { creees++; details.push(`manuel ${r.produitId} : créé/mis à jour`); }
   return { creees, skippees };
 }
 

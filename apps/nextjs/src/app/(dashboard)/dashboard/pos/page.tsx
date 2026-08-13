@@ -134,7 +134,7 @@ export default function POSPage() {
 
   const utils = api.useUtils();
   const { hasPermission, user } = usePermissions();
-  const canAccessCash = user?.role === "admin_reseau" || user?.role === "responsable_agence";
+  const canAccessCash = user?.role === "superadmin" || user?.role === "directeur";
   const { data: session } = api.pos.getOpenSession.useQuery({ caisseId: selectedCaisseId ?? undefined });
   const { data: products } = api.pos.listProductsWithStock.useQuery({ limit: 200 });
   const { data: customers } = api.customers.list.useQuery({ search: "" });

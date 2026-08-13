@@ -4,7 +4,7 @@ export interface ReportTemplate {
   id: string;
   nom: string;
   description: string;
-  groupe: "ventes" | "marges" | "performances" | "scolaire";
+  groupe: "ventes" | "marges" | "performances";
   params: ReportInput;
 }
 
@@ -164,23 +164,6 @@ export const REPORT_TEMPLATES: ReportTemplate[] = [
     },
   },
   {
-    id: "ventes-scolaires",
-    nom: "Ventes par niveau / classe / filière",
-    description: "Ventilation du matériel scolaire par niveau, classe, filière et sous-système.",
-    groupe: "scolaire",
-    params: {
-      dimension: "niveau",
-      measures: ["ca", "quantite", "nbTickets"],
-      ratios: [],
-      filters: { typesProduit: ["FOURNITURE"] },
-      comparePrevious: true,
-      sortBy: "measure:ca",
-      sortDir: "desc",
-      limit: 100,
-      offset: 0,
-    },
-  },
-  {
     id: "fidelite-clients",
     nom: "Top clients",
     description: "Les meilleurs clients : CA, tickets et panier moyen.",
@@ -194,23 +177,6 @@ export const REPORT_TEMPLATES: ReportTemplate[] = [
       sortBy: "measure:ca",
       sortDir: "desc",
       limit: 50,
-      offset: 0,
-    },
-  },
-  {
-    id: "editeurs-fournisseurs",
-    nom: "Ventes par éditeur et fournisseur",
-    description: "Poids de chaque éditeur et fournisseur dans le chiffre d'affaires.",
-    groupe: "ventes",
-    params: {
-      dimension: "editeur",
-      measures: ["ca", "quantite", "margeBrute"],
-      ratios: ["tauxMarge"],
-      filters: {},
-      comparePrevious: false,
-      sortBy: "measure:ca",
-      sortDir: "desc",
-      limit: 100,
       offset: 0,
     },
   },

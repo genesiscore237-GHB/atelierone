@@ -16,48 +16,67 @@ const __dirname = path.dirname(__filename);
 requireLocalOrForced("db:install (seed-install.ts)");
 
 /**
- * INSTALLATION PROPRE « chez le client ».
- * Purge TOTALE de la base (opérations, produits, comptes, socle, référentiel),
- * puis recrée :
- *  1. l'agence Mvog-Ada (Yaoundé, Cameroun, XAF)
- *  2. le socle sécurité (rôles + permissions)
+ * INSTALLATION PROPRE ATELIERONE « chez le client ».
+ * Purge TOTALE puis recrée :
+ *  1. les deux sites (agences) : Site Principal – Atelier / Site Secondaire – Stockage
+ *  2. le socle sécurité (10 rôles garage + permissions + matrice)
  *  3. l'administrateur + les comptes de démonstration (mot de passe : admin123)
- *  4. le référentiel éducatif camerounais (sous-systèmes, ministères, niveaux,
- *     classes, matières, filières, années scolaires, unités de mesure)
+ *  4. les objets SQL hors schéma drizzle (schema-extras : fonctions, vues, triggers, RLS)
  *
- * Le CATALOGUE (catégories, éditeurs, fournisseurs, produits, stocks) n'est PAS
- * créé ici : il est inséré par le pipeline d'import standard (import:catalogue)
- * après contrôle de conformité — voir scripts/deploy.mjs.
+ * Le CATALOGUE (catégories, fournisseurs, produits, stocks) n'est PAS créé ici :
+ * il est inséré par le pipeline d'import standard (import:catalogue) après
+ * contrôle de conformité — voir scripts/deploy.mjs.
  */
 
-const AGENCE = {
-  nom: "Mvog-Ada",
-  code: "MVOG-ADA",
-  adresse: "Mvog-Ada, Yaoundé",
-  telephone: "+237 000 000 000",
-  email: "contact@atelierone.cm",
-  ville: "Yaoundé",
-  pays: "Cameroun",
-  devise: "XAF",
-  tvaDefaut: "18",
-  prefixeFacture: "LIP",
-  isActive: true,
-};
+const SITES = [
+  {
+    nom: "Site Principal - Atelier",
+    code: "SITE-1",
+    adresse: "Yaoundé",
+    telephone: "+237 000 000 000",
+    email: "contact@atelierone.cm",
+    ville: "Yaoundé",
+    pays: "Cameroun",
+    devise: "XAF",
+    tvaDefaut: "19.25",
+    prefixeFacture: "GPJ-FAC-",
+    prefixeDevis: "GPJ-DEV-",
+    prefixeOR: "GPJ-OR-",
+    prefixeBC: "GPJ-BC-",
+    isActive: true,
+  },
+  {
+    nom: "Site Secondaire - Stockage",
+    code: "SITE-2",
+    adresse: "Yaoundé (zone de stockage longue durée)",
+    telephone: "+237 000 000 000",
+    email: "contact@atelierone.cm",
+    ville: "Yaoundé",
+    pays: "Cameroun",
+    devise: "XAF",
+    tvaDefaut: "19.25",
+    prefixeFacture: "GPJ-FAC-",
+    prefixeDevis: "GPJ-DEV-",
+    prefixeOR: "GPJ-OR-",
+    prefixeBC: "GPJ-BC-",
+    isActive: true,
+  },
+];
 
 const DEMO_USERS = [
-  { email: "operateur@atelierone.cm", role: "operateur_pos", nom: "Operateur", prenom: "Test", fonction: "Opérateur POS" },
-  { email: "caissier@atelierone.cm", role: "caissier", nom: "Caissier", prenom: "Test", fonction: "Caissier" },
-  { email: "magasinier@atelierone.cm", role: "magasinier", nom: "Magasinier", prenom: "Test", fonction: "Magasinier" },
-  { email: "comptable@atelierone.cm", role: "comptable", nom: "Comptable", prenom: "Test", fonction: "Comptable" },
-  { email: "rh@atelierone.cm", role: "rh", nom: "RH", prenom: "Test", fonction: "Gestionnaire RH" },
-  { email: "consultation@atelierone.cm", role: "consultation", nom: "Consultation", prenom: "Test", fonction: "Consultant" },
-  { email: "responsable@atelierone.cm", role: "responsable_agence", nom: "Responsable", prenom: "Agence", fonction: "Responsable d'Agence" },
-  { email: "achats@atelierone.cm", role: "gestionnaire_achats", nom: "Achats", prenom: "Test", fonction: "Gestionnaire Achats" },
+  { email: "directeur@atelierone.cm", role: "directeur", nom: "Directeur", prenom: "Patron", fonction: "Directeur / Patron" },
+  { email: "chef.atelier@atelierone.cm", role: "chef_atelier", nom: "Chef", prenom: "Atelier", fonction: "Chef des ateliers" },
+  { email: "secretaire@atelierone.cm", role: "secretaire", nom: "Secretaire", prenom: "Accueil", fonction: "Secrétaire / Accueil" },
+  { email: "magasinier@atelierone.cm", role: "magasinier", nom: "Magasinier", prenom: "Stock", fonction: "Magasinier" },
+  { email: "technicien@atelierone.cm", role: "technicien", nom: "Technicien", prenom: "Atelier", fonction: "Technicien / Mécanicien" },
+  { email: "comptable@atelierone.cm", role: "comptable", nom: "Comptable", prenom: "Finance", fonction: "Comptable" },
+  { email: "rh@atelierone.cm", role: "rh", nom: "RH", prenom: "Personnel", fonction: "Responsable RH" },
+  { email: "consultation@atelierone.cm", role: "consultation", nom: "Consultation", prenom: "Lecture", fonction: "Consultation seule" },
 ];
 
 (async () => {
   const raw = postgres(process.env.DATABASE_URL!, { ssl: false, prepare: false });
-  console.log("=== INSTALL PROPRE (purge totale + socle + référentiel) ===");
+  console.log("=== INSTALL PROPRE ATELIERONE (purge totale + socle) ===");
 
   // 1. Purge totale : toutes les tables du schéma public
   const tables = await raw`
@@ -68,50 +87,29 @@ const DEMO_USERS = [
   await raw`TRUNCATE TABLE ${raw(list)} RESTART IDENTITY CASCADE`;
   console.log(`Purge totale: ${list.length} tables vidées.`);
 
-  // 2. Agence
-  const [agence] = await db.insert(schema.agences).values(AGENCE as any).returning();
-  console.log(`Agence: ${agence.nom} (${agence.code}) — ${agence.ville}, ${agence.pays}`);
+  // 2. Sites (agences)
+  const agencesInserees = [];
+  for (const s of SITES) {
+    const [agence] = await db.insert(schema.agences).values(s as any).returning();
+    agencesInserees.push(agence);
+    console.log(`Site: ${agence.nom} (${agence.code}) — ${agence.ville}, ${agence.pays}`);
+  }
+  const agence = agencesInserees[0];
 
   // 3. Socle sécurité (rôles + permissions + associations)
   const socle = await ensureSecuritySocle(db);
   console.log(`Socle: ${socle.roles.length} rôles, ${socle.permissions.length} permissions, ${socle.associationsCrees} associations.`);
 
-  // 4. Référentiel éducatif camerounais (idempotent)
-  const educationSql = fs.readFileSync(path.resolve(__dirname, "seed-education.sql"), "utf-8");
-  const statements = educationSql.split(";").filter(s => s.trim());
-  for (const stmt of statements) {
-    // Retirer les lignes de commentaires (sinon une statement précédée d'un
-    // commentaire serait rejetée à tort par un filtre startsWith("--")).
-    const stmtClean = stmt
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith("--"))
-      .join("\n")
-      .trim();
-    // Section "VERIFICATION" du fichier : sans intérêt pour l'installation.
-    if (!stmtClean || stmtClean.startsWith("SELECT")) continue;
-    try {
-      await db.execute(sql.raw(stmtClean));
-    } catch (e: any) {
-      if (e?.message && (e.message.includes("already exists") || e.message.includes("duplicate"))) continue;
-      console.error("STATEMENT EN ERREUR:\n", stmtClean.slice(0, 500));
-      throw e;
-    }
-  }
-  const [nbUnites] = await db.select({ n: sql<number>`count(*)::int` }).from(schema.unitesMesure);
-  console.log(`Référentiel éducatif: OK (${nbUnites.n} unités de mesure).`);
-
-  // 4b. Objets SQL hors schéma drizzle (fonctions, vues, triggers, RLS,
-  //     soft-delete, séquences) — idempotent. Exécuté en une passe via le
-  //     client postgres-js (simple query protocol) car le fichier contient
-  //     des blocs DO $$ avec des ';' internes (un découpage les casserait).
+  // 4. Objets SQL hors schéma drizzle (fonctions, vues, triggers, RLS,
+  //     soft-delete, séquences) — idempotent, exécuté en une passe (simple
+  //     query protocol) car le fichier contient des blocs DO $$ avec des ';'.
   const extrasSql = fs.readFileSync(path.resolve(__dirname, "schema-extras.sql"), "utf-8");
   await raw.unsafe(extrasSql);
   console.log("Schema-extras (fonctions, vues, triggers, RLS): OK");
 
   // 5. Administrateur + comptes de démonstration (liés aux fiches RH)
-  const adminRole = socle.roles.find((r: any) => r.code === "admin_reseau");
-  if (!adminRole) throw new Error("Rôle admin_reseau introuvable");
+  const adminRole = socle.roles.find((r: any) => r.code === "superadmin");
+  if (!adminRole) throw new Error("Rôle superadmin introuvable");
   const hashed = await bcrypt.hash("admin123", 10);
 
   await db.insert(schema.utilisateurs).values({

@@ -125,7 +125,7 @@ export const posRouter = createTRPCRouter({
           sql`SELECT id FROM caisse_operateurs WHERE caisse_id = ${caisseId} AND user_id = ${userId} LIMIT 1`
         );
         const existingOp = existingRows[0];
-        const isGestionnaire = ctx.user.role === "admin_reseau" || ctx.user.role === "responsable_agence";
+        const isGestionnaire = ctx.user.role === "superadmin" || ctx.user.role === "directeur";
         if (existingOp) {
           await CaisseService.verifierPermission(Number(caisseId), Number(userId), "peutOuvrir");
         } else if (isGestionnaire) {
@@ -179,7 +179,7 @@ export const posRouter = createTRPCRouter({
           const [existingOp] = await db.select({ id: caisseOperateurs.id }).from(caisseOperateurs)
             .where(and(eq(caisseOperateurs.caisseId, caisseId), eq(caisseOperateurs.userId, userId)))
             .limit(1);
-          const isGestionnaire = ctx.user.role === "admin_reseau" || ctx.user.role === "responsable_agence";
+          const isGestionnaire = ctx.user.role === "superadmin" || ctx.user.role === "directeur";
           if (existingOp) {
             await CaisseService.verifierPermission(caisseId, userId, "peutOuvrir");
           } else if (isGestionnaire) {
@@ -316,9 +316,7 @@ export const posRouter = createTRPCRouter({
       const rows = await db.select({
         id: produits.id,
         codeBarre: produits.codeBarre,
-        isbn: produits.isbn,
         titre: produits.titre,
-        auteur: produits.auteur,
         editeur: produits.editeur,
         prixVente: produits.prixVente,
         prixMinimumVente: produits.prixMinimumVente,
@@ -334,8 +332,8 @@ export const posRouter = createTRPCRouter({
           or(
             ilike(produits.titre, pattern),
             ilike(produits.codeBarre, pattern),
-            ilike(produits.isbn, pattern),
-            ilike(produits.auteur, pattern),
+            ilike(produits.titre, pattern),
+            ilike(produits.codeBarre, pattern),
           )
         )
       )
@@ -344,9 +342,7 @@ export const posRouter = createTRPCRouter({
       return rows.map(p => ({
         id: String(p.id),
         codeBarre: p.codeBarre,
-        isbn: p.isbn,
         titre: p.titre,
-        auteur: p.auteur,
         editeur: p.editeur,
         prixVente: p.prixVente,
         prixMinimumVente: p.prixMinimumVente ? Number(p.prixMinimumVente) : null,
@@ -358,7 +354,7 @@ export const posRouter = createTRPCRouter({
         barcode: p.codeBarre ?? '',
         defaultPrice: Number(p.prixVente),
         salePrice: Number(p.prixVente),
-        author: p.auteur ?? '',
+        editeur: p.editeur ?? '',
         unites: unitsMap.get(p.id) ?? [],
       }));
     }),
@@ -534,8 +530,8 @@ export const posRouter = createTRPCRouter({
           or(
             ilike(produits.titre, pattern),
             ilike(produits.codeBarre, pattern),
-            ilike(produits.isbn, pattern),
-            ilike(produits.auteur, pattern),
+            ilike(produits.titre, pattern),
+            ilike(produits.codeBarre, pattern),
           )
         );
       }
@@ -543,9 +539,7 @@ export const posRouter = createTRPCRouter({
       const rows = await db.select({
         id: produits.id,
         codeBarre: produits.codeBarre,
-        isbn: produits.isbn,
         titre: produits.titre,
-        auteur: produits.auteur,
         editeur: produits.editeur,
         prixVente: produits.prixVente,
         prixMinimumVente: produits.prixMinimumVente,
@@ -563,9 +557,7 @@ export const posRouter = createTRPCRouter({
       return rows.map(p => ({
         id: String(p.id),
         codeBarre: p.codeBarre,
-        isbn: p.isbn,
         titre: p.titre,
-        auteur: p.auteur,
         editeur: p.editeur,
         prixVente: p.prixVente,
         prixMinimumVente: p.prixMinimumVente ? Number(p.prixMinimumVente) : null,
@@ -576,7 +568,7 @@ export const posRouter = createTRPCRouter({
         sku: p.codeBarre ?? "",
         defaultPrice: Number(p.prixVente),
         salePrice: Number(p.prixVente),
-        author: p.auteur ?? "",
+        editeur: p.editeur ?? "",
         unites: unitsMap.get(p.id) ?? [],
       }));
     }),

@@ -3,25 +3,13 @@ import { sql, like } from "drizzle-orm";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
 import {
-  produits,
-  categories,
-  niveaux,
-  classes,
-  filieres,
-  sousSystemes,
-  fournisseurs,
-  clients,
-  utilisateurs,
-  caisses,
-  agences,
-  ventes,
-} from "@atelierone/db";
+  produits, categories, fournisseurs, clients, utilisateurs, caisses, agences, ventes } from "@atelierone/db";
 import { REPORT_DIMENSIONS, REPORT_MEASURES, REPORT_RATIOS, OPTION_RESOURCES, reportInputSchema } from "./defs";
 import { runReport, type UserScope } from "./engine";
 import { REPORT_TEMPLATES } from "./templates";
 
 function scope(user: { role?: string | null; agenceId: number }) {
-  return user.role === "admin_reseau" ? null : user.agenceId;
+  return user.role === "superadmin" ? null : user.agenceId;
 }
 
 export const reportsRouter = createTRPCRouter({
@@ -46,11 +34,6 @@ export const reportsRouter = createTRPCRouter({
       { key: "codesBarres", label: "Codes-barres", kind: "text" },
       { key: "categories", label: "Catégories", kind: "resource", resource: "categories" },
       { key: "typesProduit", label: "Types de produit", kind: "resource", resource: "typesProduit" },
-      { key: "niveaux", label: "Niveaux", kind: "resource", resource: "niveaux" },
-      { key: "classes", label: "Classes", kind: "resource", resource: "classes" },
-      { key: "filieres", label: "Filières", kind: "resource", resource: "filieres" },
-      { key: "sousSystemes", label: "Sous-systèmes", kind: "resource", resource: "sousSystemes" },
-      { key: "editeurs", label: "Éditeurs", kind: "resource", resource: "editeurs" },
       { key: "fournisseurs", label: "Fournisseurs", kind: "resource", resource: "fournisseurs" },
       { key: "clients", label: "Clients", kind: "resource", resource: "clients" },
       { key: "vendeurs", label: "Vendeurs", kind: "resource", resource: "vendeurs" },
@@ -109,53 +92,10 @@ export const reportsRouter = createTRPCRouter({
           .filter((i) => i.label !== "");
       }
 
-      if (input.resource === "niveaux") {
-        const items = await db.select({ id: niveaux.id, label: niveaux.libelle })
-          .from(niveaux)
-          .where(q ? like(niveaux.libelle, `%${q}%`) : undefined)
-          .orderBy(niveaux.ordre, niveaux.libelle)
-          .limit(input.limit);
-        return items.map((i) => ({ id: i.id, label: i.label ?? "" }));
-      }
 
-      if (input.resource === "classes") {
-        const items = await db.select({ id: classes.id, label: classes.libelle })
-          .from(classes)
-          .where(q ? like(classes.libelle, `%${q}%`) : undefined)
-          .orderBy(classes.libelle)
-          .limit(input.limit);
-        return items.map((i) => ({ id: i.id, label: i.label ?? "" }));
-      }
 
-      if (input.resource === "filieres") {
-        const items = await db.select({ id: filieres.id, label: filieres.libelle })
-          .from(filieres)
-          .where(q ? like(filieres.libelle, `%${q}%`) : undefined)
-          .orderBy(filieres.libelle)
-          .limit(input.limit);
-        return items.map((i) => ({ id: i.id, label: i.label ?? "" }));
-      }
 
-      if (input.resource === "sousSystemes") {
-        const items = await db.select({ id: sousSystemes.id, label: sousSystemes.libelle })
-          .from(sousSystemes)
-          .where(q ? like(sousSystemes.libelle, `%${q}%`) : undefined)
-          .orderBy(sousSystemes.libelle)
-          .limit(input.limit);
-        return items.map((i) => ({ id: i.id, label: i.label ?? "" }));
-      }
 
-      if (input.resource === "editeurs") {
-        const items = await db.select({ label: produits.editeur })
-          .from(produits)
-          .where(q ? like(produits.editeur, `%${q}%`) : undefined)
-          .groupBy(produits.editeur)
-          .orderBy(produits.editeur)
-          .limit(input.limit);
-        return items
-          .map((i) => ({ id: i.label ?? "", label: i.label ?? "" }))
-          .filter((i) => i.label !== "");
-      }
 
       if (input.resource === "fournisseurs") {
         const items = await db.select({ id: fournisseurs.id, label: fournisseurs.nom })

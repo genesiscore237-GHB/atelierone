@@ -14,8 +14,7 @@ const KEEP = [
   "utilisateurs", "user_roles",
   "roles", "permissions", "role_permissions",
   "verification_tokens",
-  "sous_systemes", "ministeres", "niveaux", "classes", "matieres", "filieres",
-  "annees_scolaires", "unites_mesure",
+  "unites_mesure",
   "__drizzle_migrations",
 ];
 

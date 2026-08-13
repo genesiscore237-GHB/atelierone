@@ -2,21 +2,7 @@ import { eq, and, gte, lte, inArray, desc, asc, sql, type SQL, type SQLWrapper }
 import type { PgTable } from "drizzle-orm/pg-core";
 import { db } from "~/server/db";
 import {
-  ventes,
-  ventesLignes,
-  produits,
-  clients,
-  utilisateurs,
-  agences,
-  categories,
-  fournisseurs,
-  niveaux,
-  filieres,
-  classes,
-  sousSystemes,
-  caisses,
-  sessionsCaisse,
-} from "@atelierone/db";
+  ventes, ventesLignes, produits, clients, utilisateurs, agences, categories, fournisseurs, caisses, sessionsCaisse } from "@atelierone/db";
 import {
   REPORT_DIMENSIONS,
   REPORT_MEASURES,
@@ -79,7 +65,7 @@ function buildWhere(input: ReportInput, user: UserScope, periodOffsetMs = 0): SQ
 
   const scopeAgences = f?.agences?.length
     ? f.agences
-    : user.role === "admin_reseau"
+    : user.role === "superadmin"
       ? undefined
       : [user.agenceId];
   if (scopeAgences) conds.push(inArray(ventes.agenceId, scopeAgences));
@@ -88,11 +74,6 @@ function buildWhere(input: ReportInput, user: UserScope, periodOffsetMs = 0): SQ
   if (f?.codesBarres?.length) conds.push(inArray(produits.codeBarre, f.codesBarres));
   if (f?.categories?.length) conds.push(inArray(produits.categorieId, f.categories));
   if (f?.typesProduit?.length) conds.push(inArray(produits.typeProduit, f.typesProduit));
-  if (f?.niveaux?.length) conds.push(inArray(produits.niveauId, f.niveaux));
-  if (f?.classes?.length) conds.push(inArray(produits.classeId, f.classes));
-  if (f?.filieres?.length) conds.push(inArray(produits.filiereId, f.filieres));
-  if (f?.sousSystemes?.length) conds.push(inArray(produits.sousSystemeId, f.sousSystemes));
-  if (f?.editeurs?.length) conds.push(inArray(produits.editeur, f.editeurs));
   if (f?.fournisseurs?.length) conds.push(inArray(produits.fournisseurId, f.fournisseurs));
   if (f?.clients?.length) conds.push(inArray(ventes.clientId, f.clients));
   if (f?.vendeurs?.length) conds.push(inArray(ventes.operateurId, f.vendeurs));
@@ -106,10 +87,6 @@ function buildWhere(input: ReportInput, user: UserScope, periodOffsetMs = 0): SQ
 
 const JOIN_TABLES: Record<string, { table: PgTable; on: SQL<unknown> }> = {
   categories: { table: categories, on: sql`${categories.id} = ${produits.categorieId}` },
-  niveaux: { table: niveaux, on: sql`${niveaux.id} = ${produits.niveauId}` },
-  classes: { table: classes, on: sql`${classes.id} = ${produits.classeId}` },
-  filieres: { table: filieres, on: sql`${filieres.id} = ${produits.filiereId}` },
-  sousSystemes: { table: sousSystemes, on: sql`${sousSystemes.id} = ${produits.sousSystemeId}` },
   fournisseurs: { table: fournisseurs, on: sql`${fournisseurs.id} = ${produits.fournisseurId}` },
   clients: { table: clients, on: sql`${clients.id} = ${ventes.clientId}` },
   vendeurs: { table: utilisateurs, on: sql`${utilisateurs.id} = ${ventes.operateurId}` },
@@ -123,10 +100,6 @@ function buildJoins(dimension: ReportDimensionKey, input: ReportInput): JoinSpec
   const f = input.filters;
   switch (dimension) {
     case "categorie": needed.add("categories"); break;
-    case "niveau": needed.add("niveaux"); break;
-    case "classe": needed.add("classes"); break;
-    case "filiere": needed.add("filieres"); break;
-    case "sousSysteme": needed.add("sousSystemes"); break;
     case "fournisseur": needed.add("fournisseurs"); break;
     case "client": needed.add("clients"); break;
     case "vendeur": needed.add("vendeurs"); break;
@@ -135,10 +108,6 @@ function buildJoins(dimension: ReportDimensionKey, input: ReportInput): JoinSpec
     default: break;
   }
   if (f?.categories?.length) needed.add("categories");
-  if (f?.niveaux?.length) needed.add("niveaux");
-  if (f?.classes?.length) needed.add("classes");
-  if (f?.filieres?.length) needed.add("filieres");
-  if (f?.sousSystemes?.length) needed.add("sousSystemes");
   if (f?.fournisseurs?.length) needed.add("fournisseurs");
   if (f?.clients?.length) needed.add("clients");
   if (f?.vendeurs?.length) needed.add("vendeurs");

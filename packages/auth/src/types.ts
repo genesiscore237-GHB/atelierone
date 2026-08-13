@@ -1,12 +1,13 @@
 import { type DefaultSession } from "next-auth";
 
 export type UserRole =
-  | "admin_reseau"
-  | "responsable_agence"
-  | "operateur_pos"
-  | "caissier"
+  | "superadmin"
+  | "directeur"
+  | "admin"
+  | "chef_atelier"
+  | "secretaire"
   | "magasinier"
-  | "gestionnaire_achats"
+  | "technicien"
   | "comptable"
   | "rh"
   | "consultation";

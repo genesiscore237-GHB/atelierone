@@ -1,13 +1,13 @@
-# LibraCore Design System
+# AtelierOne Design System
 
 > Category: Enterprise ERP
-> Professional B2B ERP for African school-book distributors. Thematic, multi-tenant, offline-first.
+> Système de gestion intégrée d'atelier automobile (garage polyvalent). Multi-site, multi-tenant, audit complet.
 
 ## Visual Theme & Atmosphere
 
-Professional, warm-technical, modern African enterprise. Calm structure with data density — bento-grid layouts, generous padding, clear hierarchy. Designed for professional booksellers managing school inventory under pressure (rentrée scolaire). No ornament. Content-first, chrome-second.
+Professional, warm-technical, modern African enterprise. Calm structure with data density — bento-grid layouts, generous padding, clear hierarchy. Conçu pour un atelier automobile : pièces détachées, ordres de réparation, maintenance de flottes, encaissements, créances.ée scolaire). No ornament. Content-first, chrome-second.
 
-7 theme modes: light, dark, POS (retail-flat), high-contrast (accessibility), sepia (warm editorial), corporate (red-brand), and system (follows OS).
+7 theme modes: light, dark, POS (retail-flat), high-contrast (accessibility), sepia (warm editorial), corporate (marque bleu industriel), and system (follows OS).
 
 ## Color Palette & Roles
 
@@ -22,8 +22,8 @@ All tokens use Oklch color space. Colors carry meaning — they communicate stat
 - **Overlay** (`--overlay`): light `oklch(0 0 0 / 0.5)`, dark `oklch(0 0 0 / 0.6)`
 
 ### Semantic Colors
-- **Primary** (`--primary`): Cobalt blue — action, interactivity, brand. Light `oklch(0.55 0.18 260)`, dark `oklch(0.68 0.18 250)`
-- **Secondary** (`--secondary`): Warm charcoal — complementary actions
+- **Primary** (`--primary`): Bleu industriel profond (#1F4E79) — action, interactivity, brand. Light `oklch(0.37 0.08 255)`, dark `oklch(0.60 0.09 255)`
+- **Secondary** (`--secondary`): Orange atelier (#E67E22) — complementary actions
 - **Destructive** (`--destructive`): Red — irreversible actions
 - **Success** (`--success`): Green — positive states
 - **Warning** (`--warning`): Amber — caution states

@@ -2,60 +2,7 @@ import { relations } from "drizzle-orm";
 import { pgTable, uuid, text, timestamp, pgEnum, integer, numeric } from "drizzle-orm/pg-core";
 
 import {
-  organisations,
-  utilisateurs,
-  agences,
-  caisses,
-  categories,
-  editeurs,
-  produits,
-  stocks,
-  mouvementsStock,
-  auditLogs,
-  permissions,
-  roles,
-  rolePermissions,
-  listesScolaires,
-  listeScolaireItems,
-  sessionsCaisse,
-  ventes,
-  ventesLignes,
-  paiements,
-  dettesClients,
-  remboursementsDettes,
-  comptes,
-  ecrituresJournal,
-  lignesEcritureJournal,
-  retours,
-  lignesRetour,
-  avoirs,
-  depenses,
-  boiteEnvoi,
-  reglesTarification,
-  approbations,
-  clients,
-  fournisseurs,
-  achats,
-  achatsLignes,
-  bonsReception,
-  lignesBonReception,
-  faitsVentesQuotidiens,
-  faitsCaisseQuotidiens,
-  faitsStockQuotidiens,
-  alertesStock,
-  clesApi,
-  alertes,
-  reglesAutomatisation,
-  travauxExport,
-  transfertsStock,
-  verificationTokens,
-  codesBarres,
-  tarifs,
-  produitsFournisseurs,
-  inventaires,
-  employes,
-  mouvementsCaisse,
-} from "@atelierone/db";
+  organisations, utilisateurs, agences, caisses, categories, produits, stocks, mouvementsStock, auditLogs, permissions, roles, rolePermissions, sessionsCaisse, ventes, ventesLignes, paiements, dettesClients, remboursementsDettes, comptes, ecrituresJournal, lignesEcritureJournal, retours, lignesRetour, avoirs, depenses, boiteEnvoi, reglesTarification, approbations, clients, fournisseurs, achats, achatsLignes, bonsReception, lignesBonReception, faitsVentesQuotidiens, faitsCaisseQuotidiens, faitsStockQuotidiens, alertesStock, clesApi, alertes, reglesAutomatisation, travauxExport, transfertsStock, verificationTokens, codesBarres, tarifs, produitsFournisseurs, inventaires, employes, mouvementsCaisse } from "@atelierone/db";
 
 // === ENUMS KEPT FOR OLD TABLES ===
 
@@ -68,13 +15,10 @@ export const organizations = organisations;
 export const profiles = utilisateurs;
 export const pointsOfSale = agences;
 export const cashRegisters = caisses;
-export const publishers = editeurs;
 export const products = produits;
 export const inventoryBalances = stocks;
 export const inventoryMovements = mouvementsStock;
 export const auditEvents = auditLogs;
-export const schoolLists = listesScolaires;
-export const schoolListItems = listeScolaireItems;
 export const posSessions = sessionsCaisse;
 export const sales = ventes;
 export const saleItems = ventesLignes;

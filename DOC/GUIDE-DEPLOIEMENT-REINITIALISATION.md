@@ -20,7 +20,7 @@ Chaîne exécutée par `deploy.mjs` (tout échec **bloque** le déploiement) :
 ```
 1. BACKUP     → pg_dump de la base cible dans backups/backup-<cible>-<horodatage>.dump
 2. SCHÉMA     → reset:schema (DROP + CREATE public) puis migration complète (drizzle-clean)
-3. INSTALL    → seed-install : agence Mvog-Ada, socle sécurité, admin, référentiel éducatif camerounais
+3. INSTALL    → seed-install : sites (Site Principal - Atelier + Site Secondaire), socle sécurité, admin
 4. CONFORMITÉ → verify-deploy : validation de TOUS les fichiers d'import (schéma + clés)
 5. IMPORT     → import:catalogue --apply : peuplement ordonné (unités → catégories → éditeurs
                 → fournisseurs → produits → manuels → unités produits → liens fournisseurs → stocks)
@@ -45,7 +45,7 @@ pnpm db:sync
 # Sauvegarde seule des deux bases
 pnpm db:backup
 
-# Régénérer les fichiers d'import depuis le dump SQL de la papeterie
+# Régénérer les fichiers d'import du client
 pnpm db:extract
 
 # Vérifier la conformité + invariants de la base courante
@@ -75,7 +75,7 @@ sans accents, en majuscules :
 ## 4. Le format d'import (évolue avec le système)
 
 Toutes les données d'installation vivent dans un dossier JSONL (par défaut
-`DOC/donnéés papeterie/import-atelierone/`) :
+`DOC/import-atelierone/`) :
 
 | Fichier | Contenu |
 | --- | --- |
@@ -147,8 +147,8 @@ est créé juste avant dans `backups/backup-supabase-*.dump`.
 
 ## 7. Les données source
 
-- Dump d'origine : `DOC/donnéés papeterie/atelierone_mvogada.sql` (ancien POS MySQL).
-- Extraction : `scripts/extract-atelierone-papeterie.mjs` (→ dossier JSONL + rapport
+- Dossier d'import : `DOC/import-atelierone/` (format canonique JSONL)SQL).
+- Peuplement : `pnpm db:deploy` (import automatique via le pipeline standard)port
   `RAPPORT-IMPORT.md` avec statistiques, correspondance des catégories, décisions).
 - Chiffres du catalogue : **3 839 produits** (2 828 manuels / 1 011 fournitures),
   53 fournisseurs, 46 éditeurs, 50 catégories, 2 343 lignes de stock d'ouverture.

@@ -120,11 +120,9 @@ export default function ProcurementPage() {
     marge: number;
     prixVente: string;
     prixMinimumVente: string;
-    prixReglementeValeur: string;
     prixMaximumRachat: string;
     tva: string;
     typeProduit: string;
-    prixReglemente: boolean;
     motifEcart: string;
   }>>([]);
   const productById = (id: string) => (products?.items ?? []).find((p: any) => String(p.id) === id);
@@ -134,7 +132,7 @@ export default function ProcurementPage() {
       setReceiveLines(receiveOrderDetail.lignes.map((l) => {
         const p = productById(l.produitId) as any;
         const estManuel = (l.typeProduit ?? p?.typeProduit) === "MANUEL";
-        const homologue = Number(l.prixReglementeValeur ?? p?.prixReglementeValeur ?? 0);
+        const homologue = 0;
         const margeDefaut = estManuel && homologue > 0 ? Number(agenceConfig?.margeDefautManuels ?? 25) : 0;
         const prixAchat = estManuel && homologue > 0
           ? Math.round(homologue * (1 - margeDefaut / 100))
@@ -153,11 +151,9 @@ export default function ProcurementPage() {
           marge: estManuel && homologue > 0 ? margeDefaut : margeInitiale,
           prixVente: estManuel && homologue > 0 ? String(homologue) : (prixVenteActuel > 0 ? String(prixVenteActuel) : ""),
           prixMinimumVente: l.prixMinimumVente ? String(l.prixMinimumVente) : (p?.prixMinimumVente ? String(p.prixMinimumVente) : ""),
-          prixReglementeValeur: homologue > 0 ? String(homologue) : (l.prixReglementeValeur ? String(l.prixReglementeValeur) : ""),
           prixMaximumRachat: l.prixMaximumRachat ? String(l.prixMaximumRachat) : "",
           tva: String(l.tva ?? p?.tva ?? "0"),
           typeProduit: l.typeProduit ?? p?.typeProduit ?? "FOURNITURE",
-          prixReglemente: !!l.prixReglemente || !!p?.prixReglemente,
           motifEcart: "",
         };
       }));
@@ -348,7 +344,6 @@ export default function ProcurementPage() {
           prixAchat: l.prixUnitaire || null,
           prixVente: l.prixVente ? l.prixVente : null,
           prixMinimumVente: l.prixMinimumVente ? l.prixMinimumVente : null,
-          prixReglementeValeur: l.prixReglementeValeur ? l.prixReglementeValeur : null,
           prixMaximumRachat: l.prixMaximumRachat ? l.prixMaximumRachat : null,
           tva: l.tva ? l.tva : null,
         })),
@@ -360,7 +355,7 @@ export default function ProcurementPage() {
       const nl = [...prev];
       const ligne = { ...nl[index] };
       const estManuel = ligne.typeProduit === "MANUEL";
-      const homologue = Number(ligne.prixReglementeValeur ?? 0);
+      const homologue = 0;
       if (estManuel && homologue > 0) {
         if (field === "marge") {
           ligne.marge = Number(value) || 0;
@@ -1248,7 +1243,6 @@ export default function ProcurementPage() {
                       <p className="text-xs text-muted-foreground dark:text-muted-foreground">
                         Commandé: <span className="font-mono">{ligne.quantiteCommandee}</span>
                         {ligne.typeProduit === "LIVRE" && <span className="ml-2 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">Livre</span>}
-                        {ligne.prixReglemente && <span className="ml-1 rounded bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning-foreground">Prix réglementé</span>}
                       </p>
                     </div>
                     <label className="flex items-center gap-2 shrink-0 cursor-pointer select-none">
@@ -1337,17 +1331,6 @@ export default function ProcurementPage() {
                           onChange={(e) => updateReceiveLine(index, "tva", e.target.value)}
                         />
                       </div>
-                      {ligne.prixReglemente && (
-                        <div>
-                          <label className="mb-1 block text-xs text-muted-foreground">Prix réglementé (F)</label>
-                          <input
-                            type="number" min="0" step="0.01"
-                            className="w-full rounded-lg border border-border px-3 py-2 text-sm dark:bg-muted dark:border-border dark:text-foreground outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-                            value={ligne.prixReglementeValeur}
-                            onChange={(e) => updateReceiveLine(index, "prixReglementeValeur", e.target.value)}
-                          />
-                        </div>
-                      )}
                       <div>
                         <label className="mb-1 block text-xs text-muted-foreground">Prix max rachat Bourse (F)</label>
                         <input

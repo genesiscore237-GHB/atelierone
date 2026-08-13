@@ -1,0 +1,10 @@
+{"code":"CAT-FIL","nom":"Filtres","typeBranche":"PIECE","description":"Filtres à huile, air, carburant, habitacle","isActive":true,"refSource":"demo-atelierone"}
+{"code":"CAT-FRE","nom":"Freinage","typeBranche":"PIECE","description":"Plaquettes, disques, tambours, liquide de frein","isActive":true,"refSource":"demo-atelierone"}
+{"code":"CAT-LUB","nom":"Lubrifiants","typeBranche":"PIECE","description":"Huiles moteur, boîte, pont","isActive":true,"refSource":"demo-atelierone"}
+{"code":"CAT-ELE","nom":"Électricité","typeBranche":"PIECE","description":"Batteries, alternateurs, démarreurs","isActive":true,"refSource":"demo-atelierone"}
+{"code":"CAT-ECL","nom":"Éclairage","typeBranche":"PIECE","description":"Ampoules, feux, optiques","isActive":true,"refSource":"demo-atelierone"}
+{"code":"CAT-DIS","nom":"Distribution","typeBranche":"PIECE","description":"Kits de distribution, courroies, galets","isActive":true,"refSource":"demo-atelierone"}
+{"code":"CAT-SUS","nom":"Suspension","typeBranche":"PIECE","description":"Amortisseurs, jambes de force, silentblocs","isActive":true,"refSource":"demo-atelierone"}
+{"code":"CAT-PNE","nom":"Pneumatiques","typeBranche":"PIECE","description":"Pneus, chambres à air, valves","isActive":true,"refSource":"demo-atelierone"}
+{"code":"CAT-DIV","nom":"Divers","typeBranche":"PIECE","description":"Accessoires et consommables divers","isActive":true,"refSource":"demo-atelierone"}
+{"code":"CAT-MDO","nom":"Main d'œuvre","typeBranche":"SERVICE","description":"Prestations atelier (diagnostic, réparation, entretien)","isActive":true,"refSource":"demo-atelierone"}

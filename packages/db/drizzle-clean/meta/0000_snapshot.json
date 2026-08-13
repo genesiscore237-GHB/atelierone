@@ -1,5 +1,5 @@
 {
-  "id": "11992abb-cdd9-4fa3-bf9a-5a9bc05b6ad1",
+  "id": "e5106c09-e3e6-4414-a08d-ced20dbf4a1a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -766,6 +766,27 @@
           "notNull": false,
           "default": "'PF'"
         },
+        "prefixe_devis": {
+          "name": "prefixe_devis",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'DEV-'"
+        },
+        "prefixe_or": {
+          "name": "prefixe_or",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'OR-'"
+        },
+        "prefixe_bc": {
+          "name": "prefixe_bc",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'BC-'"
+        },
         "mention_pied_facture": {
           "name": "mention_pied_facture",
           "type": "text",
@@ -1048,73 +1069,6 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.annees_scolaires": {
-      "name": "annees_scolaires",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "libelle": {
-          "name": "libelle",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "date_debut": {
-          "name": "date_debut",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "date_fin": {
-          "name": "date_fin",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": true
-        },
-        "is_current": {
-          "name": "is_current",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "annees_scolaires_libelle_unique": {
-          "name": "annees_scolaires_libelle_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "libelle"
-          ]
-        }
-      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1868,106 +1822,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.classes": {
-      "name": "classes",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "code": {
-          "name": "code",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "libelle": {
-          "name": "libelle",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "niveau_id": {
-          "name": "niveau_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "filiere_id": {
-          "name": "filiere_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "classes_niveau_id_niveaux_id_fk": {
-          "name": "classes_niveau_id_niveaux_id_fk",
-          "tableFrom": "classes",
-          "tableTo": "niveaux",
-          "columnsFrom": [
-            "niveau_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "classes_filiere_id_filieres_id_fk": {
-          "name": "classes_filiere_id_filieres_id_fk",
-          "tableFrom": "classes",
-          "tableTo": "filieres",
-          "columnsFrom": [
-            "filiere_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "classes_code_unique": {
-          "name": "classes_code_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "code"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.cles_api": {
       "name": "cles_api",
       "schema": "",
@@ -2112,6 +1966,13 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": false
+        },
+        "type_client": {
+          "name": "type_client",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'particulier'"
         },
         "categorie_prix": {
           "name": "categorie_prix",
@@ -2441,6 +2302,214 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.contrats_flotte_vehicules": {
+      "name": "contrats_flotte_vehicules",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "contrat_id": {
+          "name": "contrat_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "vehicule_id": {
+          "name": "vehicule_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "contrats_flotte_vehicules_contrat_id_contrats_flottes_id_fk": {
+          "name": "contrats_flotte_vehicules_contrat_id_contrats_flottes_id_fk",
+          "tableFrom": "contrats_flotte_vehicules",
+          "tableTo": "contrats_flottes",
+          "columnsFrom": [
+            "contrat_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "contrats_flotte_vehicules_vehicule_id_vehicules_id_fk": {
+          "name": "contrats_flotte_vehicules_vehicule_id_vehicules_id_fk",
+          "tableFrom": "contrats_flotte_vehicules",
+          "tableTo": "vehicules",
+          "columnsFrom": [
+            "vehicule_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.contrats_flottes": {
+      "name": "contrats_flottes",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "agence_id": {
+          "name": "agence_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "numero": {
+          "name": "numero",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "libelle": {
+          "name": "libelle",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date_debut": {
+          "name": "date_debut",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date_fin": {
+          "name": "date_fin",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "type_maintenance": {
+          "name": "type_maintenance",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'PREVENTIVE'"
+        },
+        "frequence_controle": {
+          "name": "frequence_controle",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "conditions_paiement": {
+          "name": "conditions_paiement",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "remise_pourcent": {
+          "name": "remise_pourcent",
+          "type": "numeric(5, 2)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0'"
+        },
+        "statut": {
+          "name": "statut",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'actif'"
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "contrats_flottes_agence_id_agences_id_fk": {
+          "name": "contrats_flottes_agence_id_agences_id_fk",
+          "tableFrom": "contrats_flottes",
+          "tableTo": "agences",
+          "columnsFrom": [
+            "agence_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "contrats_flottes_client_id_clients_id_fk": {
+          "name": "contrats_flottes_client_id_clients_id_fk",
+          "tableFrom": "contrats_flottes",
+          "tableTo": "clients",
+          "columnsFrom": [
+            "client_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "contrats_flottes_numero_unique": {
+          "name": "contrats_flottes_numero_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "numero"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -3327,78 +3396,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.editeurs": {
-      "name": "editeurs",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "agence_id": {
-          "name": "agence_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "nom": {
-          "name": "nom",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "email_contact": {
-          "name": "email_contact",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "telephone_contact": {
-          "name": "telephone_contact",
-          "type": "varchar(50)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "editeurs_agence_id_agences_id_fk": {
-          "name": "editeurs_agence_id_agences_id_fk",
-          "tableFrom": "editeurs",
-          "tableTo": "agences",
-          "columnsFrom": [
-            "agence_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.emplacements": {
       "name": "emplacements",
       "schema": "",
@@ -3450,30 +3447,6 @@
         "categorie_id": {
           "name": "categorie_id",
           "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "sous_systeme_id": {
-          "name": "sous_systeme_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "niveau_id": {
-          "name": "niveau_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "classe_id": {
-          "name": "classe_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "filiere_id": {
-          "name": "filiere_id",
-          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },
@@ -3540,58 +3513,6 @@
           "tableTo": "categories",
           "columnsFrom": [
             "categorie_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "emplacements_sous_systeme_id_sous_systemes_id_fk": {
-          "name": "emplacements_sous_systeme_id_sous_systemes_id_fk",
-          "tableFrom": "emplacements",
-          "tableTo": "sous_systemes",
-          "columnsFrom": [
-            "sous_systeme_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "emplacements_niveau_id_niveaux_id_fk": {
-          "name": "emplacements_niveau_id_niveaux_id_fk",
-          "tableFrom": "emplacements",
-          "tableTo": "niveaux",
-          "columnsFrom": [
-            "niveau_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "emplacements_classe_id_classes_id_fk": {
-          "name": "emplacements_classe_id_classes_id_fk",
-          "tableFrom": "emplacements",
-          "tableTo": "classes",
-          "columnsFrom": [
-            "classe_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "emplacements_filiere_id_filieres_id_fk": {
-          "name": "emplacements_filiere_id_filieres_id_fk",
-          "tableFrom": "emplacements",
-          "tableTo": "filieres",
-          "columnsFrom": [
-            "filiere_id"
           ],
           "columnsTo": [
             "id"
@@ -4450,67 +4371,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.filieres": {
-      "name": "filieres",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "code": {
-          "name": "code",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "libelle": {
-          "name": "libelle",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "filieres_code_unique": {
-          "name": "filieres_code_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "code"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.fournisseurs": {
       "name": "fournisseurs",
       "schema": "",
@@ -4628,31 +4488,72 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.fourniture_detail": {
-      "name": "fourniture_detail",
+    "public.interventions_techniciens": {
+      "name": "interventions_techniciens",
       "schema": "",
       "columns": {
-        "produit_id": {
-          "name": "produit_id",
-          "type": "integer",
+        "id": {
+          "name": "id",
+          "type": "serial",
           "primaryKey": true,
           "notNull": true
         },
-        "type_fourniture": {
-          "name": "type_fourniture",
-          "type": "varchar(50)",
+        "agence_id": {
+          "name": "agence_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ordre_id": {
+          "name": "ordre_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ligne_id": {
+          "name": "ligne_id",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false
         },
-        "date_creation": {
-          "name": "date_creation",
+        "technicien_id": {
+          "name": "technicien_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date_intervention": {
+          "name": "date_intervention",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "heure_debut": {
+          "name": "heure_debut",
           "type": "timestamp",
           "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
+          "notNull": false
         },
-        "date_maj": {
-          "name": "date_maj",
+        "heure_fin": {
+          "name": "heure_fin",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "duree_heures": {
+          "name": "duree_heures",
+          "type": "numeric(6, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": false,
@@ -4661,17 +4562,56 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "fourniture_detail_produit_id_produits_id_fk": {
-          "name": "fourniture_detail_produit_id_produits_id_fk",
-          "tableFrom": "fourniture_detail",
-          "tableTo": "produits",
+        "interventions_techniciens_agence_id_agences_id_fk": {
+          "name": "interventions_techniciens_agence_id_agences_id_fk",
+          "tableFrom": "interventions_techniciens",
+          "tableTo": "agences",
           "columnsFrom": [
-            "produit_id"
+            "agence_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interventions_techniciens_ordre_id_ordres_reparation_id_fk": {
+          "name": "interventions_techniciens_ordre_id_ordres_reparation_id_fk",
+          "tableFrom": "interventions_techniciens",
+          "tableTo": "ordres_reparation",
+          "columnsFrom": [
+            "ordre_id"
           ],
           "columnsTo": [
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "interventions_techniciens_ligne_id_lignes_ordre_reparation_id_fk": {
+          "name": "interventions_techniciens_ligne_id_lignes_ordre_reparation_id_fk",
+          "tableFrom": "interventions_techniciens",
+          "tableTo": "lignes_ordre_reparation",
+          "columnsFrom": [
+            "ligne_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interventions_techniciens_technicien_id_employes_id_fk": {
+          "name": "interventions_techniciens_technicien_id_employes_id_fk",
+          "tableFrom": "interventions_techniciens",
+          "tableTo": "employes",
+          "columnsFrom": [
+            "technicien_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -5111,6 +5051,144 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.lignes_ordre_reparation": {
+      "name": "lignes_ordre_reparation",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "ordre_id": {
+          "name": "ordre_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'PIECE'"
+        },
+        "produit_id": {
+          "name": "produit_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "libelle": {
+          "name": "libelle",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantite": {
+          "name": "quantite",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'1'"
+        },
+        "prix_unitaire": {
+          "name": "prix_unitaire",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "tva": {
+          "name": "tva",
+          "type": "numeric(5, 2)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0'"
+        },
+        "total_ligne": {
+          "name": "total_ligne",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0'"
+        },
+        "technicien_id": {
+          "name": "technicien_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "duree_heures": {
+          "name": "duree_heures",
+          "type": "numeric(6, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "statut": {
+          "name": "statut",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'a_faire'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "lignes_ordre_reparation_ordre_id_ordres_reparation_id_fk": {
+          "name": "lignes_ordre_reparation_ordre_id_ordres_reparation_id_fk",
+          "tableFrom": "lignes_ordre_reparation",
+          "tableTo": "ordres_reparation",
+          "columnsFrom": [
+            "ordre_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "lignes_ordre_reparation_produit_id_produits_id_fk": {
+          "name": "lignes_ordre_reparation_produit_id_produits_id_fk",
+          "tableFrom": "lignes_ordre_reparation",
+          "tableTo": "produits",
+          "columnsFrom": [
+            "produit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "lignes_ordre_reparation_technicien_id_employes_id_fk": {
+          "name": "lignes_ordre_reparation_technicien_id_employes_id_fk",
+          "tableFrom": "lignes_ordre_reparation",
+          "tableTo": "employes",
+          "columnsFrom": [
+            "technicien_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.lignes_retour": {
       "name": "lignes_retour",
       "schema": "",
@@ -5238,173 +5316,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.liste_scolaire_items": {
-      "name": "liste_scolaire_items",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "liste_id": {
-          "name": "liste_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "produit_id": {
-          "name": "produit_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "quantite_requise": {
-          "name": "quantite_requise",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "default": 1
-        },
-        "priorite": {
-          "name": "priorite",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'obligatoire'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "liste_scolaire_items_liste_id_listes_scolaires_id_fk": {
-          "name": "liste_scolaire_items_liste_id_listes_scolaires_id_fk",
-          "tableFrom": "liste_scolaire_items",
-          "tableTo": "listes_scolaires",
-          "columnsFrom": [
-            "liste_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "liste_scolaire_items_produit_id_produits_id_fk": {
-          "name": "liste_scolaire_items_produit_id_produits_id_fk",
-          "tableFrom": "liste_scolaire_items",
-          "tableTo": "produits",
-          "columnsFrom": [
-            "produit_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.listes_scolaires": {
-      "name": "listes_scolaires",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "nom": {
-          "name": "nom",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "annee_scolaire": {
-          "name": "annee_scolaire",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'2026-2027'"
-        },
-        "ministere": {
-          "name": "ministere",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'MINESEC'"
-        },
-        "agence_id": {
-          "name": "agence_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "listes_scolaires_agence_id_agences_id_fk": {
-          "name": "listes_scolaires_agence_id_agences_id_fk",
-          "tableFrom": "listes_scolaires",
-          "tableTo": "agences",
-          "columnsFrom": [
-            "agence_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.lots": {
       "name": "lots",
       "schema": "",
@@ -5516,219 +5427,6 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.manuel_scolaire_detail": {
-      "name": "manuel_scolaire_detail",
-      "schema": "",
-      "columns": {
-        "produit_id": {
-          "name": "produit_id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "type_manuel": {
-          "name": "type_manuel",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "editeur_id": {
-          "name": "editeur_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "prix_reglemente": {
-          "name": "prix_reglemente",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": false
-        },
-        "prix_reglemente_valeur": {
-          "name": "prix_reglemente_valeur",
-          "type": "numeric(12, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "annee_import": {
-          "name": "annee_import",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "date_creation": {
-          "name": "date_creation",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        },
-        "date_maj": {
-          "name": "date_maj",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "manuel_scolaire_detail_produit_id_produits_id_fk": {
-          "name": "manuel_scolaire_detail_produit_id_produits_id_fk",
-          "tableFrom": "manuel_scolaire_detail",
-          "tableTo": "produits",
-          "columnsFrom": [
-            "produit_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "manuel_scolaire_detail_editeur_id_editeurs_id_fk": {
-          "name": "manuel_scolaire_detail_editeur_id_editeurs_id_fk",
-          "tableFrom": "manuel_scolaire_detail",
-          "tableTo": "editeurs",
-          "columnsFrom": [
-            "editeur_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.matieres": {
-      "name": "matieres",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "code": {
-          "name": "code",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "libelle": {
-          "name": "libelle",
-          "type": "varchar(150)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "matieres_code_unique": {
-          "name": "matieres_code_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "code"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.ministeres": {
-      "name": "ministeres",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "code": {
-          "name": "code",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "libelle": {
-          "name": "libelle",
-          "type": "varchar(150)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "ministeres_code_unique": {
-          "name": "ministeres_code_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "code"
-          ]
-        }
-      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -6234,94 +5932,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.niveaux": {
-      "name": "niveaux",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "code": {
-          "name": "code",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "libelle": {
-          "name": "libelle",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ordre": {
-          "name": "ordre",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "sous_systeme_id": {
-          "name": "sous_systeme_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "niveaux_sous_systeme_id_sous_systemes_id_fk": {
-          "name": "niveaux_sous_systeme_id_sous_systemes_id_fk",
-          "tableFrom": "niveaux",
-          "tableTo": "sous_systemes",
-          "columnsFrom": [
-            "sous_systeme_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "niveaux_code_unique": {
-          "name": "niveaux_code_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "code"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.notifications": {
       "name": "notifications",
       "schema": "",
@@ -6427,6 +6037,208 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.ordres_reparation": {
+      "name": "ordres_reparation",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "agence_id": {
+          "name": "agence_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "numero": {
+          "name": "numero",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "vehicule_id": {
+          "name": "vehicule_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "statut": {
+          "name": "statut",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'ouvert'"
+        },
+        "plainte": {
+          "name": "plainte",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "diagnostic": {
+          "name": "diagnostic",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "devis_accepte": {
+          "name": "devis_accepte",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "date_ouverture": {
+          "name": "date_ouverture",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "date_fin_prevue": {
+          "name": "date_fin_prevue",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "date_cloture": {
+          "name": "date_cloture",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total_pieces": {
+          "name": "total_pieces",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0'"
+        },
+        "total_main_oeuvre": {
+          "name": "total_main_oeuvre",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0'"
+        },
+        "total_ttc": {
+          "name": "total_ttc",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0'"
+        },
+        "vente_id": {
+          "name": "vente_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cree_par": {
+          "name": "cree_par",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "ordres_reparation_agence_id_agences_id_fk": {
+          "name": "ordres_reparation_agence_id_agences_id_fk",
+          "tableFrom": "ordres_reparation",
+          "tableTo": "agences",
+          "columnsFrom": [
+            "agence_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "ordres_reparation_vehicule_id_vehicules_id_fk": {
+          "name": "ordres_reparation_vehicule_id_vehicules_id_fk",
+          "tableFrom": "ordres_reparation",
+          "tableTo": "vehicules",
+          "columnsFrom": [
+            "vehicule_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "ordres_reparation_client_id_clients_id_fk": {
+          "name": "ordres_reparation_client_id_clients_id_fk",
+          "tableFrom": "ordres_reparation",
+          "tableTo": "clients",
+          "columnsFrom": [
+            "client_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "ordres_reparation_cree_par_utilisateurs_id_fk": {
+          "name": "ordres_reparation_cree_par_utilisateurs_id_fk",
+          "tableFrom": "ordres_reparation",
+          "tableTo": "utilisateurs",
+          "columnsFrom": [
+            "cree_par"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "ordres_reparation_numero_unique": {
+          "name": "ordres_reparation_numero_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "numero"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -7397,7 +7209,7 @@
           "type": "varchar(20)",
           "primaryKey": false,
           "notNull": false,
-          "default": "'FOURNITURE'"
+          "default": "'PIECE'"
         },
         "code_barre": {
           "name": "code_barre",
@@ -7411,51 +7223,15 @@
           "primaryKey": false,
           "notNull": false
         },
-        "isbn": {
-          "name": "isbn",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": false
-        },
         "titre": {
           "name": "titre",
           "type": "varchar(500)",
           "primaryKey": false,
           "notNull": true
         },
-        "auteur": {
-          "name": "auteur",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false
-        },
         "editeur": {
           "name": "editeur",
           "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "collection": {
-          "name": "collection",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "niveau_scolaire": {
-          "name": "niveau_scolaire",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "matiere": {
-          "name": "matiere",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "langue": {
-          "name": "langue",
-          "type": "varchar(100)",
           "primaryKey": false,
           "notNull": false
         },
@@ -7481,68 +7257,6 @@
         "fournisseur_id": {
           "name": "fournisseur_id",
           "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "sous_systeme_id": {
-          "name": "sous_systeme_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "niveau_id": {
-          "name": "niveau_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "filiere_id": {
-          "name": "filiere_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "classe_id": {
-          "name": "classe_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "matiere_id": {
-          "name": "matiere_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "annee_liste_id": {
-          "name": "annee_liste_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "ministere_id": {
-          "name": "ministere_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "statut_officiel": {
-          "name": "statut_officiel",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'OFFICIEL'"
-        },
-        "prix_reglemente": {
-          "name": "prix_reglemente",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": false
-        },
-        "prix_reglemente_valeur": {
-          "name": "prix_reglemente_valeur",
-          "type": "numeric(12, 2)",
           "primaryKey": false,
           "notNull": false
         },
@@ -7742,97 +7456,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "produits_sous_systeme_id_sous_systemes_id_fk": {
-          "name": "produits_sous_systeme_id_sous_systemes_id_fk",
-          "tableFrom": "produits",
-          "tableTo": "sous_systemes",
-          "columnsFrom": [
-            "sous_systeme_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "produits_niveau_id_niveaux_id_fk": {
-          "name": "produits_niveau_id_niveaux_id_fk",
-          "tableFrom": "produits",
-          "tableTo": "niveaux",
-          "columnsFrom": [
-            "niveau_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "produits_filiere_id_filieres_id_fk": {
-          "name": "produits_filiere_id_filieres_id_fk",
-          "tableFrom": "produits",
-          "tableTo": "filieres",
-          "columnsFrom": [
-            "filiere_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "produits_classe_id_classes_id_fk": {
-          "name": "produits_classe_id_classes_id_fk",
-          "tableFrom": "produits",
-          "tableTo": "classes",
-          "columnsFrom": [
-            "classe_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "produits_matiere_id_matieres_id_fk": {
-          "name": "produits_matiere_id_matieres_id_fk",
-          "tableFrom": "produits",
-          "tableTo": "matieres",
-          "columnsFrom": [
-            "matiere_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "produits_annee_liste_id_annees_scolaires_id_fk": {
-          "name": "produits_annee_liste_id_annees_scolaires_id_fk",
-          "tableFrom": "produits",
-          "tableTo": "annees_scolaires",
-          "columnsFrom": [
-            "annee_liste_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "produits_ministere_id_ministeres_id_fk": {
-          "name": "produits_ministere_id_ministeres_id_fk",
-          "tableFrom": "produits",
-          "tableTo": "ministeres",
-          "columnsFrom": [
-            "ministere_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "produits_unite_base_id_unites_mesure_id_fk": {
           "name": "produits_unite_base_id_unites_mesure_id_fk",
           "tableFrom": "produits",
@@ -7867,13 +7490,6 @@
           "nullsNotDistinct": false,
           "columns": [
             "code_barre"
-          ]
-        },
-        "produits_isbn_unique": {
-          "name": "produits_isbn_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "isbn"
           ]
         }
       },
@@ -9602,67 +9218,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.sous_systemes": {
-      "name": "sous_systemes",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "code": {
-          "name": "code",
-          "type": "varchar(10)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "libelle": {
-          "name": "libelle",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "sous_systemes_code_unique": {
-          "name": "sous_systemes_code_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "code"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.stocks": {
       "name": "stocks",
       "schema": "",
@@ -11089,6 +10644,171 @@
           "tableTo": "utilisateurs",
           "columnsFrom": [
             "effectue_par"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.vehicules": {
+      "name": "vehicules",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "agence_id": {
+          "name": "agence_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "immatriculation": {
+          "name": "immatriculation",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "marque": {
+          "name": "marque",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "modele": {
+          "name": "modele",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "annee": {
+          "name": "annee",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "couleur": {
+          "name": "couleur",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "numero_chassis": {
+          "name": "numero_chassis",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "kilometrage": {
+          "name": "kilometrage",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "carburant": {
+          "name": "carburant",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "statut_immobilisation": {
+          "name": "statut_immobilisation",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'en_reception'"
+        },
+        "site_id": {
+          "name": "site_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "emplacement_id": {
+          "name": "emplacement_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "vehicules_agence_id_agences_id_fk": {
+          "name": "vehicules_agence_id_agences_id_fk",
+          "tableFrom": "vehicules",
+          "tableTo": "agences",
+          "columnsFrom": [
+            "agence_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vehicules_client_id_clients_id_fk": {
+          "name": "vehicules_client_id_clients_id_fk",
+          "tableFrom": "vehicules",
+          "tableTo": "clients",
+          "columnsFrom": [
+            "client_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vehicules_site_id_agences_id_fk": {
+          "name": "vehicules_site_id_agences_id_fk",
+          "tableFrom": "vehicules",
+          "tableTo": "agences",
+          "columnsFrom": [
+            "site_id"
           ],
           "columnsTo": [
             "id"

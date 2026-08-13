@@ -79,7 +79,7 @@ function OrganizationTab() {
   const { data: org, isLoading } = api.settings.organization.get.useQuery();
   const utils = api.useUtils();
   const { user } = usePermissions();
-  const canEdit = user?.role === "admin_reseau";
+  const canEdit = user?.role === "superadmin";
   const [synced, setSynced] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [form, setForm] = useState({
@@ -623,7 +623,7 @@ function TeamTab() {
                   <td className="px-6 py-4 text-sm font-medium text-foreground dark:text-foreground">{member.fullName}</td>
                   <td className="px-6 py-4">
                     <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                      member.role?.code === "admin_reseau"
+                      member.role?.code === "superadmin"
                         ? "bg-primary/20 text-primary dark:bg-primary/10 dark:text-primary"
                         : "bg-muted text-muted-foreground dark:bg-muted dark:text-muted-foreground"
                     }`}>
