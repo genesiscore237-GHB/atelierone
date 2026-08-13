@@ -129,7 +129,7 @@ les changements (`import:guide`).
 - **Le référentiel éducatif** (sous-systèmes FR/EN, ministères, niveaux, classes,
   matières, filières, années scolaires, unités) est réinséré à chaque installation
   (idempotent, `seed-education.sql`).
-- **Les comptes** : `admin@atelierone.cm / admin123` + 8 comptes de démonstration
+- **Les comptes** : `admin@gpj.cm / admin123` + 8 comptes de démonstration
   (tous `admin123`) — à changer après installation.
 - Le socle (rôles/permissions) est recréé par `ensureSecuritySocle` ; une permission
   référencée mais absente est ignorée proprement (plus de crash `uuid : « »`).
@@ -183,14 +183,14 @@ Un **redéploiement** est nécessaire après chaque changement de variables.
 
 Diagnostic du login sur n'importe quelle cible :
 ```bash
-node scripts/check-login.mjs db  "<DATABASE_URL>" admin@atelierone.cm admin123
-node scripts/check-login.mjs http "https://mon-app.vercel.app" admin@atelierone.cm admin123
+node scripts/check-login.mjs db  "<DATABASE_URL>" admin@gpj.cm admin123
+node scripts/check-login.mjs http "https://mon-app.vercel.app" admin@gpj.cm admin123
 ```
 
 ## 10. Tests après installation
 
 1. `pnpm db:verify` → tout ✓
-2. Connexion : `admin@atelierone.cm / admin123`
+2. Connexion : `admin@gpj.cm / admin123`
 3. Catalogue → recherche « `32BA` » → Cahier 32 pages Bananier (nom de code)
 4. Nouveau produit → la Désignation pré-remplit le Nom de code
 5. POS → scan/tape d'un code → vente → stock décrémenté

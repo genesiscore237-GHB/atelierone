@@ -9,8 +9,8 @@
  *       → teste le login HTTP de bout en bout (CSRF + credentials + session)
  *
  * Exemples :
- *   node scripts/check-login.mjs db  "postgresql://...supabase..." admin@atelierone.cm admin123
- *   node scripts/check-login.mjs http "https://mon-app.vercel.app" admin@atelierone.cm admin123
+ *   node scripts/check-login.mjs db  "postgresql://...supabase..." admin@gpj.cm admin123
+ *   node scripts/check-login.mjs http "https://mon-app.vercel.app" admin@gpj.cm admin123
  */
 import { execFileSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const [mode, target, email = "admin@atelierone.cm", password = "admin123"] = process.argv.slice(2);
+const [mode, target, email = "admin@gpj.cm", password = "admin123"] = process.argv.slice(2);
 
 if (!mode || !target) {
   console.log("Usage: node scripts/check-login.mjs [db|http] <cible> [email] [password]");

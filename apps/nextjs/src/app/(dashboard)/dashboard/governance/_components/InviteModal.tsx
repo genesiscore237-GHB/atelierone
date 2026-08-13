@@ -36,7 +36,7 @@ function generateLogin(prenom: string, nom: string): string {
       .replace(/[^a-z0-9]/g, ".");
   const firstPrenom = prenom.split(" ")[0] ?? "";
   const firstNom = nom.split(" ")[0] ?? "";
-  return `${slug(firstPrenom)}.${slug(firstNom)}@atelierone.cm`;
+  return `${slug(firstPrenom)}.${slug(firstNom)}@gpj.cm`;
 }
 
 export function InviteModal({ isOpen, onClose }: InviteModalProps) {

@@ -30,11 +30,11 @@ requireLocalOrForced("db:install (seed-install.ts)");
 
 const SITES = [
   {
-    nom: "Site Principal - Atelier",
+    nom: "GPJ - Atelier (Site Principal)",
     code: "SITE-1",
     adresse: "Yaoundé",
     telephone: "+237 000 000 000",
-    email: "contact@atelierone.cm",
+    email: "contact@gpj.cm",
     ville: "Yaoundé",
     pays: "Cameroun",
     devise: "XAF",
@@ -46,11 +46,11 @@ const SITES = [
     isActive: true,
   },
   {
-    nom: "Site Secondaire - Stockage",
+    nom: "GPJ - Stockage (Site Secondaire)",
     code: "SITE-2",
     adresse: "Yaoundé (zone de stockage longue durée)",
     telephone: "+237 000 000 000",
-    email: "contact@atelierone.cm",
+    email: "contact@gpj.cm",
     ville: "Yaoundé",
     pays: "Cameroun",
     devise: "XAF",
@@ -64,14 +64,14 @@ const SITES = [
 ];
 
 const DEMO_USERS = [
-  { email: "directeur@atelierone.cm", role: "directeur", nom: "Directeur", prenom: "Patron", fonction: "Directeur / Patron" },
-  { email: "chef.atelier@atelierone.cm", role: "chef_atelier", nom: "Chef", prenom: "Atelier", fonction: "Chef des ateliers" },
-  { email: "secretaire@atelierone.cm", role: "secretaire", nom: "Secretaire", prenom: "Accueil", fonction: "Secrétaire / Accueil" },
-  { email: "magasinier@atelierone.cm", role: "magasinier", nom: "Magasinier", prenom: "Stock", fonction: "Magasinier" },
-  { email: "technicien@atelierone.cm", role: "technicien", nom: "Technicien", prenom: "Atelier", fonction: "Technicien / Mécanicien" },
-  { email: "comptable@atelierone.cm", role: "comptable", nom: "Comptable", prenom: "Finance", fonction: "Comptable" },
-  { email: "rh@atelierone.cm", role: "rh", nom: "RH", prenom: "Personnel", fonction: "Responsable RH" },
-  { email: "consultation@atelierone.cm", role: "consultation", nom: "Consultation", prenom: "Lecture", fonction: "Consultation seule" },
+  { email: "directeur@gpj.cm", role: "directeur", nom: "Directeur", prenom: "Patron", fonction: "Directeur / Patron" },
+  { email: "chef.atelier@gpj.cm", role: "chef_atelier", nom: "Chef", prenom: "Atelier", fonction: "Chef des ateliers" },
+  { email: "secretaire@gpj.cm", role: "secretaire", nom: "Secretaire", prenom: "Accueil", fonction: "Secrétaire / Accueil" },
+  { email: "magasinier@gpj.cm", role: "magasinier", nom: "Magasinier", prenom: "Stock", fonction: "Magasinier" },
+  { email: "technicien@gpj.cm", role: "technicien", nom: "Technicien", prenom: "Atelier", fonction: "Technicien / Mécanicien" },
+  { email: "comptable@gpj.cm", role: "comptable", nom: "Comptable", prenom: "Finance", fonction: "Comptable" },
+  { email: "rh@gpj.cm", role: "rh", nom: "RH", prenom: "Personnel", fonction: "Responsable RH" },
+  { email: "consultation@gpj.cm", role: "consultation", nom: "Consultation", prenom: "Lecture", fonction: "Consultation seule" },
 ];
 
 (async () => {
@@ -113,8 +113,8 @@ const DEMO_USERS = [
   const hashed = await bcrypt.hash("admin123", 10);
 
   await db.insert(schema.utilisateurs).values({
-    email: "admin@atelierone.cm",
-    loginEmail: "admin@atelierone.cm",
+    email: "admin@gpj.cm",
+    loginEmail: "admin@gpj.cm",
     motDePasse: hashed,
     nom: "Admin",
     prenom: "Super",
@@ -125,13 +125,13 @@ const DEMO_USERS = [
     status: "active",
     emailVerified: new Date(),
   });
-  console.log("Admin: admin@atelierone.cm / admin123");
+  console.log("Admin: admin@gpj.cm / admin123");
 
   let empNum = 9001;
   for (const u of DEMO_USERS) {
     const role = socle.roles.find((r: any) => r.code === u.role);
     if (!role) continue;
-    const matricule = `AO-${new Date().getFullYear()}-${String(empNum).padStart(4, "0")}`;
+    const matricule = `GPJ-${new Date().getFullYear()}-${String(empNum).padStart(4, "0")}`;
     empNum++;
     const [emp] = await db.insert(schema.employes).values({
       matricule,

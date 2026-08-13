@@ -325,7 +325,7 @@ export const catalogRouter = createTRPCRouter({
       let barcode = inputCodeBarre;
       if (!barcode) {
         const [agence] = await db.select({ code: agences.code }).from(agences).where(eq(agences.id, ctx.user.agenceId)).limit(1);
-        const prefix = `AO-${(agence?.code ?? "").replace(/[^A-Za-z0-9]/g, "") || "AG"}`;
+        const prefix = `GPJ-${(agence?.code ?? "").replace(/[^A-Za-z0-9]/g, "") || "AG"}`;
         await ensureBarcodeSequence(prefix);
         barcode = await generateBarcode(prefix);
       }

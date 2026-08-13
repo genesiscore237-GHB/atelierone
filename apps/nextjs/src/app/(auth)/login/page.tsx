@@ -245,7 +245,7 @@ function LoginContent() {
                         type="text"
                         value={flLoginId}
                         onChange={(e) => { setFlLoginId(e.target.value); setFlError(""); }}
-                        placeholder="prenom.nom@atelierone.cm"
+                        placeholder="prenom.nom@gpj.cm"
                         className="w-full rounded-xl border border-white/10 bg-black/20 py-3 pr-4 pl-10 text-sm text-white placeholder-slate-500 outline-none focus:border-blue-500/50"
                         required
                         autoFocus

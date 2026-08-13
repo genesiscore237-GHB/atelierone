@@ -44,7 +44,7 @@ atelierone/
 1. Copier ce répertoire (hors `.git`, `node_modules`, `backups`, `tmp`).
 2. `git init` + renommage global :
    - `@atelierone/*` → `@<client>/*` (packages, imports, tsconfig, turbo)
-   - `atelierone` → `<client>` ; `AO-` → `<PREFIXE>-` ; `admin@atelierone.cm` → admin client
+   - `atelierone` → `<client>` ; `AO-` → `<PREFIXE>-` ; `admin@gpj.cm` → admin client
    - `AtelierOne` → nom du projet ; libellés UI adaptés
 3. Adapter `packages/db/src/seed-install.ts` : agences/sites, devise, TVA, préfixes facture.
 4. Adapter `packages/db/src/security-socle.ts` : rôles/permissions métier du client.
@@ -67,14 +67,14 @@ atelierone/
 
 | Compte | Rôle | Mot de passe |
 |---|---|---|
-| admin@atelierone.cm | superadmin | admin123 |
-| directeur@atelierone.cm … | directeur | admin123 |
-| chef.atelier@atelierone.cm | chef_atelier | admin123 |
-| secretaire@atelierone.cm | secretaire | admin123 |
-| magasinier@atelierone.cm | magasinier | admin123 |
-| technicien@atelierone.cm | technicien | admin123 |
-| comptable@atelierone.cm | comptable | admin123 |
-| rh@atelierone.cm | rh | admin123 |
-| consultation@atelierone.cm | consultation | admin123 |
+| admin@gpj.cm | superadmin | admin123 |
+| directeur@gpj.cm … | directeur | admin123 |
+| chef.atelier@gpj.cm | chef_atelier | admin123 |
+| secretaire@gpj.cm | secretaire | admin123 |
+| magasinier@gpj.cm | magasinier | admin123 |
+| technicien@gpj.cm | technicien | admin123 |
+| comptable@gpj.cm | comptable | admin123 |
+| rh@gpj.cm | rh | admin123 |
+| consultation@gpj.cm | consultation | admin123 |
 
 > ⚠️ Changer les mots de passe avant mise en production.

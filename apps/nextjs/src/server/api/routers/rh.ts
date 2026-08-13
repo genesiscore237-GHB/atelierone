@@ -140,7 +140,7 @@ export const rhRouter = createTRPCRouter({
       const nextNum = lastMatricule
         ? parseInt(lastMatricule.mat.split("-")[2] ?? "0", 10) + 1
         : 1;
-      const matricule = `AO-${year}-${String(nextNum).padStart(4, "0")}`;
+      const matricule = `GPJ-${year}-${String(nextNum).padStart(4, "0")}`;
 
       const [created] = await db.insert(employes).values({
         agenceId: ctx.user.agenceId,
