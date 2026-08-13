@@ -1,0 +1,302 @@
+[
+  {
+    "id": null,
+    "name": "`name`",
+    "actif": null
+  },
+  {
+    "id": -1,
+    "name": "Non Applicable",
+    "actif": 0
+  },
+  {
+    "id": 1,
+    "name": "Hatier",
+    "actif": 1
+  },
+  {
+    "id": 2,
+    "name": "Hachette",
+    "actif": 1
+  },
+  {
+    "id": 3,
+    "name": "herve",
+    "actif": 1
+  },
+  {
+    "id": 4,
+    "name": "edicef",
+    "actif": 1
+  },
+  {
+    "id": 5,
+    "name": "L",
+    "actif": 0
+  },
+  {
+    "id": 6,
+    "name": "NMI",
+    "actif": 1
+  },
+  {
+    "id": 7,
+    "name": "COSMOS",
+    "actif": 1
+  },
+  {
+    "id": 8,
+    "name": "DCA",
+    "actif": 1
+  },
+  {
+    "id": 9,
+    "name": "H",
+    "actif": 0
+  },
+  {
+    "id": 10,
+    "name": "ASVA",
+    "actif": 1
+  },
+  {
+    "id": 11,
+    "name": "edition essentiel",
+    "actif": 1
+  },
+  {
+    "id": 12,
+    "name": "ED",
+    "actif": 1
+  },
+  {
+    "id": 13,
+    "name": "CLLECTION PYRA",
+    "actif": 1
+  },
+  {
+    "id": 14,
+    "name": "FOUCHER",
+    "actif": 1
+  },
+  {
+    "id": 15,
+    "name": "ZENITH",
+    "actif": 1
+  },
+  {
+    "id": 16,
+    "name": "kamdem",
+    "actif": 1
+  },
+  {
+    "id": 17,
+    "name": "fcb",
+    "actif": 1
+  },
+  {
+    "id": 18,
+    "name": "AFREDIT",
+    "actif": 1
+  },
+  {
+    "id": 19,
+    "name": "classique",
+    "actif": 1
+  },
+  {
+    "id": 20,
+    "name": "messapresse",
+    "actif": 1
+  },
+  {
+    "id": 21,
+    "name": "terre africaine",
+    "actif": 1
+  },
+  {
+    "id": 22,
+    "name": "terre",
+    "actif": 1
+  },
+  {
+    "id": 23,
+    "name": "literary picture",
+    "actif": 1
+  },
+  {
+    "id": 24,
+    "name": "WHEP",
+    "actif": 1
+  },
+  {
+    "id": 25,
+    "name": "NMI EDUCATION",
+    "actif": 1
+  },
+  {
+    "id": 28,
+    "name": "Divers",
+    "actif": 1
+  },
+  {
+    "id": 29,
+    "name": "CEPER",
+    "actif": 1
+  },
+  {
+    "id": 30,
+    "name": "HATIER INTERNATIONAL",
+    "actif": 1
+  },
+  {
+    "id": 31,
+    "name": "cle",
+    "actif": 1
+  },
+  {
+    "id": 32,
+    "name": "MACMILLAN",
+    "actif": 1
+  },
+  {
+    "id": 33,
+    "name": "SOPECAM",
+    "actif": 1
+  },
+  {
+    "id": 34,
+    "name": "PASSERELLE DIFFUSION",
+    "actif": 1
+  },
+  {
+    "id": 35,
+    "name": "LUSTRAL",
+    "actif": 1
+  },
+  {
+    "id": 36,
+    "name": "goethe institute",
+    "actif": 1
+  },
+  {
+    "id": 37,
+    "name": "a e s",
+    "actif": 1
+  },
+  {
+    "id": 38,
+    "name": "METROPOLITAINE",
+    "actif": 1
+  },
+  {
+    "id": 39,
+    "name": "oto",
+    "actif": 1
+  },
+  {
+    "id": 40,
+    "name": "BAO",
+    "actif": 1
+  },
+  {
+    "id": 41,
+    "name": "NATAN",
+    "actif": 1
+  },
+  {
+    "id": 42,
+    "name": "MAJORS",
+    "actif": 1
+  },
+  {
+    "id": 43,
+    "name": "larousse",
+    "actif": 1
+  },
+  {
+    "id": 44,
+    "name": "*",
+    "actif": 0
+  },
+  {
+    "id": 45,
+    "name": "D",
+    "actif": 0
+  },
+  {
+    "id": 46,
+    "name": "MASSEU",
+    "actif": 1
+  },
+  {
+    "id": 47,
+    "name": "metodes",
+    "actif": 1
+  },
+  {
+    "id": 48,
+    "name": "LUPEPPO",
+    "actif": 1
+  },
+  {
+    "id": 49,
+    "name": "Belle lettre",
+    "actif": 1
+  },
+  {
+    "id": 50,
+    "name": "BELIN",
+    "actif": 1
+  },
+  {
+    "id": 51,
+    "name": "cambridge",
+    "actif": 1
+  },
+  {
+    "id": 52,
+    "name": "oxfotrd",
+    "actif": 1
+  },
+  {
+    "id": 53,
+    "name": "pocket",
+    "actif": 1
+  },
+  {
+    "id": 54,
+    "name": "BORDAS",
+    "actif": 1
+  },
+  {
+    "id": 55,
+    "name": "vallesse",
+    "actif": 1
+  },
+  {
+    "id": 56,
+    "name": "mondoux",
+    "actif": 1
+  },
+  {
+    "id": 57,
+    "name": "BEC",
+    "actif": 1
+  },
+  {
+    "id": 58,
+    "name": "ASV",
+    "actif": 1
+  },
+  {
+    "id": 59,
+    "name": "P",
+    "actif": 1
+  },
+  {
+    "id": 60,
+    "name": "LIP",
+    "actif": 1
+  }
+]

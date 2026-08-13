@@ -1,0 +1,74 @@
+[
+  {
+    "id": null,
+    "name": "`name`",
+    "parentCatID": null,
+    "actif": null
+  },
+  {
+    "id": 1,
+    "name": "LIBRAIRIE",
+    "parentCatID": -1,
+    "actif": 1
+  },
+  {
+    "id": 2,
+    "name": "MULTIMEDIA",
+    "parentCatID": -1,
+    "actif": 1
+  },
+  {
+    "id": 3,
+    "name": "PAPETERIE",
+    "parentCatID": -1,
+    "actif": 1
+  },
+  {
+    "id": 4,
+    "name": "edicef",
+    "parentCatID": 1,
+    "actif": 0
+  },
+  {
+    "id": 5,
+    "name": "JEUX EDUCATIFS",
+    "parentCatID": -1,
+    "actif": 1
+  },
+  {
+    "id": 6,
+    "name": "DICTIONNAIRES",
+    "parentCatID": -1,
+    "actif": 1
+  },
+  {
+    "id": 7,
+    "name": "FASCICULES",
+    "parentCatID": -1,
+    "actif": 0
+  },
+  {
+    "id": 8,
+    "name": "FASCICULE",
+    "parentCatID": -1,
+    "actif": 1
+  },
+  {
+    "id": 9,
+    "name": "beon",
+    "parentCatID": 3,
+    "actif": 0
+  },
+  {
+    "id": 10,
+    "name": "courses",
+    "parentCatID": -1,
+    "actif": 1
+  },
+  {
+    "id": 11,
+    "name": "ANGLOPHONE",
+    "parentCatID": 1,
+    "actif": 1
+  }
+]

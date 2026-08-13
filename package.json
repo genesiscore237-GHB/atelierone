@@ -1,0 +1,39 @@
+{
+  "name": "atelierone-erp",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@10.19.0",
+  "scripts": {
+    "dev": "turbo watch dev --continue",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,mdx}\" --cache",
+    "db:push": "pnpm -F @atelierone/db push",
+    "db:migrate": "pnpm -F @atelierone/db migrate",
+    "db:seed": "pnpm -F @atelierone/db seed",
+    "db:seed-rayons": "pnpm -F @atelierone/db seed:rayons",
+    "db:studio": "pnpm -F @atelierone/db studio",
+    "db:use-local": "node scripts/db-switch.mjs local",
+    "db:use-supabase": "node scripts/db-switch.mjs supabase",
+    "db:current": "node scripts/db-switch.mjs current",
+    "db:backup": "node scripts/deploy.mjs backup",
+    "db:deploy": "node scripts/deploy.mjs local",
+    "db:deploy:supabase": "node scripts/deploy.mjs supabase",
+    "db:deploy:all": "node scripts/deploy.mjs all",
+    "db:sync": "node scripts/deploy.mjs sync",
+    "db:verify": "pnpm -F @atelierone/db verify:data -- DOC/donnéés papeterie/import-atelierone",
+    "db:extract": "node scripts/extract-atelierone-papeterie.mjs"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "prettier": "^3.5.3",
+    "prettier-plugin-tailwindcss": "^0.6.11",
+    "typescript": "^5.8.2"
+  }
+}

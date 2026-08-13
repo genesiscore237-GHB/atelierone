@@ -1,0 +1,63 @@
+version: "3.9"
+
+x-app-defaults: &app-defaults
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+  environment:
+    - NODE_ENV=production
+    - DATABASE_URL=postgresql://atelierone:atelierone_secret@postgres:5432/atelierone_erp
+     - AUTH_SECRET=${AUTH_SECRET:?AUTH_SECRET is required}
+     - NEXTAUTH_URL=${NEXTAUTH_URL:?NEXTAUTH_URL is required}
+     - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-${NEXTAUTH_URL}}
+    - NEXT_PUBLIC_APP_NAME=AtelierOne
+  networks:
+    - atelierone-net
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: atelierone
+      POSTGRES_PASSWORD: atelierone_secret
+      POSTGRES_DB: atelierone_erp
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atelierone -d atelierone_erp"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - atelierone-net
+
+  app:
+    <<: *app-defaults
+    ports:
+      - "3000:3000"
+    labels:
+      - "traefik.enable=true"
+
+  setup:
+    <<: *app-defaults
+    profiles:
+      - setup
+    entrypoint: ["sh", "/app/scripts/docker-init.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  atelierone-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+    driver: local

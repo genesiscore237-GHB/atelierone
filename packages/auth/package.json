@@ -1,0 +1,25 @@
+{
+  "name": "@atelierone/auth",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./config": "./src/config.ts"
+  },
+  "dependencies": {
+    "next": "^15.2.3",
+    "next-auth": "5.0.0-beta.25",
+    "bcryptjs": "^2.4.3",
+    "zod": "^3.25.76",
+    "@atelierone/db": "workspace:*",
+    "@atelierone/validators": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20.14.10",
+    "typescript": "^5.8.2"
+  }
+}

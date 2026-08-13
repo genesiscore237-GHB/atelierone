@@ -1,0 +1,35 @@
+﻿import { pgTable, serial, integer, varchar, timestamp, boolean, numeric, uuid, text, jsonb } from "drizzle-orm/pg-core";
+import { organisations } from "./platform";
+
+export const agences = pgTable("agences", {
+  id: serial("id").primaryKey(),
+  organisationId: integer("organisation_id").references(() => organisations.id),
+  nom: varchar("nom", { length: 255 }).notNull(),
+  code: varchar("code", { length: 50 }).notNull().unique(),
+  adresse: varchar("adresse", { length: 500 }),
+  telephone: varchar("telephone", { length: 50 }),
+  email: varchar("email", { length: 255 }),
+  ville: varchar("ville", { length: 100 }),
+  pays: varchar("pays", { length: 100 }).default("BÃ©nin"),
+  slogan: varchar("slogan", { length: 255 }),
+  logoUrl: text("logo_url"),
+  rcRccm: varchar("rc_rccm", { length: 50 }),
+  niu: varchar("niu", { length: 50 }),
+  ifu: varchar("ifu", { length: 50 }),
+  capital: varchar("capital", { length: 100 }),
+  siteWeb: varchar("site_web", { length: 255 }),
+  devise: varchar("devise", { length: 10 }).default("XAF"),
+  tvaDefaut: numeric("tva_defaut", { precision: 5, scale: 2 }).default("0"),
+  prefixeFacture: varchar("prefixe_facture", { length: 20 }).default("PF"),
+  mentionPiedFacture: text("mention_pied_facture"),
+  mentionPiedTicket: text("mention_pied_ticket"),
+  politiqueRetour: text("politique_retour"),
+  factureChampsVisibles: jsonb("facture_champs_visibles").default({}),
+  commissionAgentPourcent: numeric("commission_agent_pourcent", { precision: 5, scale: 2 }).default("10"),
+  bourseMargePourcent: numeric("bourse_marge_pourcent", { precision: 5, scale: 2 }).default("30"),
+  margeDefautManuels: numeric("marge_defaut_manuels", { precision: 5, scale: 2 }).default("25"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
