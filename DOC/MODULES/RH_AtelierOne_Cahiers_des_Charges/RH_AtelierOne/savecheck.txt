@@ -1,0 +1,1567 @@
+MISSION — AUDIT COMPLET AVANT REMPLACEMENT DU DISQUE DUR
+
+0. RÔLE
+
+Tu es un expert senior en migration d'environnements de développement Windows, spécialisé dans :
+
+- Windows ;
+- VS Code ;
+- OpenCode ;
+- Git/GitHub ;
+- Node.js ;
+- npm/pnpm/yarn/bun ;
+- TypeScript/JavaScript ;
+- Next.js ;
+- React ;
+- PostgreSQL ;
+- Docker ;
+- ORM et outils de développement ;
+- variables d'environnement ;
+- CLI ;
+- extensions VS Code ;
+- agents IA ;
+- skills ;
+- historiques et données persistantes d'outils IA ;
+- sauvegarde et restauration de bases de données ;
+- reconstruction complète d'un poste de développement.
+
+Ta mission est de réaliser un AUDIT FORENSIQUE COMPLET de cette machine avant le remplacement de son disque dur.
+
+Le nouveau disque sera installé ultérieurement et la machine devra retrouver un environnement de développement aussi proche que possible de l'environnement actuel.
+
+Le propriétaire de la machine travaille actuellement sur des projets importants dans VS Code avec OpenCode. Il est IMPÉRATIF de préserver :
+
+1. les projets ;
+2. les repositories Git ;
+3. l'historique et les sessions OpenCode lorsque techniquement possible ;
+4. les skills OpenCode ;
+5. les configurations OpenCode ;
+6. les extensions et paramètres VS Code ;
+7. les environnements Node.js ;
+8. PostgreSQL et TOUTES les bases de données ;
+9. les rôles/utilisateurs PostgreSQL ;
+10. les extensions PostgreSQL ;
+11. les schémas ;
+12. les données ;
+13. les configurations nécessaires ;
+14. les variables d'environnement ;
+15. les clés/configurations nécessaires aux outils ;
+16. les versions exactes des logiciels ;
+17. les dépendances et outils CLI ;
+18. les configurations Git ;
+19. Docker et ses données si présent ;
+20. tout autre élément nécessaire pour reconstruire l'environnement.
+
+---
+
+1. RÈGLE ABSOLUE : NE RIEN MODIFIER
+
+Avant toute chose :
+
+NE SUPPRIME RIEN.
+
+NE DÉSINSTALLE RIEN.
+
+NE METS À JOUR RIEN.
+
+NE RÉINITIALISE RIEN.
+
+NE CHANGE AUCUNE CONFIGURATION.
+
+NE MODIFIE AUCUN PROJET.
+
+NE MODIFIE AUCUNE BASE DE DONNÉES.
+
+NE CHANGE AUCUN SECRET.
+
+NE FAIS AUCUN "git reset", "git clean", "checkout", "pull", "push" ou opération destructive.
+
+L'objectif initial est uniquement :
+
+«OBSERVER → INVENTORIER → ANALYSER → SAUVEGARDER → RAPPORTER.»
+
+Toute commande potentiellement destructive est interdite.
+
+Si une opération nécessite une autorisation ou une intervention manuelle, signale-la clairement au lieu de l'exécuter.
+
+---
+
+2. OBJECTIF FINAL
+
+À la fin de l'audit, je veux obtenir un dossier de migration permettant, après installation du nouveau disque, de reconstruire mon environnement.
+
+Le résultat doit permettre de répondre précisément à :
+
+- Qu'est-ce qui est installé ?
+- Où est-ce installé ?
+- Quelle version ?
+- Quelle configuration ?
+- Quels projets existent ?
+- Quelles dépendances utilisent-ils ?
+- Quels services tournent ?
+- Quelles bases PostgreSQL existent ?
+- Quels utilisateurs PostgreSQL existent ?
+- Quelles extensions PostgreSQL sont utilisées ?
+- Où sont les données ?
+- Où sont les configurations OpenCode ?
+- Où sont les skills ?
+- Où sont les historiques/sessions OpenCode ?
+- Quels paramètres VS Code sont personnalisés ?
+- Quelles extensions VS Code sont installées ?
+- Quels outils CLI sont utilisés ?
+- Quelles variables d'environnement sont nécessaires ?
+- Quels secrets existent et où sont-ils stockés ?
+- Quels services Windows sont nécessaires ?
+- Docker est-il utilisé ?
+- Quelles données Docker doivent être préservées ?
+- Quels runtimes sont installés ?
+- Quelles versions exactes faut-il réinstaller ?
+- Quelles dépendances doivent être restaurées ?
+- Quelles opérations devront être effectuées après remplacement du disque ?
+
+---
+
+3. STRUCTURE DU RAPPORT FINAL
+
+Crée un rapport principal :
+
+"MIGRATION_AUDIT_REPORT.md"
+
+Il doit contenir au minimum les sections suivantes :
+
+1. Résumé exécutif
+2. Informations système
+3. Disques et partitions
+4. Utilisateurs Windows et profils
+5. Variables d'environnement
+6. Logiciels installés
+7. Outils CLI
+8. VS Code
+9. OpenCode
+10. Skills OpenCode
+11. Historique/sessions OpenCode
+12. Git
+13. GitHub/GitLab/SSH
+14. Node.js
+15. npm
+16. pnpm
+17. yarn
+18. bun
+19. Python
+20. autres runtimes
+21. PostgreSQL
+22. Bases de données PostgreSQL
+23. Rôles PostgreSQL
+24. Extensions PostgreSQL
+25. Schémas PostgreSQL
+26. Docker
+27. Services Windows
+28. Projets
+29. Dépendances des projets
+30. fichiers ".env"
+31. certificats et clés
+32. caches importants
+33. données persistantes
+34. tâches planifiées
+35. configurations réseau utiles
+36. autres outils de développement
+37. éléments critiques
+38. éléments optionnels
+39. éléments à ne surtout pas oublier
+40. plan de sauvegarde
+41. plan de restauration
+42. procédure de vérification après restauration
+43. risques et incompatibilités
+44. checklist finale.
+
+---
+
+4. INVENTAIRE DU SYSTÈME WINDOWS
+
+Inspecte :
+
+- version exacte de Windows ;
+- édition ;
+- build ;
+- architecture ;
+- version du noyau si disponible ;
+- nom de la machine ;
+- nom d'utilisateur ;
+- profil utilisateur ;
+- emplacement du profil ;
+- variables d'environnement utilisateur ;
+- variables d'environnement système ;
+- PATH utilisateur ;
+- PATH système ;
+- services actifs ;
+- services arrêtés mais installés ;
+- tâches planifiées pertinentes ;
+- programmes installés ;
+- programmes portables ;
+- outils CLI ;
+- Windows Terminal ;
+- PowerShell ;
+- version PowerShell ;
+- WSL ;
+- distributions WSL ;
+- Hyper-V si présent ;
+- Virtual Machine Platform ;
+- fonctionnalités Windows utiles au développement.
+
+Ne sauvegarde pas aveuglément les secrets présents dans les variables d'environnement.
+
+Dans le rapport, indique :
+
+- nom de la variable ;
+- présence ou absence ;
+- origine probable ;
+- projet concerné si identifiable ;
+
+mais ne révèle pas les valeurs secrètes dans le rapport.
+
+---
+
+5. DISQUES ET STOCKAGE
+
+Inventorie :
+
+- tous les disques ;
+- partitions ;
+- volumes ;
+- systèmes de fichiers ;
+- lettres de lecteur ;
+- tailles ;
+- espace utilisé ;
+- espace libre ;
+- dossiers de développement ;
+- dossiers de données ;
+- dossiers cachés pertinents.
+
+Identifie particulièrement :
+
+- dossiers de projets ;
+- "%USERPROFILE%";
+- "%APPDATA%";
+- "%LOCALAPPDATA%";
+- "%PROGRAMDATA%";
+- ".config";
+- ".ssh";
+- ".gitconfig";
+- dossiers OpenCode ;
+- dossiers VS Code ;
+- données PostgreSQL ;
+- données Docker ;
+- données WSL ;
+- caches de packages ;
+- autres dossiers de développement.
+
+---
+
+6. VS CODE
+
+Inventorie précisément :
+
+- version de VS Code ;
+- édition utilisée ;
+- architecture ;
+- installation system/user ;
+- profils VS Code ;
+- paramètres utilisateur ;
+- paramètres de workspace ;
+- extensions ;
+- versions des extensions ;
+- extensions globales ;
+- extensions installées par profil ;
+- snippets ;
+- keybindings ;
+- tasks ;
+- launch configurations ;
+- settings JSON ;
+- extensions recommandées par les projets ;
+- configurations MCP si présentes ;
+- configurations liées aux agents IA ;
+- terminaux personnalisés ;
+- profils de terminal ;
+- workspaces sauvegardés ;
+- configurations Remote SSH ;
+- configurations WSL ;
+- Dev Containers ;
+- autres fonctionnalités utilisées.
+
+Crée un inventaire des extensions sous forme :
+
+extension_id
+version
+profil
+fonction
+
+Crée également une liste permettant de réinstaller automatiquement les extensions.
+
+Sauvegarde les paramètres et configurations nécessaires.
+
+---
+
+7. OPENCODE — SECTION CRITIQUE
+
+Traite OpenCode comme un élément critique de la migration.
+
+Détermine précisément :
+
+- version d'OpenCode ;
+- emplacement de l'installation ;
+- emplacement du binaire ;
+- méthode d'installation ;
+- package manager utilisé ;
+- configuration globale ;
+- configuration locale des projets ;
+- fichiers de configuration ;
+- dossiers ".opencode" ;
+- fichiers "opencode.json" ou équivalents ;
+- agents ;
+- prompts ;
+- workflows ;
+- plugins ;
+- MCP ;
+- providers ;
+- modèles configurés ;
+- paramètres ;
+- permissions ;
+- hooks ;
+- scripts ;
+- autres fichiers personnalisés.
+
+Recherche toutes les locations possibles où OpenCode peut stocker :
+
+- configuration ;
+- cache ;
+- sessions ;
+- historique ;
+- conversations ;
+- métadonnées ;
+- logs ;
+- états ;
+- données utilisateur ;
+- données workspace ;
+- authentification ;
+- plugins ;
+- skills.
+
+NE SUPPOSE PAS l'emplacement.
+
+Détermine l'emplacement réellement utilisé par la version installée.
+
+Si plusieurs emplacements sont possibles, indique :
+
+Emplacement
+Rôle
+Utilisé actuellement ?
+Criticité
+À sauvegarder ?
+
+---
+
+8. HISTORIQUE OPENCODE — PRIORITÉ MAXIMALE
+
+L'historique OpenCode est considéré comme une donnée critique.
+
+Recherche précisément :
+
+- sessions ;
+- conversations ;
+- historique ;
+- messages ;
+- métadonnées ;
+- checkpoints ;
+- états de session ;
+- contexte persistant ;
+- logs nécessaires à la récupération ;
+- bases de données locales éventuellement utilisées ;
+- fichiers JSON/SQLite/autres formats ;
+- caches contenant potentiellement les sessions.
+
+Ne te contente pas de rechercher un dossier nommé "history".
+
+Analyse la structure réelle utilisée par la version actuelle d'OpenCode.
+
+Détermine :
+
+1. où les sessions sont stockées ;
+2. sous quel format ;
+3. si elles sont exportables ;
+4. si elles sont liées à la machine ;
+5. si elles sont liées à un compte ;
+6. si elles sont synchronisées avec un service distant ;
+7. si elles peuvent être restaurées simplement ;
+8. quelles données locales sont indispensables ;
+9. quelles données doivent être sauvegardées ensemble.
+
+Si OpenCode utilise une base SQLite ou autre stockage local, identifie-la et sauvegarde-la correctement.
+
+NE JAMAIS supposer qu'une réinstallation d'OpenCode restaurera automatiquement l'historique.
+
+---
+
+9. SKILLS OPENCODE
+
+Recherche tous les skills.
+
+Cherche notamment :
+
+- skills globaux ;
+- skills par projet ;
+- ".opencode/skills";
+- "~/.opencode/skills";
+- fichiers "SKILL.md";
+- autres formats de skills reconnus par la version actuelle.
+
+Pour chaque skill, documente :
+
+Nom
+Emplacement
+Projet/global
+Description
+Fichiers associés
+Dépendances
+Scripts associés
+Configuration associée
+
+Crée une copie complète des skills.
+
+Ne copie pas uniquement "SKILL.md" si le skill dépend :
+
+- d'autres fichiers ;
+- scripts ;
+- templates ;
+- ressources ;
+- configurations ;
+- fichiers auxiliaires.
+
+---
+
+10. GIT
+
+Inventorie :
+
+- version Git ;
+- configuration globale ;
+- ".gitconfig";
+- configuration système ;
+- aliases ;
+- credential helpers ;
+- Git LFS ;
+- Git hooks globaux ;
+- templates ;
+- SSH ;
+- GPG si utilisé ;
+- GitHub CLI ;
+- GitLab CLI ;
+- autres CLI Git.
+
+Pour chaque repository :
+
+- chemin ;
+- remote ;
+- branche ;
+- état du working tree ;
+- présence de modifications non commitées ;
+- présence de fichiers non suivis ;
+- sous-modules ;
+- LFS ;
+- hooks ;
+- configuration locale ;
+- version du projet.
+
+NE FAIS AUCUN COMMIT.
+
+NE FAIS AUCUN PUSH.
+
+NE MODIFIE PAS LES REPOSITORIES.
+
+---
+
+11. SSH / GITHUB / GITLAB
+
+Identifie :
+
+- ".ssh";
+- clés privées ;
+- clés publiques ;
+- "known_hosts";
+- "config";
+- agents SSH ;
+- configurations GitHub ;
+- GitLab ;
+- GitHub CLI ;
+- tokens éventuels ;
+- credentials.
+
+Pour les secrets :
+
+NE LES IMPRIME PAS DANS LE RAPPORT.
+
+Indique seulement leur présence et le moyen de les sauvegarder/restaurer de façon sécurisée.
+
+Signale explicitement :
+
+«"SECRET À SAUVEGARDER MANUELLEMENT"»
+
+lorsqu'une donnée ne peut pas être copiée automatiquement de manière sûre.
+
+---
+
+12. NODE.JS
+
+Inventorie :
+
+- version Node.js ;
+- méthode d'installation ;
+- nvm/nvm-windows si présent ;
+- versions Node installées ;
+- version active ;
+- npm ;
+- pnpm ;
+- yarn ;
+- bun ;
+- corepack ;
+- versions disponibles ;
+- configurations globales ;
+- packages globaux.
+
+Cherche également les fichiers :
+
+- ".nvmrc";
+- ".node-version";
+- "package.json";
+- lockfiles ;
+- configurations npm ;
+- ".npmrc";
+- ".pnpmfile";
+- autres fichiers liés.
+
+Pour chaque projet, détermine la version Node recommandée/requise.
+
+---
+
+13. AUTRES RUNTIMES
+
+Inspecte la présence et les versions de :
+
+- Python ;
+- pip ;
+- Poetry ;
+- uv ;
+- Java ;
+- JDK ;
+- .NET ;
+- PHP ;
+- Ruby ;
+- Go ;
+- Rust ;
+- Cargo ;
+- Flutter ;
+- Dart ;
+- autres runtimes détectés.
+
+Ne te limite pas à cette liste.
+
+Si un outil est utilisé par un projet, il doit être identifié.
+
+---
+
+14. POSTGRESQL — PRIORITÉ CRITIQUE
+
+PostgreSQL doit être traité comme une infrastructure critique.
+
+Identifie :
+
+- version PostgreSQL ;
+- versions éventuellement multiples ;
+- installation ;
+- emplacement ;
+- "bin";
+- "data";
+- service Windows ;
+- port ;
+- host ;
+- configuration ;
+- "postgresql.conf";
+- "pg_hba.conf";
+- autres fichiers de configuration ;
+- extensions ;
+- encodage ;
+- locale ;
+- tablespaces ;
+- réplication si présente ;
+- autres paramètres pertinents.
+
+---
+
+15. INVENTAIRE COMPLET DES BASES POSTGRESQL
+
+Pour chaque instance PostgreSQL, récupère :
+
+Instance
+Version
+Host
+Port
+Database
+Owner
+Encoding
+Collation
+Ctype
+Tablespace
+Taille
+Nombre approximatif de tables
+Extensions
+
+Liste toutes les bases.
+
+Ne suppose pas qu'il n'y en a qu'une.
+
+---
+
+16. RÔLES POSTGRESQL
+
+Inventorie :
+
+- rôles ;
+- utilisateurs ;
+- groupes ;
+- privilèges ;
+- propriétaires ;
+- memberships ;
+- rôles SUPERUSER ;
+- CREATEDB ;
+- CREATEROLE ;
+- LOGIN ;
+- réplication ;
+- autres attributs.
+
+NE METS PAS LES MOTS DE PASSE EN CLAIR DANS LE RAPPORT.
+
+Il faut prévoir une sauvegarde/restauration correcte des rôles et privilèges.
+
+---
+
+17. EXTENSIONS POSTGRESQL
+
+Pour chaque base, inventorie :
+
+- extension ;
+- version ;
+- version disponible ;
+- dépendances ;
+- schémas utilisés.
+
+Exemples possibles :
+
+- uuid-ossp ;
+- pgcrypto ;
+- PostGIS ;
+- vector ;
+- pg_trgm ;
+- citext ;
+- autres.
+
+Ne suppose rien.
+
+---
+
+18. SAUVEGARDE POSTGRESQL
+
+La sauvegarde PostgreSQL doit être réalisée avec les outils PostgreSQL appropriés.
+
+Pour chaque base :
+
+- effectuer un dump logique ;
+- privilégier un format adapté à une restauration fiable ;
+- conserver les commandes exactes utilisées ;
+- vérifier que le dump a été créé ;
+- vérifier sa taille ;
+- vérifier son intégrité autant que possible.
+
+Créer également une sauvegarde globale permettant de restaurer :
+
+- rôles ;
+- tablespaces ;
+- paramètres nécessaires ;
+- privilèges.
+
+Ne te contente pas de copier le dossier "data".
+
+Le dossier "data" peut éventuellement être conservé comme sauvegarde supplémentaire, mais le dump logique est indispensable.
+
+Si une sauvegarde physique est pertinente, documente-la séparément.
+
+---
+
+19. POSTGRESQL — COMPATIBILITÉ FUTURE
+
+Détermine :
+
+- version actuelle ;
+- versions supportées ;
+- version recommandée pour la nouvelle installation ;
+- risques liés à une restauration sur une version différente.
+
+NE CHANGE PAS DE VERSION SUR L'ANCIENNE MACHINE.
+
+Le rapport doit indiquer :
+
+Version actuelle
+Version à installer idéalement
+Compatibilité dump → nouvelle version
+Points de vigilance
+
+---
+
+20. DOCKER
+
+Détecte :
+
+- Docker Desktop ;
+- Docker Engine ;
+- Docker Compose ;
+- version ;
+- WSL backend ;
+- images ;
+- containers ;
+- volumes ;
+- networks ;
+- compose files ;
+- Dockerfiles ;
+- registries ;
+- credentials.
+
+Pour chaque projet utilisant Docker :
+
+- identifier les fichiers Compose ;
+- variables d'environnement ;
+- volumes ;
+- images nécessaires ;
+- services ;
+- ports ;
+- dépendances.
+
+Attention particulière aux Docker volumes, qui peuvent contenir des bases de données ou d'autres données persistantes.
+
+---
+
+21. WSL
+
+Si WSL est présent :
+
+- distributions ;
+- versions ;
+- état ;
+- fichiers de configuration ;
+- projets présents dans WSL ;
+- bases de données présentes dans WSL ;
+- Docker lié à WSL ;
+- outils installés dans chaque distribution.
+
+Détermine si une distribution doit être exportée avant remplacement du disque.
+
+---
+
+22. PROJETS
+
+Recherche tous les projets de développement.
+
+Ne te limite pas au Desktop.
+
+Recherche notamment :
+
+- Documents ;
+- Desktop ;
+- Downloads ;
+- dossiers personnalisés ;
+- autres partitions ;
+- WSL ;
+- répertoires utilisés par VS Code ;
+- repositories Git.
+
+Pour chaque projet :
+
+Nom
+Chemin
+Type
+Git ?
+Remote
+Branche
+Framework
+Runtime
+Package manager
+Version Node
+Base de données
+ORM
+Variables .env
+Docker
+Services externes
+Build command
+Dev command
+Dépendances
+
+---
+
+23. FICHIERS ".ENV"
+
+Recherche les fichiers :
+
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+.env.example
+
+etc.
+
+NE METS PAS LES SECRETS EN CLAIR DANS LE RAPPORT.
+
+Pour chaque variable :
+
+Nom
+Projet
+Type
+Secret ?
+Nécessaire à l'exécution ?
+Nécessaire à la migration ?
+
+Crée une liste des secrets à récupérer manuellement.
+
+---
+
+24. SECRETS ET CREDENTIALS
+
+Recherche les systèmes de credentials pertinents :
+
+- Windows Credential Manager ;
+- Git Credential Manager ;
+- npm credentials ;
+- Docker credentials ;
+- GitHub CLI ;
+- OpenCode ;
+- providers IA ;
+- clés API ;
+- SSH ;
+- certificats ;
+- autres outils détectés.
+
+Ne révèle jamais les valeurs secrètes.
+
+Ne copie pas automatiquement les secrets vers un rapport texte.
+
+Signale :
+
+CRITIQUE — SECRET À SAUVEGARDER
+
+avec son emplacement et son usage.
+
+---
+
+25. FOURNISSEURS IA / API
+
+Puisque les projets utilisent OpenCode, inspecte les configurations de providers IA :
+
+- OpenAI ;
+- Anthropic ;
+- Google ;
+- DeepSeek ;
+- OpenRouter ;
+- OpenCode ;
+- autres providers détectés.
+
+Identifie :
+
+- provider ;
+- modèle ;
+- endpoint ;
+- configuration ;
+- variables utilisées ;
+- fichiers concernés.
+
+Pour les clés API :
+
+ne jamais afficher la clé.
+
+---
+
+26. MCP / AGENTS / OUTILS IA
+
+Recherche :
+
+- MCP servers ;
+- configurations MCP ;
+- agents ;
+- plugins ;
+- hooks ;
+- scripts ;
+- tools ;
+- prompts ;
+- workflows ;
+- configurations spécifiques aux projets.
+
+Détermine leurs dépendances.
+
+---
+
+27. ORM / BASES DE DONNÉES DES PROJETS
+
+Recherche notamment :
+
+- Prisma ;
+- Drizzle ;
+- TypeORM ;
+- Sequelize ;
+- Mongoose ;
+- Supabase ;
+- Firebase ;
+- autres.
+
+Pour chaque projet, documente :
+
+ORM
+Version
+Base cible
+Migration system
+Emplacement migrations
+Commande migration
+Commande génération
+
+Les fichiers de migrations doivent impérativement être sauvegardés.
+
+---
+
+28. CACHE ET DONNÉES RECONSTRUCTIBLES
+
+Classe les données en trois catégories.
+
+CATÉGORIE A — CRITIQUE
+
+Impossible ou difficile à reconstruire.
+
+Exemples :
+
+- bases de données ;
+- historique OpenCode ;
+- secrets ;
+- clés SSH ;
+- projets avec modifications non commitées ;
+- configurations personnalisées ;
+- fichiers personnels de configuration.
+
+CATÉGORIE B — IMPORTANT
+
+Reconstructible mais à sauvegarder.
+
+Exemples :
+
+- paramètres VS Code ;
+- skills ;
+- extensions ;
+- configurations ;
+- Docker volumes ;
+- Git config.
+
+CATÉGORIE C — RECONSTRUCTIBLE
+
+Peut être réinstallé.
+
+Exemples :
+
+- "node_modules" ;
+- caches npm ;
+- caches pnpm ;
+- caches VS Code ;
+- images Docker téléchargeables.
+
+Ne supprime rien. Le but est seulement de classer.
+
+---
+
+29. FICHIERS NON COMMITÉS
+
+Pour chaque repository Git, vérifie l'état.
+
+Identifie :
+
+- modifications non commitées ;
+- fichiers non suivis ;
+- fichiers ignorés potentiellement importants ;
+- fichiers ".env" ;
+- fichiers générés contenant des données importantes.
+
+C'est extrêmement important.
+
+Un fichier présent localement mais absent de Git peut être perdu lors du remplacement du disque.
+
+---
+
+30. PROJETS AVEC DONNÉES LOCALES
+
+Recherche :
+
+- SQLite ;
+- fichiers JSON utilisés comme DB ;
+- fichiers CSV critiques ;
+- fichiers uploads ;
+- stockage local ;
+- fichiers média ;
+- bases embarquées ;
+- fichiers générés nécessaires.
+
+Ne considère pas automatiquement ces fichiers comme jetables.
+
+---
+
+31. SERVICES LOCAUX
+
+Identifie tous les services locaux :
+
+- PostgreSQL ;
+- Redis ;
+- MySQL ;
+- MongoDB ;
+- MariaDB ;
+- Elasticsearch ;
+- RabbitMQ ;
+- autres.
+
+Pour chaque service :
+
+Nom
+Version
+Port
+Emplacement données
+Configuration
+Service Windows
+Données critiques
+Méthode de sauvegarde
+Méthode de restauration
+
+---
+
+32. CONFIGURATION RÉSEAU
+
+Inventorie uniquement ce qui est pertinent au développement :
+
+- ports utilisés ;
+- services locaux ;
+- hosts file modifié ;
+- DNS spécifiques ;
+- proxy ;
+- certificats locaux ;
+- configurations SSL/TLS locales.
+
+---
+
+33. OUTILS GLOBAUX
+
+Recherche tous les outils CLI disponibles dans PATH.
+
+Exemples :
+
+- git ;
+- gh ;
+- glab ;
+- node ;
+- npm ;
+- pnpm ;
+- yarn ;
+- bun ;
+- docker ;
+- docker-compose ;
+- psql ;
+- pg_dump ;
+- pg_restore ;
+- python ;
+- pip ;
+- code ;
+- opencode ;
+- autres.
+
+Pour chacun :
+
+Nom
+Version
+Emplacement
+Installation
+Utilisation détectée
+
+---
+
+34. CONFIGURATIONS À SAUVEGARDER
+
+Identifie notamment :
+
+.gitconfig
+.ssh/
+.npmrc
+.pnpmrc
+.yarnrc*
+.bunfig*
+.nvmrc
+.node-version
+.env*
+Docker files
+VS Code settings
+VS Code profiles
+OpenCode config
+OpenCode skills
+OpenCode sessions
+PostgreSQL dumps
+PostgreSQL roles
+PostgreSQL config
+Git hooks
+MCP config
+
+Mais ne suppose pas que ces noms couvrent tout.
+
+---
+
+35. SAUVEGARDE
+
+Après l'audit, prépare un plan de sauvegarde.
+
+Structure recommandée :
+
+MIGRATION_BACKUP/
+│
+├── 00_REPORT/
+│   ├── MIGRATION_AUDIT_REPORT.md
+│   ├── SOFTWARE_VERSIONS.txt
+│   ├── ENVIRONMENT_INVENTORY.txt
+│   └── RESTORATION_CHECKLIST.md
+│
+├── 01_PROJECTS/
+│
+├── 02_GIT/
+│
+├── 03_VSCODE/
+│
+├── 04_OPENCODE/
+│   ├── CONFIG/
+│   ├── SKILLS/
+│   ├── SESSIONS/
+│   ├── AGENTS/
+│   ├── MCP/
+│   └── OTHER/
+│
+├── 05_POSTGRESQL/
+│   ├── DATABASES/
+│   ├── ROLES/
+│   ├── SCHEMAS/
+│   ├── EXTENSIONS/
+│   └── CONFIG/
+│
+├── 06_DOCKER/
+│   ├── COMPOSE/
+│   ├── VOLUMES/
+│   └── CONFIG/
+│
+├── 07_SSH/
+│
+├── 08_ENVIRONMENT/
+│
+├── 09_OTHER_SERVICES/
+│
+└── 10_INSTALLATION/
+    ├── INSTALL_COMMANDS.ps1
+    ├── INSTALL_COMMANDS.md
+    └── RESTORE_COMMANDS.md
+
+Adapte cette structure si une meilleure organisation est nécessaire.
+
+---
+
+36. SCRIPT DE SAUVEGARDE
+
+Lorsque l'audit est terminé, produis un ou plusieurs scripts :
+
+BACKUP_ENVIRONMENT.ps1
+
+et si nécessaire :
+
+BACKUP_POSTGRESQL.ps1
+BACKUP_OPENCODE.ps1
+BACKUP_VSCODE.ps1
+
+Les scripts doivent :
+
+- être non destructifs ;
+- créer les dossiers ;
+- copier les fichiers nécessaires ;
+- générer les dumps PostgreSQL ;
+- enregistrer les versions ;
+- vérifier les erreurs ;
+- produire un log ;
+- afficher clairement les éléments qui n'ont pas pu être sauvegardés.
+
+Ne lance pas une opération destructive pour résoudre une erreur.
+
+---
+
+37. VÉRIFICATION DE LA SAUVEGARDE
+
+Une sauvegarde n'est pas considérée comme réussie simplement parce que les fichiers existent.
+
+Vérifie :
+
+- présence des projets ;
+- taille ;
+- fichiers critiques ;
+- dumps PostgreSQL ;
+- configuration OpenCode ;
+- skills ;
+- historique ;
+- VS Code ;
+- Git ;
+- SSH ;
+- Docker ;
+- scripts de restauration.
+
+Pour les dumps PostgreSQL, vérifie qu'ils peuvent être lus par les outils PostgreSQL appropriés.
+
+Si possible, calcule des hashes SHA-256 pour les fichiers critiques.
+
+---
+
+38. INVENTAIRE DES VERSIONS
+
+Crée un tableau :
+
+Composant| Version actuelle| Installation| Version cible| Criticité
+Windows| | | | 
+VS Code| | | | 
+OpenCode| | | | 
+Git| | | | 
+Node.js| | | | 
+npm| | | | 
+pnpm| | | | 
+Yarn| | | | 
+Bun| | | | 
+PostgreSQL| | | | 
+Docker| | | | 
+Python| | | | 
+autres| | | | 
+
+Ne remplis que les logiciels réellement présents.
+
+---
+
+39. SCRIPT DE RECONSTRUCTION
+
+Prépare également :
+
+RESTORE_ENVIRONMENT.ps1
+
+Son rôle futur sera de faciliter :
+
+1. installation des outils ;
+2. installation des versions nécessaires ;
+3. restauration VS Code ;
+4. restauration OpenCode ;
+5. restauration des skills ;
+6. restauration Git ;
+7. restauration SSH ;
+8. installation des dépendances ;
+9. installation PostgreSQL ;
+10. restauration des rôles ;
+11. restauration des bases ;
+12. restauration Docker ;
+13. restauration des configurations ;
+14. vérification finale.
+
+Le script doit être conçu pour être exécuté APRÈS installation propre du nouveau disque.
+
+Ne l'exécute pas maintenant.
+
+---
+
+40. PLAN DE RESTAURATION MANUELLE
+
+Le rapport doit expliquer précisément ce qui devra être fait manuellement.
+
+Par exemple :
+
+ÉTAPE 1 — Installer Windows
+ÉTAPE 2 — Installer les pilotes
+ÉTAPE 3 — Installer Git
+ÉTAPE 4 — Installer Node
+ÉTAPE 5 — Installer VS Code
+ÉTAPE 6 — Restaurer VS Code
+ÉTAPE 7 — Installer OpenCode
+ÉTAPE 8 — Restaurer OpenCode
+ÉTAPE 9 — Restaurer les skills
+ÉTAPE 10 — Restaurer l'historique OpenCode
+ÉTAPE 11 — Installer PostgreSQL
+ÉTAPE 12 — Restaurer les rôles
+ÉTAPE 13 — Restaurer les bases
+ÉTAPE 14 — Restaurer Docker
+ÉTAPE 15 — Restaurer les projets
+ÉTAPE 16 — Restaurer les secrets
+ÉTAPE 17 — Réinstaller les dépendances
+ÉTAPE 18 — Tester les applications
+ÉTAPE 19 — Vérifier OpenCode
+ÉTAPE 20 — Validation finale
+
+Adapte cet ordre à la situation réelle découverte.
+
+---
+
+41. MATRICE DE CRITICITÉ
+
+Pour chaque élément découvert, attribue :
+
+CRITIQUE
+
+Perte grave ou impossible à reconstruire.
+
+IMPORTANT
+
+Reconstructible mais coûteux.
+
+RECONSTRUCTIBLE
+
+Réinstallation suffisante.
+
+INUTILE À SAUVEGARDER
+
+Cache ou données temporaires sans valeur.
+
+Utilise cette classification dans le rapport.
+
+---
+
+42. CE QUE TU DOIS ABSOLUMENT CHERCHER EN PLUS
+
+Ne te limite surtout pas aux éléments que je viens de citer.
+
+Tu dois rechercher les éléments que j'aurais probablement oubliés.
+
+Pense notamment à :
+
+- fichiers cachés ;
+- fichiers ignorés par Git ;
+- configurations globales ;
+- configurations locales ;
+- bases locales ;
+- SQLite ;
+- Docker volumes ;
+- WSL ;
+- clés SSH ;
+- certificats ;
+- credentials ;
+- Git hooks ;
+- scripts personnels ;
+- aliases ;
+- tâches planifiées ;
+- services Windows ;
+- variables d'environnement ;
+- configurations de terminal ;
+- extensions VS Code ;
+- profils VS Code ;
+- snippets ;
+- configurations MCP ;
+- agents IA ;
+- prompts ;
+- skills ;
+- caches contenant des données non reconstructibles ;
+- configurations de package managers ;
+- installations multiples d'un même runtime ;
+- versions spécifiques requises par certains projets ;
+- données locales de développement ;
+- fichiers non versionnés ;
+- données présentes uniquement sur le disque local.
+
+---
+
+43. DÉTECTION DES RISQUES
+
+Le rapport doit signaler explicitement tout risque.
+
+Exemples :
+
+CRITIQUE
+Historique OpenCode non identifié.
+
+CRITIQUE
+Base PostgreSQL X non sauvegardée.
+
+CRITIQUE
+Projet X contient des modifications Git non commitées.
+
+CRITIQUE
+Clé SSH détectée mais non sauvegardée.
+
+IMPORTANT
+Projet X dépend de Node 20 alors que Node 22 est actuellement actif.
+
+IMPORTANT
+Docker volume contenant des données détecté.
+
+IMPORTANT
+Configuration OpenCode dépend d'une variable d'environnement secrète.
+
+ATTENTION
+Restauration PostgreSQL prévue sur une version différente.
+
+---
+
+44. RAPPORT FINAL : RÉSUMÉ EXÉCUTIF
+
+À la fin du rapport, donne un résumé très clair :
+
+Nombre de projets
+
+Nombre de bases PostgreSQL
+
+Nombre de services
+
+Nombre de skills
+
+Nombre d'extensions VS Code
+
+Nombre d'outils CLI
+
+Nombre de secrets à restaurer manuellement
+
+Nombre d'éléments critiques
+
+Nombre d'éléments importants
+
+Nombre de risques
+
+Sauvegarde complète réalisable ?
+
+OUI / NON
+
+Éléments encore non identifiés
+
+Liste-les.
+
+---
+
+45. CHECKLIST AVANT RETRAIT DU DISQUE
+
+Crée une checklist finale :
+
+- [ ] Tous les projets sauvegardés
+- [ ] Git repositories sauvegardés
+- [ ] Modifications non commitées sauvegardées
+- [ ] VS Code configuré et sauvegardé
+- [ ] Extensions inventoriées
+- [ ] OpenCode inventorié
+- [ ] OpenCode configuration sauvegardée
+- [ ] OpenCode skills sauvegardés
+- [ ] OpenCode agents sauvegardés
+- [ ] OpenCode MCP sauvegardé
+- [ ] OpenCode historique identifié
+- [ ] OpenCode historique sauvegardé
+- [ ] PostgreSQL version identifiée
+- [ ] Toutes les bases identifiées
+- [ ] Toutes les bases dumpées
+- [ ] Rôles PostgreSQL sauvegardés
+- [ ] Extensions PostgreSQL inventoriées
+- [ ] Configurations PostgreSQL sauvegardées
+- [ ] Docker inventorié
+- [ ] Docker volumes sauvegardés si nécessaires
+- [ ] WSL inventorié
+- [ ] SSH sauvegardé
+- [ ] Variables d'environnement inventoriées
+- [ ] Secrets identifiés
+- [ ] Autres services inventoriés
+- [ ] Versions enregistrées
+- [ ] Scripts de restauration créés
+- [ ] Sauvegarde vérifiée
+- [ ] Hashes calculés pour les fichiers critiques
+- [ ] Rapport final terminé
+
+---
+
+46. RÈGLE DE QUALITÉ
+
+Ne réponds pas simplement :
+
+«"Tout semble être sauvegardé."»
+
+Je veux un audit vérifiable.
+
+Pour chaque élément important, indique :
+
+ÉLÉMENT :
+EMPLACEMENT ACTUEL :
+VERSION :
+CRITICITÉ :
+TAILLE :
+SAUVEGARDÉ :
+EMPLACEMENT SAUVEGARDE :
+MÉTHODE DE RESTAURATION :
+VÉRIFICATION :
+RISQUE :
+
+Lorsque tu ne peux pas déterminer une information, écris :
+
+«NON DÉTERMINÉ»
+
+et explique pourquoi.
+
+Ne remplace jamais une information inconnue par une supposition.
+
+---
+
+47. LIVRABLES OBLIGATOIRES
+
+À la fin de l'opération, je veux obtenir :
+
+1. "MIGRATION_AUDIT_REPORT.md"
+2. "SOFTWARE_VERSIONS.txt"
+3. "PROJECT_INVENTORY.md"
+4. "POSTGRESQL_INVENTORY.md"
+5. "OPENCODE_INVENTORY.md"
+6. "VSCODE_INVENTORY.md"
+7. "SECRETS_TO_RESTORE.md"
+8. "RESTORATION_CHECKLIST.md"
+9. "BACKUP_ENVIRONMENT.ps1"
+10. "RESTORE_ENVIRONMENT.ps1"
+11. scripts PostgreSQL si nécessaires
+12. logs de sauvegarde
+13. hashes des fichiers critiques
+14. copie des projets
+15. copie des configurations
+16. copie des skills
+17. copie des données OpenCode nécessaires
+18. dumps PostgreSQL
+19. sauvegarde des rôles PostgreSQL
+20. sauvegardes Docker/WSL si nécessaires.
+
+---
+
+48. DERNIÈRE CONSIGNE
+
+Avant de conclure, pose-toi cette question :
+
+«"Si l'ancien disque était détruit immédiatement après cet audit, pourrais-je reconstruire le poste de développement et reprendre les projets sans perdre les données, les bases, les configurations, les skills et l'historique OpenCode ?"»
+
+Si la réponse est NON, identifie exactement ce qui manque.
+
+Ne considère pas la mission terminée tant qu'il existe un élément critique non sauvegardé ou non identifié.
+
+Commence par l'audit et l'inventaire. Ne modifie rien sur la machine.
+
+Ne supprime rien.
+
+Ne désinstalle rien.
+
+Ne mets rien à jour.
+
+Ne formate rien.
+
+Ne réinitialise aucune base.
+
+Ne fais aucune opération Git destructive.
+
+Ne révèle aucun secret dans le rapport.
+
+La priorité absolue est la préservation des données et la capacité de restauration complète de l'environnement.
