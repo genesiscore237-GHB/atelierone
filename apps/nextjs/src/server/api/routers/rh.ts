@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, rhProcedure, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, employes, utilisateurs, absences, sanctions, contrats, documentsEmployes } from "@atelierone/db";
+import { db, employes, utilisateurs, absences, sanctions, contrats, documentsEmployes, departments, positions, contractTypes, employeePositions, employeeSalaryHistory, hrGeneralSettings, hrWorkCycles } from "@atelierone/db";
 import { eq, and, or, ilike, desc, asc, count, inArray, sql, gte, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 
@@ -13,6 +13,7 @@ export const rhRouter = createTRPCRouter({
         search: z.string().optional(),
         statut: z.enum(["actif", "conge", "suspendu", "archive"]).optional(),
         typeEmploye: z.enum(["permanent", "contractuel", "stagiaire", "temporaire", "apprenti", "prestataire"]).optional(),
+        departmentId: z.number().int().optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
@@ -25,6 +26,7 @@ export const rhRouter = createTRPCRouter({
       }
       if (input.statut) conditions.push(eq(employes.statut, input.statut));
       if (input.typeEmploye) conditions.push(eq(employes.typeEmploye, input.typeEmploye));
+      if (input.departmentId) conditions.push(eq(employes.departmentId, input.departmentId));
 
       const offset = (input.page - 1) * input.limit;
 
@@ -104,89 +106,172 @@ export const rhRouter = createTRPCRouter({
   create: requirePermissionProcedure("rh.utilisateur.creer")
     .input(
       z.object({
+        civilite: z.string().optional(),
         nom: z.string().min(1),
         prenom: z.string().min(1),
         dateNaissance: z.string().optional(),
+        lieuNaissance: z.string().optional(),
         sexe: z.enum(["M", "F"]).optional(),
         emailPersonnel: z.string().email().optional().or(z.literal("")),
         telephone: z.string().optional(),
         telephoneSecondaire: z.string().optional(),
         adresse: z.string().optional(),
         ville: z.string().optional(),
+        contactUrgenceNom: z.string().optional(),
+        contactUrgenceTelephone: z.string().optional(),
         typeEmploye: z.enum(["permanent", "contractuel", "stagiaire", "temporaire", "apprenti", "prestataire"]).default("permanent"),
         fonction: z.string().min(1),
+        departmentId: z.number().int().optional(),
+        positionId: z.number().int().optional(),
+        workCycleId: z.number().int().optional(),
+        managerId: z.number().int().optional(),
         dateEmbauche: z.string().default(() => { const d = new Date().toISOString().split("T")[0]; return d ?? "2000-01-01"; }),
         dateFinContrat: z.string().optional(),
         periodeEssaiFin: z.string().optional(),
         salaireBase: z.string().optional(),
         modePaie: z.enum(["mensuel", "horaire", "journalier", "commission"]).default("mensuel"),
         numCnss: z.string().optional(),
+        niu: z.string().optional(),
         numCompteBancaire: z.string().optional(),
         banque: z.string().optional(),
         typePieceIdentite: z.string().optional(),
         numPieceIdentite: z.string().optional(),
         pieceExpireLe: z.string().optional(),
         diplome: z.string().optional(),
+        notes: z.string().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const [lastMatricule] = await db
-        .select({ mat: employes.matricule })
-        .from(employes)
-        .orderBy(desc(employes.matricule))
-        .limit(1);
-
+      const agenceId = ctx.user.agenceId;
       const year = new Date().getFullYear();
-      const nextNum = lastMatricule
-        ? parseInt(lastMatricule.mat.split("-")[2] ?? "0", 10) + 1
-        : 1;
-      const matricule = `GPJ-${year}-${String(nextNum).padStart(4, "0")}`;
+
+      // Règle métier : le manager doit être un employé actif
+      if (input.managerId) {
+        const [manager] = await db
+          .select({ id: employes.id })
+          .from(employes)
+          .where(and(eq(employes.id, input.managerId), eq(employes.agenceId, agenceId), eq(employes.statut, "actif")))
+          .limit(1);
+        if (!manager) throw new TRPCError({ code: "BAD_REQUEST", message: "Le supérieur hiérarchique doit être un employé actif." });
+      }
+
+      // Matricule auto via RH-00 (préfixe + séquence paramétrables)
+      const [gen] = await db
+        .select()
+        .from(hrGeneralSettings)
+        .where(eq(hrGeneralSettings.agenceId, agenceId))
+        .limit(1);
+      const prefix = (gen?.employeeCodePrefix || "GPJ").trim();
+      let seq = (gen?.employeeCodeSequence ?? 0) + 1;
+
+      let matricule = `${prefix}-${year}-${String(seq).padStart(4, "0")}`;
+      const [existingMat] = await db
+        .select({ id: employes.id })
+        .from(employes)
+        .where(eq(employes.matricule, matricule))
+        .limit(1);
+      if (existingMat) {
+        // Séquence désynchronisée : repart du max réel
+        const [last] = await db
+          .select({ mat: employes.matricule })
+          .from(employes)
+          .where(ilike(employes.matricule, `${prefix}-${year}-%`))
+          .orderBy(desc(employes.matricule))
+          .limit(1);
+        const lastNum = last ? parseInt(last.mat.split("-")[2] ?? "0", 10) : 0;
+        seq = lastNum + 1;
+        matricule = `${prefix}-${year}-${String(seq).padStart(4, "0")}`;
+      }
+
+      if (gen) {
+        await db
+          .update(hrGeneralSettings)
+          .set({ employeeCodeSequence: seq, updatedAt: new Date() })
+          .where(eq(hrGeneralSettings.agenceId, agenceId));
+      }
 
       const [created] = await db.insert(employes).values({
-        agenceId: ctx.user.agenceId,
+        agenceId,
+        matricule,
+        civilite: input.civilite || null,
         nom: input.nom,
         prenom: input.prenom,
-        matricule,
         dateNaissance: input.dateNaissance || null,
+        lieuNaissance: input.lieuNaissance || null,
         sexe: input.sexe || null,
         emailPersonnel: input.emailPersonnel || null,
         telephone: input.telephone || null,
         telephoneSecondaire: input.telephoneSecondaire || null,
         adresse: input.adresse || null,
         ville: input.ville || null,
+        contactUrgenceNom: input.contactUrgenceNom || null,
+        contactUrgenceTelephone: input.contactUrgenceTelephone || null,
         typeEmploye: input.typeEmploye,
         fonction: input.fonction,
+        departmentId: input.departmentId ?? null,
+        positionId: input.positionId ?? null,
+        workCycleId: input.workCycleId ?? null,
+        managerId: input.managerId ?? null,
         dateEmbauche: input.dateEmbauche,
         dateFinContrat: input.dateFinContrat || null,
         periodeEssaiFin: input.periodeEssaiFin || null,
         salaireBase: input.salaireBase || null,
         modePaie: input.modePaie,
         numCnss: input.numCnss || null,
+        niu: input.niu || null,
         numCompteBancaire: input.numCompteBancaire || null,
         banque: input.banque || null,
         typePieceIdentite: input.typePieceIdentite || null,
         numPieceIdentite: input.numPieceIdentite || null,
         pieceExpireLe: input.pieceExpireLe || null,
         diplome: input.diplome || null,
+        notes: input.notes || null,
       } as any).returning() as any;
-      return { id: String(created.id) };
+
+      // Historiques initiaux (poste + salaire)
+      if (input.positionId || input.departmentId) {
+        await db.insert(employeePositions).values({
+          employeeId: created.id,
+          positionId: input.positionId ?? 0,
+          departmentId: input.departmentId ?? null,
+          startDate: input.dateEmbauche,
+        } as any).catch(() => undefined);
+      }
+      if (input.salaireBase) {
+        await db.insert(employeeSalaryHistory).values({
+          employeeId: created.id,
+          baseSalary: input.salaireBase,
+          startDate: input.dateEmbauche,
+          changedBy: Number(ctx.user.id),
+        } as any).catch(() => undefined);
+      }
+
+      return { id: String(created.id), matricule };
     }),
 
   update: requirePermissionProcedure("rh.utilisateur.modifier")
     .input(
       z.object({
         id: z.string(),
+        civilite: z.string().optional().nullable(),
         nom: z.string().min(1).optional(),
         prenom: z.string().min(1).optional(),
         dateNaissance: z.string().optional().nullable(),
+        lieuNaissance: z.string().optional().nullable(),
         sexe: z.enum(["M", "F"]).optional().nullable(),
         emailPersonnel: z.string().email().optional().nullable().or(z.literal("")),
         telephone: z.string().optional().nullable(),
         telephoneSecondaire: z.string().optional().nullable(),
         adresse: z.string().optional().nullable(),
         ville: z.string().optional().nullable(),
+        contactUrgenceNom: z.string().optional().nullable(),
+        contactUrgenceTelephone: z.string().optional().nullable(),
         typeEmploye: z.enum(["permanent", "contractuel", "stagiaire", "temporaire", "apprenti", "prestataire"]).optional(),
         fonction: z.string().min(1).optional(),
+        departmentId: z.number().int().optional().nullable(),
+        positionId: z.number().int().optional().nullable(),
+        workCycleId: z.number().int().optional().nullable(),
+        managerId: z.number().int().optional().nullable(),
         dateEmbauche: z.string().optional(),
         dateFinContrat: z.string().optional().nullable(),
         periodeEssaiFin: z.string().optional().nullable(),
@@ -194,23 +279,44 @@ export const rhRouter = createTRPCRouter({
         modePaie: z.enum(["mensuel", "horaire", "journalier", "commission"]).optional(),
         statut: z.enum(["actif", "conge", "suspendu", "archive"]).optional(),
         numCnss: z.string().optional().nullable(),
+        niu: z.string().optional().nullable(),
         numCompteBancaire: z.string().optional().nullable(),
         banque: z.string().optional().nullable(),
         typePieceIdentite: z.string().optional().nullable(),
         numPieceIdentite: z.string().optional().nullable(),
         pieceExpireLe: z.string().optional().nullable(),
         diplome: z.string().optional().nullable(),
+        notes: z.string().optional().nullable(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      const agenceId = ctx.user.agenceId;
+      const [current] = await db
+        .select()
+        .from(employes)
+        .where(and(eq(employes.id, Number(input.id)), eq(employes.agenceId, agenceId)))
+        .limit(1);
+      if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Employé non trouvé." });
+
+      // Règle métier : manager = employé actif
+      if (input.managerId !== undefined && input.managerId !== null) {
+        const [manager] = await db
+          .select({ id: employes.id })
+          .from(employes)
+          .where(and(eq(employes.id, input.managerId), eq(employes.agenceId, agenceId), eq(employes.statut, "actif")))
+          .limit(1);
+        if (!manager) throw new TRPCError({ code: "BAD_REQUEST", message: "Le supérieur hiérarchique doit être un employé actif." });
+      }
+
       const updateData: Record<string, unknown> = {};
       const fields: (keyof typeof input)[] = [
-        "nom", "prenom", "dateNaissance", "sexe", "emailPersonnel",
+        "civilite", "nom", "prenom", "dateNaissance", "lieuNaissance", "sexe", "emailPersonnel",
         "telephone", "telephoneSecondaire", "adresse", "ville",
-        "typeEmploye", "fonction", "dateEmbauche", "dateFinContrat",
-        "periodeEssaiFin", "salaireBase", "modePaie", "statut",
-        "numCnss", "numCompteBancaire", "banque",
-        "typePieceIdentite", "numPieceIdentite", "pieceExpireLe", "diplome",
+        "contactUrgenceNom", "contactUrgenceTelephone",
+        "typeEmploye", "fonction", "departmentId", "positionId", "workCycleId", "managerId",
+        "dateEmbauche", "dateFinContrat", "periodeEssaiFin", "salaireBase", "modePaie", "statut",
+        "numCnss", "niu", "numCompteBancaire", "banque",
+        "typePieceIdentite", "numPieceIdentite", "pieceExpireLe", "diplome", "notes",
       ];
 
       for (const field of fields) {
@@ -230,14 +336,51 @@ export const rhRouter = createTRPCRouter({
         .set(updateData as any)
         .where(
           and(
-            eq(employes.id, input.id),
-            eq(employes.agenceId, ctx.user.agenceId),
+            eq(employes.id, Number(input.id)),
+            eq(employes.agenceId, agenceId),
           ),
         )
         .returning({ id: employes.id });
 
       if (!updated) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Employé non trouvé." });
+      }
+
+      const today = new Date().toISOString().split("T")[0];
+
+      // Historique salaire : toute modification de salaire de base
+      if (input.salaireBase !== undefined && input.salaireBase !== String(current.salaireBase ?? "")) {
+        await db.insert(employeeSalaryHistory).values({
+          employeeId: current.id,
+          baseSalary: input.salaireBase || null,
+          startDate: today,
+          changedBy: Number(ctx.user.id),
+        } as any);
+      }
+
+      // Historique poste : changement de poste ou de département
+      const posteChange =
+        (input.positionId !== undefined && input.positionId !== current.positionId) ||
+        (input.departmentId !== undefined && input.departmentId !== current.departmentId);
+      if (posteChange && input.positionId) {
+        const [openPosition] = await db
+          .select({ id: employeePositions.id })
+          .from(employeePositions)
+          .where(and(eq(employeePositions.employeeId, current.id), sql`${employeePositions.endDate} IS NULL`))
+          .limit(1);
+        if (openPosition) {
+          await db
+            .update(employeePositions)
+            .set({ endDate: today, reason: "Changement de poste" })
+            .where(eq(employeePositions.id, openPosition.id));
+        }
+        await db.insert(employeePositions).values({
+          employeeId: current.id,
+          positionId: input.positionId,
+          departmentId: input.departmentId ?? current.departmentId,
+          startDate: today,
+          reason: input.positionId !== current.positionId ? "Changement de poste" : null,
+        } as any);
       }
 
       return { id: updated.id };
@@ -325,6 +468,168 @@ export const rhRouter = createTRPCRouter({
       absencesEnCours,
     };
   }),
+
+  // ─── Fiche complète (RH-01) ───
+  getFiche: rhProcedure
+    .input(z.object({ id: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const employeeId = Number(input.id);
+      const [row] = await db
+        .select({
+          id: employes.id,
+          matricule: employes.matricule,
+          civilite: employes.civilite,
+          nom: employes.nom,
+          prenom: employes.prenom,
+          dateNaissance: employes.dateNaissance,
+          lieuNaissance: employes.lieuNaissance,
+          sexe: employes.sexe,
+          emailPersonnel: employes.emailPersonnel,
+          telephone: employes.telephone,
+          telephoneSecondaire: employes.telephoneSecondaire,
+          adresse: employes.adresse,
+          ville: employes.ville,
+          contactUrgenceNom: employes.contactUrgenceNom,
+          contactUrgenceTelephone: employes.contactUrgenceTelephone,
+          typeEmploye: employes.typeEmploye,
+          fonction: employes.fonction,
+          departmentId: employes.departmentId,
+          departmentName: departments.name,
+          positionId: employes.positionId,
+          positionName: positions.name,
+          workCycleId: employes.workCycleId,
+          workCycleName: hrWorkCycles.name,
+          managerId: employes.managerId,
+          dateEmbauche: employes.dateEmbauche,
+          dateFinContrat: employes.dateFinContrat,
+          periodeEssaiFin: employes.periodeEssaiFin,
+          salaireBase: employes.salaireBase,
+          devise: employes.devise,
+          modePaie: employes.modePaie,
+          numCnss: employes.numCnss,
+          niu: employes.niu,
+          numCompteBancaire: employes.numCompteBancaire,
+          banque: employes.banque,
+          typePieceIdentite: employes.typePieceIdentite,
+          numPieceIdentite: employes.numPieceIdentite,
+          pieceExpireLe: employes.pieceExpireLe,
+          diplome: employes.diplome,
+          notes: employes.notes,
+          statut: employes.statut,
+          photoUrl: employes.photoUrl,
+          createdAt: employes.createdAt,
+        })
+        .from(employes)
+        .leftJoin(departments, eq(employes.departmentId, departments.id))
+        .leftJoin(positions, eq(employes.positionId, positions.id))
+        .leftJoin(hrWorkCycles, eq(employes.workCycleId, hrWorkCycles.id))
+        .where(and(eq(employes.id, employeeId), eq(employes.agenceId, ctx.user.agenceId)))
+        .limit(1);
+
+      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Employé non trouvé." });
+
+      const [manager] = row.managerId
+        ? await db
+            .select({ id: employes.id, nom: employes.nom, prenom: employes.prenom, fonction: employes.fonction })
+            .from(employes)
+            .where(eq(employes.id, row.managerId))
+            .limit(1)
+        : [];
+
+      const [positionHistory, salaryHistory] = await Promise.all([
+        db
+          .select({
+            id: employeePositions.id,
+            positionId: employeePositions.positionId,
+            positionName: positions.name,
+            departmentId: employeePositions.departmentId,
+            departmentName: departments.name,
+            startDate: employeePositions.startDate,
+            endDate: employeePositions.endDate,
+            reason: employeePositions.reason,
+          })
+          .from(employeePositions)
+          .leftJoin(positions, eq(employeePositions.positionId, positions.id))
+          .leftJoin(departments, eq(employeePositions.departmentId, departments.id))
+          .where(eq(employeePositions.employeeId, employeeId))
+          .orderBy(desc(employeePositions.startDate)),
+        db
+          .select()
+          .from(employeeSalaryHistory)
+          .where(eq(employeeSalaryHistory.employeeId, employeeId))
+          .orderBy(desc(employeeSalaryHistory.startDate)),
+      ]);
+
+      return {
+        ...row,
+        managerNom: manager ? `${manager.prenom} ${manager.nom}` : null,
+        positionHistory,
+        salaryHistory,
+      };
+    }),
+
+  // ─── Référentiels RH-01 ───
+  listDepartments: rhProcedure.query(async ({ ctx }) => {
+    return db
+      .select()
+      .from(departments)
+      .where(eq(departments.agenceId, ctx.user.agenceId))
+      .orderBy(asc(departments.name));
+  }),
+
+  createDepartment: requirePermissionProcedure("rh.utilisateur.modifier")
+    .input(z.object({ name: z.string().min(1), code: z.string().min(1), parentId: z.number().int().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const [row] = await db
+        .insert(departments)
+        .values({ ...input, parentId: input.parentId ?? null, agenceId: ctx.user.agenceId } as any)
+        .returning();
+      return row;
+    }),
+
+  listPositions: rhProcedure.query(async ({ ctx }) => {
+    return db
+      .select({
+        id: positions.id,
+        name: positions.name,
+        code: positions.code,
+        departmentId: positions.departmentId,
+        departmentName: departments.name,
+        active: positions.active,
+      })
+      .from(positions)
+      .leftJoin(departments, eq(positions.departmentId, departments.id))
+      .where(eq(positions.agenceId, ctx.user.agenceId))
+      .orderBy(asc(positions.name));
+  }),
+
+  createPosition: requirePermissionProcedure("rh.utilisateur.modifier")
+    .input(z.object({ name: z.string().min(1), code: z.string().min(1), departmentId: z.number().int().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const [row] = await db
+        .insert(positions)
+        .values({ ...input, departmentId: input.departmentId ?? null, agenceId: ctx.user.agenceId } as any)
+        .returning();
+      return row;
+    }),
+
+  listContractTypes: rhProcedure.query(async ({ ctx }) => {
+    return db
+      .select()
+      .from(contractTypes)
+      .where(eq(contractTypes.agenceId, ctx.user.agenceId))
+      .orderBy(asc(contractTypes.name));
+  }),
+
+  createContractType: requirePermissionProcedure("rh.utilisateur.modifier")
+    .input(z.object({ code: z.string().min(1), name: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const [row] = await db
+        .insert(contractTypes)
+        .values({ ...input, agenceId: ctx.user.agenceId } as any)
+        .returning();
+      return row;
+    }),
 
   // ─── Absences ───
   listAbsences: rhProcedure
