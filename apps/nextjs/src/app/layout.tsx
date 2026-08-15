@@ -16,7 +16,7 @@ export const metadata: Metadata = {
     default: "AtelierOne",
     template: "%s | AtelierOne",
   },
-  description: "Système de gestion pour librairies et papeteries",
+  description: "Système de gestion intégré pour atelier automobile (véhicules, ordres de réparation, clients, facturation)",
   manifest: "/manifest.json",
   icons: {
     icon: "/favicon.ico",

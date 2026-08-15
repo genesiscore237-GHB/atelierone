@@ -30,32 +30,99 @@ const modePaieOptions = [
 ];
 
 const emptyForm = {
+  civilite: "",
   nom: "",
   prenom: "",
   dateNaissance: "",
+  lieuNaissance: "",
   sexe: "",
   emailPersonnel: "",
   telephone: "",
   telephoneSecondaire: "",
   adresse: "",
   ville: "",
+  contactUrgenceNom: "",
+  contactUrgenceTelephone: "",
   typeEmploye: "permanent" as const,
   fonction: "",
+  departmentId: "",
+  positionId: "",
+  workCycleId: "",
+  managerId: "",
   dateEmbauche: new Date().toISOString().split("T")[0],
   dateFinContrat: "",
   periodeEssaiFin: "",
   salaireBase: "",
   modePaie: "mensuel" as const,
   numCnss: "",
+  niu: "",
   numCompteBancaire: "",
   banque: "",
   typePieceIdentite: "",
   numPieceIdentite: "",
   pieceExpireLe: "",
   diplome: "",
+  notes: "",
 };
 
 type FormData = typeof emptyForm;
+
+/** Section Affectation & hiérarchie (département, poste, cycle, manager) */
+function AffectationSection({
+  form,
+  set,
+}: {
+  form: FormData;
+  set: (key: keyof FormData, value: string) => void;
+}) {
+  const { data: departments } = api.rh.listDepartments.useQuery();
+  const { data: positions } = api.rh.listPositions.useQuery();
+  const { data: cycles } = api.rhSettings.listCycles.useQuery();
+  const { data: managers } = api.rh.list.useQuery({ limit: 100, statut: "actif" });
+
+  const inputCls =
+    "rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50";
+
+  return (
+    <section>
+      <h3 className="mb-3 text-[10px] font-bold tracking-widest text-primary uppercase">
+        Affectation & hiérarchie
+      </h3>
+      <div className="grid grid-cols-2 gap-3">
+        <select value={form.departmentId} onChange={(e) => set("departmentId", e.target.value)}
+          className={inputCls}>
+          <option value="" className="bg-background">Département / Service</option>
+          {(departments ?? []).map((d) => (
+            <option key={d.id} value={String(d.id)} className="bg-background">{d.name}</option>
+          ))}
+        </select>
+        <select value={form.positionId} onChange={(e) => set("positionId", e.target.value)}
+          className={inputCls}>
+          <option value="" className="bg-background">Poste</option>
+          {(positions ?? []).map((p) => (
+            <option key={p.id} value={String(p.id)} className="bg-background">{p.name}</option>
+          ))}
+        </select>
+        <select value={form.workCycleId} onChange={(e) => set("workCycleId", e.target.value)}
+          className={inputCls}>
+          <option value="" className="bg-background">Cycle de travail</option>
+          {(cycles ?? []).map((c) => (
+            <option key={c.id} value={String(c.id)} className="bg-background">{c.name}</option>
+          ))}
+        </select>
+        <select value={form.managerId} onChange={(e) => set("managerId", e.target.value)}
+          className={inputCls}>
+          <option value="" className="bg-background">Supérieur hiérarchique</option>
+          {(managers?.employees ?? []).map((m) => (
+            <option key={m.id} value={String(m.id)} className="bg-background">
+              {m.prenom} {m.nom}
+            </option>
+          ))}
+        </select>
+      </div>
+    </section>
+  );
+}
 
 export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeFormProps) {
   const isEdit = employeeId !== null;
@@ -81,29 +148,39 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
     if (isOpen) {
       if (isEdit && existing) {
         setForm({
+          civilite: existing.civilite ?? "",
           nom: existing.nom ?? "",
           prenom: existing.prenom ?? "",
           dateNaissance: existing.dateNaissance ?? "",
+          lieuNaissance: existing.lieuNaissance ?? "",
           sexe: existing.sexe ?? "",
           emailPersonnel: existing.emailPersonnel ?? "",
           telephone: existing.telephone ?? "",
           telephoneSecondaire: existing.telephoneSecondaire ?? "",
           adresse: existing.adresse ?? "",
           ville: existing.ville ?? "",
+          contactUrgenceNom: existing.contactUrgenceNom ?? "",
+          contactUrgenceTelephone: existing.contactUrgenceTelephone ?? "",
           typeEmploye: (existing.typeEmploye as FormData["typeEmploye"]) ?? "permanent",
           fonction: existing.fonction ?? "",
+          departmentId: existing.departmentId ? String(existing.departmentId) : "",
+          positionId: existing.positionId ? String(existing.positionId) : "",
+          workCycleId: existing.workCycleId ? String(existing.workCycleId) : "",
+          managerId: existing.managerId ? String(existing.managerId) : "",
           dateEmbauche: existing.dateEmbauche ?? new Date().toISOString().split("T")[0],
           dateFinContrat: existing.dateFinContrat ?? "",
           periodeEssaiFin: existing.periodeEssaiFin ?? "",
           salaireBase: existing.salaireBase ?? "",
           modePaie: (existing.modePaie as FormData["modePaie"]) ?? "mensuel",
           numCnss: existing.numCnss ?? "",
+          niu: existing.niu ?? "",
           numCompteBancaire: existing.numCompteBancaire ?? "",
           banque: existing.banque ?? "",
           typePieceIdentite: existing.typePieceIdentite ?? "",
           numPieceIdentite: existing.numPieceIdentite ?? "",
           pieceExpireLe: existing.pieceExpireLe ?? "",
           diplome: existing.diplome ?? "",
+          notes: existing.notes ?? "",
         });
       } else if (!isEdit) {
         setForm(emptyForm);
@@ -134,43 +211,65 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
     type CreatePayload = Parameters<typeof createMutation.mutate>[0];
 
     const sexeVal = form.sexe === "M" || form.sexe === "F" ? form.sexe as any : undefined;
+    const numOrUndef = (v: string) => (v ? Number(v) : undefined);
+    const numOrNull = (v: string) => (v ? Number(v) : null);
 
     if (isEdit && employeeId) {
       updateMutation.mutate(
         {
           id: employeeId,
+          civilite: form.civilite || null,
           nom: form.nom, prenom: form.prenom, fonction: form.fonction,
           typeEmploye: form.typeEmploye as any,
           modePaie: form.modePaie as any,
           sexe: sexeVal ?? null,
           telephone: form.telephone || null, adresse: form.adresse || null,
           ville: form.ville || null, telephoneSecondaire: form.telephoneSecondaire || null,
-          dateNaissance: form.dateNaissance || null, dateFinContrat: form.dateFinContrat || null,
+          dateNaissance: form.dateNaissance || null, lieuNaissance: form.lieuNaissance || null,
+          contactUrgenceNom: form.contactUrgenceNom || null,
+          contactUrgenceTelephone: form.contactUrgenceTelephone || null,
+          dateFinContrat: form.dateFinContrat || null,
           periodeEssaiFin: form.periodeEssaiFin || null, salaireBase: form.salaireBase || null,
           emailPersonnel: form.emailPersonnel || null, dateEmbauche: form.dateEmbauche,
-          numCnss: form.numCnss || null, numCompteBancaire: form.numCompteBancaire || null,
+          numCnss: form.numCnss || null, niu: form.niu || null,
+          numCompteBancaire: form.numCompteBancaire || null,
           banque: form.banque || null,
           typePieceIdentite: form.typePieceIdentite || null, numPieceIdentite: form.numPieceIdentite || null,
           pieceExpireLe: form.pieceExpireLe || null, diplome: form.diplome || null,
+          notes: form.notes || null,
+          departmentId: numOrNull(form.departmentId),
+          positionId: numOrNull(form.positionId),
+          workCycleId: numOrNull(form.workCycleId),
+          managerId: numOrNull(form.managerId),
         } as UpdatePayload,
         { onSettled: () => setIsPending(false) },
       );
     } else {
       createMutation.mutate(
         {
+          civilite: form.civilite || undefined,
           nom: form.nom, prenom: form.prenom, fonction: form.fonction,
           typeEmploye: form.typeEmploye as any,
           modePaie: form.modePaie as any,
           sexe: sexeVal,
           telephone: form.telephone || undefined, adresse: form.adresse || undefined,
           ville: form.ville || undefined, telephoneSecondaire: form.telephoneSecondaire || undefined,
-          dateNaissance: form.dateNaissance || undefined, dateFinContrat: form.dateFinContrat || undefined,
+          dateNaissance: form.dateNaissance || undefined, lieuNaissance: form.lieuNaissance || undefined,
+          contactUrgenceNom: form.contactUrgenceNom || undefined,
+          contactUrgenceTelephone: form.contactUrgenceTelephone || undefined,
+          dateFinContrat: form.dateFinContrat || undefined,
           periodeEssaiFin: form.periodeEssaiFin || undefined, salaireBase: form.salaireBase || undefined,
           emailPersonnel: form.emailPersonnel || undefined, dateEmbauche: form.dateEmbauche,
-          numCnss: form.numCnss || undefined, numCompteBancaire: form.numCompteBancaire || undefined,
+          numCnss: form.numCnss || undefined, niu: form.niu || undefined,
+          numCompteBancaire: form.numCompteBancaire || undefined,
           banque: form.banque || undefined,
           typePieceIdentite: form.typePieceIdentite || undefined, numPieceIdentite: form.numPieceIdentite || undefined,
           pieceExpireLe: form.pieceExpireLe || undefined, diplome: form.diplome || undefined,
+          notes: form.notes || undefined,
+          departmentId: numOrUndef(form.departmentId),
+          positionId: numOrUndef(form.positionId),
+          workCycleId: numOrUndef(form.workCycleId),
+          managerId: numOrUndef(form.managerId),
         } as CreatePayload,
         { onSettled: () => setIsPending(false) },
       );
@@ -210,12 +309,21 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
           <section>
             <h3 className="mb-3 text-[10px] font-bold tracking-widest text-primary uppercase">Identité</h3>
             <div className="grid grid-cols-2 gap-3">
+              <select value={form.civilite} onChange={(e) => set("civilite", e.target.value)}
+                className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50">
+                <option value="" className="bg-background">Civilité</option>
+                <option value="M." className="bg-background">M.</option>
+                <option value="Mme" className="bg-background">Mme</option>
+                <option value="Mlle" className="bg-background">Mlle</option>
+              </select>
               <input placeholder="Prénom *" value={form.prenom} onChange={(e) => set("prenom", e.target.value)} required
-                className="col-span-2 sm:col-span-1 w-full rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
+                className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
               <input placeholder="Nom *" value={form.nom} onChange={(e) => set("nom", e.target.value)} required
-                className="col-span-2 sm:col-span-1 w-full rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
+                className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
               <input placeholder="Date de naissance" type="date" value={form.dateNaissance} onChange={(e) => set("dateNaissance", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50 [color-scheme:dark]" />
+              <input placeholder="Lieu de naissance" value={form.lieuNaissance} onChange={(e) => set("lieuNaissance", e.target.value)}
+                className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
               <select value={form.sexe} onChange={(e) => set("sexe", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50">
                 <option value="" className="bg-background">Sexe</option>
@@ -239,8 +347,15 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
                 className="col-span-2 rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
               <input placeholder="Ville" value={form.ville} onChange={(e) => set("ville", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
+              <input placeholder="Contact urgence — nom" value={form.contactUrgenceNom} onChange={(e) => set("contactUrgenceNom", e.target.value)}
+                className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
+              <input placeholder="Contact urgence — téléphone" value={form.contactUrgenceTelephone} onChange={(e) => set("contactUrgenceTelephone", e.target.value)}
+                className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
             </div>
           </section>
+
+          {/* Affectation & hiérarchie */}
+          <AffectationSection form={form} set={set} />
 
           {/* Contrat */}
           <section>
@@ -270,11 +385,20 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
               </select>
               <input placeholder="N° CNSS" value={form.numCnss} onChange={(e) => set("numCnss", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
+              <input placeholder="N° NIU" value={form.niu} onChange={(e) => set("niu", e.target.value)}
+                className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
               <input placeholder="N° Compte bancaire" value={form.numCompteBancaire} onChange={(e) => set("numCompteBancaire", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
               <input placeholder="Banque" value={form.banque} onChange={(e) => set("banque", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
             </div>
+          </section>
+
+          {/* Notes */}
+          <section>
+            <h3 className="mb-3 text-[10px] font-bold tracking-widest text-primary uppercase">Notes internes</h3>
+            <textarea placeholder="Notes internes (non visibles par l'employé)" value={form.notes} onChange={(e) => set("notes", e.target.value)}
+              className="w-full rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" rows={3} />
           </section>
 
           {/* Documents */}

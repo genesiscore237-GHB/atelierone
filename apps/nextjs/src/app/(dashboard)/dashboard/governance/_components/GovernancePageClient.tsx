@@ -194,8 +194,8 @@ export function GovernancePageClient() {
   return (
     <>
       <ModuleHeader
-        title="Personnel"
-        description="Gérez les membres de votre équipe"
+        title="Utilisateurs & Rôles"
+        description="Gérez les utilisateurs, leurs rôles et permissions"
         actions={
           <button
             onClick={() => setInviteOpen(true)}

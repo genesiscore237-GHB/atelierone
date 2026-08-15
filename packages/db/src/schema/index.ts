@@ -60,3 +60,44 @@ export { pertesFinancieres } from "./pertes_financieres";
 export { vehicules } from "./vehicules";
 export { ordresReparation, lignesOrdreReparation, interventionsTechniciens } from "./ordres_reparation";
 export { contratsFlottes, contratsFlotteVehicules } from "./contrats_flottes";
+export {
+  hrWorkCycles,
+  hrWorkSchedules,
+  hrAttendanceSettings,
+  hrLeaveTypes,
+  hrSanctionTypes,
+  hrPublicHolidays,
+  hrGeneralSettings,
+} from "./rh_parametrage";
+export {
+  departments,
+  positions,
+  contractTypes,
+  employeePositions,
+  employeeSalaryHistory,
+} from "./rh_employes";
+export {
+  attendanceEntries,
+  overtimeAuthorizations,
+  attendanceCalculations,
+  attendanceMonthlySummaries,
+} from "./rh_presences";
+export {
+  leaveBalances,
+  leaveRequests,
+  leaveBalanceAdjustments,
+} from "./rh_conges";
+export {
+  payrollPeriods,
+  payrollItemsConfig,
+  payrollEntries,
+  payrollEntryLines,
+} from "./rh_paie";
+export {
+  evaluationGrids,
+  evaluationCriteria,
+  evaluationCampaigns,
+  evaluations,
+  evaluationScores,
+  performanceBonusRules,
+} from "./rh_evaluation";

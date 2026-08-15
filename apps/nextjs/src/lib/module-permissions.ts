@@ -15,7 +15,6 @@ export const MODULE_PERMISSIONS: Record<string, string[]> = {
   sales: ["pos.vente.lire"],
   returns: ["pos.vente.rembourser", "pos.vente.annuler", "pos.vente.lire"],
   transfers: ["stock.consulter", "stock.modifier"],
-  bourse: ["pos.vente.creer", "pos.vente.lire"],
   alerts: ["stock.consulter", "caisse.consulter"],
   loyalty: ["pos.vente.lire", "pos.vente.creer"],
   pricing: ["admin.parametres", "admin.roles.gerer", "admin.permissions.gerer", "admin.agence.gerer"],
@@ -28,7 +27,20 @@ export const MODULE_PERMISSIONS: Record<string, string[]> = {
   governance: ["admin.roles.gerer", "admin.permissions.gerer", "admin.logs.consulter", "rh.utilisateur.lire"],
   audit: ["admin.logs.consulter"],
   settings: ["admin.parametres", "admin.agence.gerer", "admin.roles.gerer", "admin.permissions.gerer"],
+  vehicules: ["vehicules.consulter", "vehicules.creer", "vehicules.modifier"],
+  or: ["or.consulter", "or.creer", "or.modifier", "or.valider"],
+  contrats: ["contrats.consulter", "contrats.creer"],
+  creances: ["creances.consulter", "creances.encaisser"],
+  planning: ["planning.consulter", "planning.assigner"],
   admin: ["admin.parametres", "admin.roles.gerer", "admin.permissions.gerer"],
+  // Domaines AtelierOne (cartographie GPJ)
+  administration: ["admin.parametres", "admin.roles.gerer", "admin.logs.consulter"],
+  clients: ["pos.vente.lire", "contrats.consulter"],
+  atelier: ["vehicules.consulter", "or.consulter", "planning.consulter"],
+  pilotage: ["comptabilite.rapport", "admin.parametres"],
+  sites: ["vehicules.consulter", "stock.consulter"],
+  interventions: ["or.consulter", "or.creer"],
+  factures: ["creances.consulter", "caisse.consulter"],
 };
 
 export function canAccessModule(

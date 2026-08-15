@@ -18,6 +18,11 @@ import { alertRouter } from "~/server/api/routers/alert";
 import { organizationRouter } from "~/server/api/routers/organization";
 import { governanceRouter } from "~/server/api/routers/governance";
 import { rhRouter } from "~/server/api/routers/rh";
+import { rhSettingsRouter } from "~/server/api/routers/rh-settings";
+import { rhPresenceRouter } from "~/server/api/routers/rh-presence";
+import { rhLeaveRouter } from "~/server/api/routers/rh-leave";
+import { rhPayrollRouter } from "~/server/api/routers/rh-payroll";
+import { rhEvaluationRouter } from "~/server/api/routers/rh-evaluation";
 import { partnerRouter } from "~/server/api/routers/partner";
 import { stockRouter } from "~/server/api/routers/stock";
 import { margeRouter } from "~/server/api/routers/marge";
@@ -49,6 +54,11 @@ export const appRouter = createTRPCRouter({
   organization: organizationRouter,
   governance: governanceRouter,
   rh: rhRouter,
+  rhSettings: rhSettingsRouter,
+  rhPresence: rhPresenceRouter,
+  rhLeave: rhLeaveRouter,
+  rhPayroll: rhPayrollRouter,
+  rhEvaluation: rhEvaluationRouter,
   stock: stockRouter,
   partner: partnerRouter,
   marge: margeRouter,

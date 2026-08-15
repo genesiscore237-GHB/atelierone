@@ -49,6 +49,7 @@ export function EmployeesPageClient() {
   const [search, setSearch] = useState("");
   const [filterStatut, setFilterStatut] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
+  const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [panelOpen, setPanelOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -60,11 +61,13 @@ export function EmployeesPageClient() {
     search: search || undefined,
     statut: filterStatut !== "all" ? (filterStatut as any) : undefined,
     typeEmploye: filterType !== "all" ? (filterType as any) : undefined,
+    departmentId: filterDepartment !== "all" ? Number(filterDepartment) : undefined,
   });
+  const { data: departments } = api.rh.listDepartments.useQuery();
   const { data: stats } = api.rh.stats.useQuery();
   const utils = api.useUtils();
 
-  const employees = (data?.employees ?? []) as Employee[];
+  const employees = (data?.employees ?? []) as unknown as Employee[];
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / limit);
 
@@ -145,6 +148,16 @@ export function EmployeesPageClient() {
           <option value="temporaire">Temporaire</option>
           <option value="apprenti">Apprenti</option>
           <option value="prestataire">Prestataire</option>
+        </select>
+        <select
+          value={filterDepartment}
+          onChange={(e) => { setFilterDepartment(e.target.value); setPage(1); }}
+          className="rounded-lg border border-border bg-accent/5 px-3 py-2 text-xs text-foreground outline-none"
+        >
+          <option value="all">Tous départements</option>
+          {(departments ?? []).map((d) => (
+            <option key={d.id} value={String(d.id)}>{d.name}</option>
+          ))}
         </select>
         <button
           onClick={refresh}

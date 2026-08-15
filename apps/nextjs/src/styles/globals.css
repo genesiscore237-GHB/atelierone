@@ -282,6 +282,17 @@
   --module-governance-bg: oklch(0.50 0.20 300 / 0.10);
   --module-finance: oklch(0.60 0.18 150);
   --module-finance-bg: oklch(0.60 0.18 150 / 0.10);
+  /* Modules garage AtelierOne */
+  --module-vehicules: oklch(0.50 0.12 255);
+  --module-vehicules-bg: oklch(0.50 0.12 255 / 0.10);
+  --module-or: oklch(0.62 0.17 55);
+  --module-or-bg: oklch(0.62 0.17 55 / 0.10);
+  --module-contrats: oklch(0.55 0.15 200);
+  --module-contrats-bg: oklch(0.55 0.15 200 / 0.10);
+  --module-creances: oklch(0.58 0.18 150);
+  --module-creances-bg: oklch(0.58 0.18 150 / 0.10);
+  --module-planning: oklch(0.60 0.16 290);
+  --module-planning-bg: oklch(0.60 0.16 290 / 0.10);
   --module-marge: oklch(0.55 0.22 140);
   --module-marge-bg: oklch(0.55 0.22 140 / 0.10);
 }

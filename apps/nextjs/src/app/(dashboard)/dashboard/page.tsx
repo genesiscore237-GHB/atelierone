@@ -9,14 +9,15 @@ import LogoutButton from "./_components/LogoutButton";
 export const dynamic = "force-dynamic";
 
 const ROLE_LABELS: Record<string, string> = {
-  admin_reseau: "Administrateur réseau",
-  responsable_agence: "Responsable agence",
-  operateur_pos: "Opérateur POS",
-  caissier: "Caissier",
+  superadmin: "Super Administrateur",
+  directeur: "Directeur / Patron",
+  admin: "Administrateur système",
+  chef_atelier: "Chef des ateliers",
+  secretaire: "Secrétaire / Accueil",
   magasinier: "Magasinier",
-  gestionnaire_achats: "Gestionnaire achats",
+  technicien: "Technicien / Mécanicien",
   comptable: "Comptable",
-  rh: "RH",
+  rh: "Responsable RH",
   consultation: "Consultation",
 };
 
@@ -24,7 +25,7 @@ export default async function DashboardPage() {
   const session = await auth();
   if (!session) redirect("/login");
 
-  const displayName = session.user.name || "Arnaud";
+  const displayName = session.user.name || "Admin";
   const roleLabel = ROLE_LABELS[session.user.role] ?? session.user.role;
   const canAdmin =
     (session.user.permissions ?? []).some((p) => p.startsWith("admin.")) ||
@@ -37,11 +38,11 @@ export default async function DashboardPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 md:px-8 py-3 md:py-4">
           <div className="flex items-center gap-3 md:gap-4">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-background shadow-[0_0_20px_var(--primary)] md:h-11 md:w-11">
-              <span className="text-sm font-black text-primary">LC</span>
+              <span className="text-sm font-black text-primary">AO</span>
             </div>
             <div className="flex flex-col">
               <span className="text-lg font-black tracking-tighter uppercase italic md:text-xl">
-                Libra<span className="text-primary italic">Core</span>
+                Atelier<span className="text-primary italic">One</span>
               </span>
               <div className="flex items-center gap-1.5">
                 <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
@@ -55,7 +56,7 @@ export default async function DashboardPage() {
           <div className="flex items-center gap-2 md:gap-6">
             {canAdmin && (
               <Link
-                href="/dashboard/admin"
+                href="/dashboard/pilotage"
                 className="hidden md:flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 <LayoutDashboard size={16} />

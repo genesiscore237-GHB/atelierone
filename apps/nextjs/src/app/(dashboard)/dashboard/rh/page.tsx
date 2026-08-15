@@ -1,5 +1,11 @@
-import { redirect } from "next/navigation";
+﻿import { DomainHub } from "~/components/module/DomainHub";
+import { findDomain } from "~/lib/app-nav";
 
-export default function RHPage() {
-  redirect("/dashboard/rh/employes");
+export const dynamic = "force-dynamic";
+
+export default function RHHubPage() {
+  const domain = findDomain("rh");
+  if (!domain) return null;
+  return <DomainHub domainId="rh" />;
 }
+

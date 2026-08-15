@@ -1,12 +1,10 @@
-import { StockNav } from "./_components/StockNav";
+﻿import { redirect } from "next/navigation";
+import { auth } from "~/lib/auth";
+import { ModuleShell } from "~/components/module/ModuleShell";
 
-export default function StockLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div>
-      <StockNav />
-      <div className="mt-6">
-        {children}
-      </div>
-    </div>
-  );
+export default async function StockLayout({ children }: { children: React.ReactNode }) {
+  const session = await auth();
+  if (!session?.user) redirect("/auth/signin");
+
+  return <ModuleShell domainId="stock">{children}</ModuleShell>;
 }

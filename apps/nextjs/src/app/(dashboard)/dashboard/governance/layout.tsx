@@ -1,7 +1,13 @@
 import { redirect } from "next/navigation";
-import { auth } from "@atelierone/auth";
-import GovernanceLayoutClient from "./GovernanceLayoutClient";
+import { auth } from "~/lib/auth";
+import { ModuleShell } from "~/components/module/ModuleShell";
 
+/**
+ * « Utilisateurs & Rôles » vit dans le domaine Socle & Administration :
+ * pas de navigation propre — le ModuleShell du domaine fournit le
+ * breadcrumb et les onglets (Paramétrage général, Utilisateurs & Rôles,
+ * Journal d'audit), cohérent avec le pattern RH.
+ */
 export default async function GovernanceLayout({
   children,
 }: {
@@ -10,5 +16,5 @@ export default async function GovernanceLayout({
   const session = await auth();
   if (!session?.user) redirect("/auth/signin");
 
-  return <GovernanceLayoutClient>{children}</GovernanceLayoutClient>;
+  return <ModuleShell domainId="administration">{children}</ModuleShell>;
 }
