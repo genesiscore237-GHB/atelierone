@@ -27,7 +27,7 @@
     "db:deploy:supabase": "node scripts/deploy.mjs supabase",
     "db:deploy:all": "node scripts/deploy.mjs all",
     "db:sync": "node scripts/deploy.mjs sync",
-    "db:verify": "pnpm -F @atelierone/db verify:data -- DOC/donnéés papeterie/import-atelierone",
+    "db:verify": "pnpm -F @atelierone/db verify:data -- ../../DOC/import-atelierone",
     "db:extract": "node scripts/extract-atelierone-papeterie.mjs"
   },
   "devDependencies": {
