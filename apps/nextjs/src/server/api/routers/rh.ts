@@ -638,13 +638,14 @@ export const rhRouter = createTRPCRouter({
       statut: z.string().optional(),
       dateDebut: z.string().optional(),
       dateFin: z.string().optional(),
-    }))
+    }).optional())
     .query(async ({ ctx, input }) => {
+      const safe = input ?? {};
       const conditions = [eq(employes.agenceId, ctx.user.agenceId)];
-      if (input.employeId) conditions.push(eq(absences.employeId, input.employeId));
-      if (input.statut) conditions.push(eq(absences.statut, input.statut));
-      if (input.dateDebut) conditions.push(gte(absences.dateDebut, input.dateDebut as any));
-      if (input.dateFin) conditions.push(lte(absences.dateFin, input.dateFin as any));
+      if (safe.employeId) conditions.push(eq(absences.employeId, safe.employeId));
+      if (safe.statut) conditions.push(eq(absences.statut, safe.statut));
+      if (safe.dateDebut) conditions.push(gte(absences.dateDebut, safe.dateDebut as any));
+      if (safe.dateFin) conditions.push(lte(absences.dateFin, safe.dateFin as any));
 
       const rows = await db.select({
         id: absences.id,
@@ -698,10 +699,11 @@ export const rhRouter = createTRPCRouter({
 
   // ─── Sanctions ───
   listSanctions: rhProcedure
-    .input(z.object({ employeId: z.number().optional() }))
+    .input(z.object({ employeId: z.number().optional() }).optional())
     .query(async ({ input }) => {
+      const safe = input ?? {};
       const conditions: any[] = [];
-      if (input.employeId) conditions.push(eq(sanctions.employeId, input.employeId));
+      if (safe.employeId) conditions.push(eq(sanctions.employeId, safe.employeId));
 
       return db.select().from(sanctions).where(and(...conditions)).orderBy(desc(sanctions.dateSanction));
     }),
@@ -735,11 +737,12 @@ export const rhRouter = createTRPCRouter({
 
   // ─── Contrats ───
   listContrats: rhProcedure
-    .input(z.object({ employeId: z.number().optional(), statut: z.string().optional() }))
+    .input(z.object({ employeId: z.number().optional(), statut: z.string().optional() }).optional())
     .query(async ({ input }) => {
+      const safe = input ?? {};
       const conditions: any[] = [];
-      if (input.employeId) conditions.push(eq(contrats.employeId, input.employeId));
-      if (input.statut) conditions.push(eq(contrats.statut, input.statut));
+      if (safe.employeId) conditions.push(eq(contrats.employeId, safe.employeId));
+      if (safe.statut) conditions.push(eq(contrats.statut, safe.statut));
       return db.select().from(contrats).where(and(...conditions)).orderBy(desc(contrats.dateDebut));
     }),
 

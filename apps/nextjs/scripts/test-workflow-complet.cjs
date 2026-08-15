@@ -145,7 +145,7 @@ const check = (label, actual, expected, tolerance = 0.01) => {
   const period = await trpc("rhPayroll.openPeriod", { startDate: "2026-08-01", endDate: "2026-08-31" });
   const periodId = period[0].result.data.json.id;
   const prep = await trpc("rhPayroll.prepareMonth", { periodId });
-  check("Bulletins générés (5 employés avec salaire)", prep[0].result.data.json.created, 5);
+  check("Bulletins générés (7 employés avec salaire : 5 scénario + Comptable/RH du seed démo)", prep[0].result.data.json.created, 7);
 
   const entries = await trpcGet("rhPayroll.listEntries", { periodId });
   const byEmp = (id) => entries[0].result.data.json.find((e) => e.employeeId === id);
