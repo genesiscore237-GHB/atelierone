@@ -48,6 +48,7 @@
     "import:catalogue": "tsx src/import/cli.ts catalogue",
     "verify:conformity": "tsx src/verify-deploy.ts",
     "verify:data": "tsx src/verify-deploy.ts --data",
-    "seed:socle": "tsx src/seed-socle.ts"
+    "seed:socle": "tsx src/seed-socle.ts",
+    "seed:rh": "tsx src/seed-rh.ts"
   }
 }
