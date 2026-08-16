@@ -16,9 +16,11 @@ export default function StockDashboardPage() {
 
   const summaryCards = [
     { label: "Produits en stock", value: dashboard?.totalProduits ?? 0, icon: Package, color: "text-success-foreground", bg: "bg-success/10" },
-    { label: "Alertes stock", value: dashboard?.alertesStock ?? 0, icon: AlertTriangle, color: "text-destructive", bg: "bg-destructive/10" },
-    { label: "Mouvements récents", value: dashboard?.mouvementsRecents?.length ?? 0, icon: Activity, color: "text-primary", bg: "bg-primary/10" },
-    { label: "Déconditionnements", value: 0, icon: TrendingUp, color: "text-primary", bg: "bg-primary/10" },
+    { label: "Valeur du stock", value: (dashboard?.valeurStock ?? 0).toLocaleString("fr-FR") + " F", icon: TrendingUp, color: "text-primary", bg: "bg-primary/10" },
+    { label: "Ruptures", value: dashboard?.nbRuptures ?? 0, icon: AlertTriangle, color: "text-destructive", bg: "bg-destructive/10" },
+    { label: "Stocks bas", value: dashboard?.nbStocksBas ?? 0, icon: Activity, color: "text-warning-foreground", bg: "bg-warning/10" },
+    { label: "Surstock", value: dashboard?.nbSurstock ?? 0, icon: Package, color: "text-info-foreground", bg: "bg-info/10" },
+    { label: "Mouvements du jour", value: dashboard?.mouvementsJour ?? 0, icon: Activity, color: "text-primary", bg: "bg-primary/10" },
   ];
 
   const quickActions = [
@@ -36,7 +38,7 @@ export default function StockDashboardPage() {
           Indicateurs clés, mouvements récents, alertes et stocks dormants
         </p>
       </div>
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-6">
         {summaryCards.map((card, i) => (
           <motion.div key={card.label} variants={item} className="rounded-xl border border-border dark:border-border bg-background dark:bg-card p-4">
             <div className="flex items-center gap-3">
