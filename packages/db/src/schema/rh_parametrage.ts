@@ -98,6 +98,7 @@ export const hrGeneralSettings = pgTable("hr_general_settings", {
   evaluationEnabled: boolean("evaluation_enabled").default(true),
   evaluationFrequency: varchar("evaluation_frequency", { length: 20 }).default("trimestrielle"),
   annualLeaveDays: numeric("annual_leave_days", { precision: 5, scale: 1 }).default("30"), // acquisition annuelle de congés (RH-03)
+  disciplinaryWindowMonths: integer("disciplinary_window_months").default(12), // période glissante compteur avertissements (RH-07)
   updatedAt: timestamp("updated_at").defaultNow(),
   updatedBy: integer("updated_by").references(() => utilisateurs.id),
 });

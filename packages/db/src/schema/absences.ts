@@ -1,6 +1,7 @@
 import { pgTable, serial, integer, varchar, date, numeric, boolean, timestamp, text } from "drizzle-orm/pg-core";
 import { employes } from "./employes";
 import { utilisateurs } from "./utilisateurs";
+import { hrSanctionTypes } from "./rh_parametrage";
 
 export const absences = pgTable("absences", {
   id: serial("id").primaryKey(),
@@ -20,6 +21,7 @@ export const absences = pgTable("absences", {
 export const sanctions = pgTable("sanctions", {
   id: serial("id").primaryKey(),
   employeId: integer("employe_id").notNull().references(() => employes.id),
+  sanctionTypeId: integer("sanction_type_id").references(() => hrSanctionTypes.id), // lien RH-00 (types paramétrables)
   typeSanction: varchar("type_sanction", { length: 50 }).notNull(),
   motif: text("motif").notNull(),
   gravite: varchar("gravite", { length: 20 }).default("MOYENNE"),
@@ -28,8 +30,12 @@ export const sanctions = pgTable("sanctions", {
   dateFinEffet: date("date_fin_effet"),
   dureeJours: numeric("duree_jours", { precision: 5, scale: 1 }),
   detailsFinanciers: numeric("details_financiers", { precision: 12, scale: 2 }),
+  decision: varchar("decision", { length: 20 }).default("notifiee"), // notifiee | non_notifiee
+  notifiedAt: timestamp("notified_at"),
+  documentUrl: text("document_url"),
   appliquee: boolean("appliquee").default(false),
   validePar: integer("valide_par").references(() => utilisateurs.id),
+  createdBy: integer("created_by").references(() => utilisateurs.id), // auteur de la décision
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

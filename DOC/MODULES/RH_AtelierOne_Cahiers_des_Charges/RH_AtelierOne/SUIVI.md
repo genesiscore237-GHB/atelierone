@@ -86,6 +86,15 @@
 | T6 | Validation RH-06 (cas 1-4) + non-régression + build | ✅ Validée | Cas 1 compétence requise niveau 4 Technicien ✓ · Cas 2 employé niveau 2 → écart + suggestion ✓ · Cas 3 formation suivie → historique ✓ · Cas 4 matrice consultable ✓ ; build OK ; non-régression 21/21 ; vitest 57/57 | Base nettoyée (sessions/participations/évaluations de test supprimées) |
 
 ## RH-07 — Disciplinaire (P2)
+
+| # | Tâche | Statut | Tests | Notes |
+|---|-------|--------|-------|-------|
+| T1 | Schéma : enrichissement `sanctions` (sanction_type_id→RH-00, decision, notified_at, document_url, created_by) + paramètre `disciplinary_window_months` (défaut 12) dans `hr_general_settings` | ✅ Validée | 5 colonnes + 2 FK + paramètre créés en base (DO block — ADD CONSTRAINT IF NOT EXISTS non supporté par PG) | `absences.ts` + `rh_parametrage.ts` |
+| T2 | Moteur pur : compteur avertissements (severity 1-2 notifiés) sur période glissante, détection récidive (≥2), fenêtre paramétrable, gravité | ✅ Validée | **9/9 vitest** (comptage, fenêtre, seuil 2/3, fenêtre 3 mois, sévérité, tous employés) | `disciplinary-engine.ts` |
+| T3 | Router : listSanctionTypes (RH-00), getSettings/updateSettings (période glissante), listRecords (filtres employé/type/période/recherche), createRecord (type RH-00 validé, notification auto), updateRecord (décision/document), deleteRecord, getEmployeeDossier (historique + récidive moteur + auteur), getOverview (tous les employés) | ✅ Validée | Flux API : 5 types ✓ · création → type RH-00 ✓ · **2 avertissements → récidive ALERTE (fenêtre 12 mois)** ✓ · document joint ✓ · dossier complet avec auteur ✓ · overview 8 employés ✓ ; non-régression verte | `rh-discipline.ts` (10 procédures) ; fix : `$count` drizzle au lieu de sous-requête (getOverview) |
+| T4 | Écrans : 3 onglets (Registre avec recherche + suppression confirmée, Nouveau record avec types RH-00 en select + document, Dossier employé avec KPI + alerte récidive + historique) | ✅ Validée | UI testée (Playwright) : 3 onglets rendus sans erreur JS, 0 API 4xx/5xx ; registre 2 records ✓ · nouveau record formulaire ✓ · dossier + alerte ✓ | `DisciplinaireRH.tsx` (remplace la page Sanctions existante) |
+| T5 | Validation RH-07 (cas 1-4) + non-régression + build | ✅ Validée | Cas 1 avertissement écrit → dossier ✓ · Cas 2 type RH-00 disponible ✓ · Cas 3 historique complet ✓ · Cas 4 permissions (rhProcedure = RH/Directeur/superadmin) ✓ ; build OK ; non-régression 21/21 ; vitest 66/66 | Base nettoyée (records de test supprimés) |
+
 ## RH-08 — Documents RH (P2)
 ## RH-09 — Tableau de bord & Reporting RH (P1)
 
@@ -116,4 +125,5 @@
 - **RH-05 TERMINÉ ✔** — T1 tables (6) + seed grille Technicien + barème · T2 moteur note pondérée + 4 tests · T3 router (grilles, campagnes, évaluations auto-calculées, prime suggérée) · T4 écrans (4 onglets) · T5 validation (cas 1-5, build, non-régression)
 - **TEST D'INTÉGRATION COMPLET ✔ (33/33)** — `scripts/test-workflow-complet.cjs` : RH-00→05 de bout en bout avec 5 employés réels (fiches, présences avec HS autorisées/non, absence, congé approuvé, clôture, évaluation 4,15 → prime 15 000, 5 bulletins avec calculs camerounais exacts vérifiés à la main, paiements MoMo/OM, PDF). Cohérence confirmée : prorata solde congés, HS sans autorisation = 0, congé ≠ absence, IRPP barème exact.
 - **RH-06 TERMINÉ ✔** — T1 tables (6) · T2 seed (10 compétences, exigences par poste, 5 formations) · T3 moteur pur + 11 tests · T4 router (18 procédures : référentiel, matrice, gaps/suggestions, formations, sessions, participations, alertes) · T5 écrans (5 onglets) · T6 validation (cas 1-4, build, non-régression 21/21)
-- Prochaine : RH-07 (Disciplinaire)
+- **RH-07 TERMINÉ ✔** — T1 schéma enrichi (5 colonnes + période glissante) · T2 moteur récidive + 9 tests · T3 router (10 procédures : registre, création avec types RH-00, dossier, récidive, overview) · T4 écrans (3 onglets) · T5 validation (cas 1-4, build, non-régression 21/21)
+- Prochaine : RH-08 (Documents RH)
