@@ -369,6 +369,14 @@ export const DOMAINS: AppDomain[] = [
           desc: "Rayonnage ZONE-ALLEE-RAYON-NIVEAU, contenu",
           moduleId: "stock",
         },
+        {
+          id: "stock-aide",
+          label: "Aide & Documentation",
+          href: "/dashboard/stock/aide",
+          icon: CircleHelp,
+          desc: "Guide utilisateur, fiches, parcours de prise en main",
+          moduleId: "stock",
+        },
       ],
     },
   {

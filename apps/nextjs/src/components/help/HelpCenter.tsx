@@ -20,50 +20,50 @@ const PRIORITE_BADGE: Record<string, string> = {
   P2: "bg-info/10 text-info-foreground",
 };
 
+export interface HelpCenterProps {
+  titre: string;
+  sousTitre: string;
+  fiches: HelpFiche[];
+  parcours: Array<{ label: string; route: string }>;
+  guideDoc: string; // chemin du guide utilisateur documentaire
+}
+
 /**
- * CENTRE D'AIDE — MODULE PERSONNEL (RH)
+ * CENTRE D'AIDE — générique (RH, Stock, ...).
  * Sommaire structuré par priorité, recherche plein texte, fiches
  * détaillées avec prérequis/fonctionnalités/étapes/règles/FAQ et
  * parcours de prise en main guidé.
  */
-export default function HelpCenter() {
+export default function HelpCenter({ titre, sousTitre, fiches, parcours, guideDoc }: HelpCenterProps) {
   const [selected, setSelected] = useState<HelpFiche | null>(null);
-  const [result, setResult] = useState<HelpFiche[]>(RH_HELP_FICHES);
+  const [result, setResult] = useState<HelpFiche[]>(fiches);
 
   const grouped = PRIORITE_ORDER.map((p) => ({
     priorite: p,
     fiches: result.filter((f) => f.priorite === p),
   })).filter((g) => g.fiches.length > 0);
 
-  const totalFiches = RH_HELP_FICHES.length;
+  const totalFiches = fiches.length;
 
   return (
     <div>
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">Centre d'aide — Personnel (RH)</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-foreground">Centre d'aide — {titre}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Guide utilisateur complet du module : parcours de prise en main, fiches par sous-module, recherche.
+          {sousTitre}
         </p>
       </div>
 
       {/* Parcours de prise en main (didacticiel) */}
       <div className="mt-5 rounded-xl border border-primary/20 bg-primary/5 p-4">
         <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-primary">
-          <Rocket size={15} /> Parcours de prise en main (15 minutes)
+          <Rocket size={15} /> Parcours de prise en main
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           Suivez ces étapes dans l'ordre pour voir le module fonctionner de bout en bout.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          {[
-            { label: "1. Vérifier le paramétrage", route: "/dashboard/rh/parametrage" },
-            { label: "2. Créer un employé", route: "/dashboard/rh/employes" },
-            { label: "3. Pointer une présence", route: "/dashboard/rh/presences" },
-            { label: "4. Demander un congé", route: "/dashboard/rh/absences" },
-            { label: "5. Clôturer le mois", route: "/dashboard/rh/presences" },
-            { label: "6. Calculer la paie", route: "/dashboard/rh/paie" },
-            { label: "7. Consulter le tableau de bord", route: "/dashboard/rh/tableau-de-bord" },
-          ].map((s) => (
+          {parcours.map((s) => (
             <Link
               key={s.label}
               href={s.route}
@@ -156,7 +156,7 @@ export default function HelpCenter() {
               <p className="text-sm font-semibold text-foreground">Guide utilisateur complet (document)</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 Le guide de formation détaillé (règles métier, exemples chiffrés, FAQ, glossaire) est disponible dans le
-                dossier <code className="rounded bg-muted px-1.5 py-0.5 text-[11px]">DOC/GUIDE-UTILISATEUR-MODULE-RH.md</code> du projet.
+                dossier <code className="rounded bg-muted px-1.5 py-0.5 text-[11px]">{guideDoc}</code> du projet.
               </p>
             </div>
           </div>

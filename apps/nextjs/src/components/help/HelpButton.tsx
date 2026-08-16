@@ -12,6 +12,7 @@ import {
   SheetTrigger,
 } from "@atelierone/ui";
 import { RH_HELP_FICHES, findHelpFicheByRoute, searchHelpFiches, type HelpFiche } from "~/lib/help/rh-help";
+import { STOCK_HELP_FICHES } from "~/lib/help/stock-help";
 
 const PRIORITE_BADGE: Record<string, string> = {
   P0: "bg-destructive/10 text-destructive",
@@ -19,20 +20,27 @@ const PRIORITE_BADGE: Record<string, string> = {
   P2: "bg-info/10 text-info-foreground",
 };
 
+/** Registres d'aide par domaine (extensible) */
+const HELP_REGISTRES: Array<{ prefix: string; titre: string; centreHref: string; fiches: HelpFiche[] }> = [
+  { prefix: "/dashboard/rh", titre: "Personnel (RH)", centreHref: "/dashboard/rh/aide", fiches: RH_HELP_FICHES },
+  { prefix: "/dashboard/stock", titre: "Stock & Magasin", centreHref: "/dashboard/stock/aide", fiches: STOCK_HELP_FICHES },
+  { prefix: "/dashboard/catalog", titre: "Stock & Magasin", centreHref: "/dashboard/stock/aide", fiches: STOCK_HELP_FICHES },
+];
+
 /**
  * BOUTON D'AIDE CONTEXTUEL ("?") — affiché dans le header global.
  * Ouvre un panneau latéral avec l'aide de la page courante
- * (détection par route) + recherche dans toutes les fiches RH.
+ * (détection par route) + recherche dans les fiches du domaine.
  */
 export function HelpButton() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  // N'affiche le bouton que sur les pages du module RH
-  const isRh = pathname.startsWith("/dashboard/rh");
-  if (!isRh) return null;
+  // N'affiche le bouton que sur les pages couvertes par un registre d'aide
+  const registre = HELP_REGISTRES.find((r) => pathname.startsWith(r.prefix));
+  if (!registre) return null;
 
-  const current = findHelpFicheByRoute(pathname);
+  const current = findHelpFicheByRoute(pathname, registre.fiches);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -51,7 +59,7 @@ export function HelpButton() {
           <div className="flex items-center justify-between">
             <SheetTitle className="flex items-center gap-2 text-base">
               <HelpCircle size={16} className="text-primary" />
-              Aide — Personnel (RH)
+              Aide — {registre.titre}
             </SheetTitle>
             <SheetCloseButton onClick={() => setOpen(false)} />
           </div>
@@ -68,7 +76,7 @@ export function HelpButton() {
 
           <div className="border-t border-border pt-3">
             <Link
-              href="/dashboard/rh/aide"
+              href={registre.centreHref}
               onClick={() => setOpen(false)}
               className="flex w-full items-center justify-between rounded-lg border border-border bg-card px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent"
             >
