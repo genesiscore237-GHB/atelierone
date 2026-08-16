@@ -84,7 +84,7 @@ export class RBACService {
     const roleResult = await db
       .select({ code: roles.code })
       .from(roles)
-      .where(and(eq(roles.id, p.roleId), eq(roles.code, "super_admin")))
+      .where(and(eq(roles.id, p.roleId), eq(roles.code, "superadmin")))
       .limit(1);
 
     return roleResult.length > 0;

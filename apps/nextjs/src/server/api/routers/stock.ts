@@ -8,32 +8,46 @@ import { PertesService } from "~/server/lib/pertes-service";
 import { sortirStockFIFO } from "~/server/lib/lot-service";
 
 export const stockRouter = createTRPCRouter({
-  getDashboard: protectedProcedure.query(async ({ ctx }) => {
+  getDashboard: requirePermissionProcedure("stock.consulter").query(async ({ ctx }) => {
     const agenceId = ctx.user.agenceId;
 
-    const [totalRow] = await db.select({ count: sql<number>`count(*)::int` }).from(stocks).where(eq(stocks.agenceId, agenceId));
-    const totalProduitsCount = totalRow?.count ?? 0;
+    // 1. KPI : valeur du stock (somme qte × CMUP)
+    const [valeurRow] = await db
+      .select({ valeur: sql<number>`COALESCE(SUM(${stocks.quantite} * COALESCE(${stocks.coutUnitaireMoyen}, 0)), 0)` })
+      .from(stocks)
+      .where(eq(stocks.agenceId, agenceId));
+    const valeurStock = valeurRow?.valeur ?? 0;
 
-    const [alertesTotal] = await db
-      .select({ count: sql<number>`count(*)::int` })
+    // 2. KPI : lignes de stock par état (rupture / bas / critique / surstock)
+    const etats = await db
+      .select({
+        produitId: stocks.produitId,
+        quantite: stocks.quantite,
+        seuilAlerte: produits.seuilAlerte,
+        seuilCritique: produits.seuilCritique,
+        stockMaximum: produits.stockMaximum,
+        titre: produits.titre,
+        codeBarre: produits.codeBarre,
+        cmup: stocks.coutUnitaireMoyen,
+      })
       .from(stocks)
       .innerJoin(produits, eq(stocks.produitId, produits.id))
-      .where(and(eq(stocks.agenceId, agenceId), lt(stocks.quantite, produits.seuilAlerte)));
+      .where(eq(stocks.agenceId, agenceId));
 
-    const alertes = await db.select({
-      id: stocks.id,
-      produitId: stocks.produitId,
-      quantite: stocks.quantite,
-      titre: produits.titre,
-      codeBarre: produits.codeBarre,
-      seuilAlerte: produits.seuilAlerte,
-      seuilCritique: produits.seuilCritique,
-    })
-      .from(stocks)
-      .innerJoin(produits, eq(stocks.produitId, produits.id))
-      .where(and(eq(stocks.agenceId, agenceId), lt(stocks.quantite, produits.seuilAlerte)))
-      .orderBy(stocks.quantite)
-      .limit(20);
+    let nbRuptures = 0;
+    let nbStocksBas = 0;
+    let nbSurstock = 0;
+    const alertes = [];
+    for (const e of etats) {
+      const qte = Number(e.quantite);
+      const seuilAlerte = e.seuilAlerte ?? 5;
+      const seuilCritique = e.seuilCritique ?? 2;
+      if (qte <= 0) { nbRuptures++; alertes.push({ ...e, quantite: qte, niveau: "rupture" }); }
+      else if (qte <= seuilCritique) { nbStocksBas++; alertes.push({ ...e, quantite: qte, niveau: "critique" }); }
+      else if (qte <= seuilAlerte) { nbStocksBas++; alertes.push({ ...e, quantite: qte, niveau: "faible" }); }
+      if (e.stockMaximum && qte > Number(e.stockMaximum)) { nbSurstock++; }
+    }
+    alertes.sort((a, b) => Number(a.quantite) - Number(b.quantite));
 
     const aAchalander = await db.select({
       produitId: stocks.produitId,
@@ -49,6 +63,15 @@ export const stockRouter = createTRPCRouter({
       .having(sql`COALESCE(SUM(${stocks.quantite}), 0) > 0 AND COALESCE(MAX(${stocks.quantiteRayon}), 0) = 0`)
       .orderBy(desc(stocks.produitId))
       .limit(20);
+
+    // 3. Mouvements du jour (specs : KPI mouvements du jour)
+    const debutJour = new Date();
+    debutJour.setHours(0, 0, 0, 0);
+    const [mouvementsJourRow] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(mouvementsStock)
+      .where(and(eq(mouvementsStock.agenceId, agenceId), gte(mouvementsStock.dateMouvement, debutJour)));
+    const mouvementsJour = mouvementsJourRow?.count ?? 0;
 
     const recentMouvements = await db.select({
       id: mouvementsStock.id,
@@ -66,17 +89,22 @@ export const stockRouter = createTRPCRouter({
       .limit(10);
 
     return {
-      totalProduits: totalProduitsCount,
-      alertesStock: alertesTotal?.count ?? 0,
-      alertes: alertes.map(a => ({
-        id: String(a.id),
+      totalProduits: etats.length,
+      valeurStock: Number(valeurStock),
+      nbRuptures,
+      nbStocksBas,
+      nbSurstock,
+      mouvementsJour,
+      alertesStock: nbRuptures + nbStocksBas,
+      alertes: alertes.slice(0, 20).map(a => ({
+        id: String(a.produitId),
         produitId: String(a.produitId),
         titre: a.titre,
         codeBarre: a.codeBarre,
         quantite: a.quantite,
         seuilAlerte: a.seuilAlerte ?? 0,
         seuilCritique: a.seuilCritique ?? 0,
-        niveau: a.quantite < (a.seuilCritique ?? 2) ? "critique" : "faible",
+        niveau: a.niveau,
       })),
       aAchalander: aAchalander.map(a => ({
         produitId: String(a.produitId),
@@ -194,7 +222,7 @@ export const stockRouter = createTRPCRouter({
     return alertesAntiVol;
   }),
 
-  getStocksDormants: protectedProcedure
+  getStocksDormants: requirePermissionProcedure("stock.consulter")
     .input(z.object({
       jours: z.number().default(90),
       limit: z.number().default(50),
@@ -242,7 +270,7 @@ export const stockRouter = createTRPCRouter({
       };
     }),
 
-  getAlertes: protectedProcedure.query(async ({ ctx }) => {
+  getAlertes: requirePermissionProcedure("stock.consulter").query(async ({ ctx }) => {
     const agenceId = ctx.user.agenceId;
     const rows = await db.select({
       id: stocks.id,
@@ -273,7 +301,7 @@ export const stockRouter = createTRPCRouter({
     }));
   }),
 
-  getMouvements: protectedProcedure
+  getMouvements: requirePermissionProcedure("stock.consulter")
     .input(z.object({
       produitId: z.string().optional(),
       type: z.string().optional(),
@@ -678,7 +706,7 @@ export const stockRouter = createTRPCRouter({
       }) as any;
     }),
 
-  listRayons: protectedProcedure.query(async ({ ctx }) => {
+  listRayons: requirePermissionProcedure("stock.consulter").query(async ({ ctx }) => {
     const rows = await db.select()
       .from(emplacements)
       .where(and(
@@ -1008,7 +1036,7 @@ export const stockRouter = createTRPCRouter({
       }) as any;
     }),
 
-  getPrevisionsAchat: protectedProcedure
+  getPrevisionsAchat: requirePermissionProcedure("stock.consulter")
     .input(z.object({
       joursHistorique: z.number().default(30),
       joursCouverture: z.number().default(30),

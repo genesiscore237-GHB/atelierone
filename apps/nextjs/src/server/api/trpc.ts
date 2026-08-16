@@ -5,7 +5,7 @@ import { sql, eq } from "drizzle-orm";
 import { auth } from "@atelierone/auth";
 import { db, auditLogs } from "@atelierone/db";
 import type { ExtendedUser, UserRole } from "@atelierone/auth/types";
-import { requirePermission } from "~/server/lib/rbac-service";
+import { RBACService } from "~/server/lib/rbac-service";
 import { logger } from "~/server/lib/logger";
 
 export const createTRPCContext = async (opts: { headers: Headers }) => {
@@ -128,7 +128,7 @@ export function requirePermissionProcedure(...permissions: string[]) {
     const user = ctx.user as ExtendedUser;
     if (user.role === "superadmin") return next({ ctx });
     for (const perm of permissions) {
-      const has = await requirePermission(user.id, perm, String(user.agenceId ?? ""));
+      const has = await RBACService.hasPermission(user.id, perm, String(user.agenceId ?? ""));
       if (has) return next({ ctx });
     }
     throw new TRPCError({ code: "FORBIDDEN", message: `Permission manquante: ${permissions.join(" ou ")}` });

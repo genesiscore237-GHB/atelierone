@@ -1,4 +1,4 @@
-import { inArray } from "drizzle-orm";
+import { inArray, and, eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import * as schema from "./schema";
 
@@ -181,7 +181,7 @@ export async function ensureSecuritySocle(db: Db) {
     const existing = await db
       .select()
       .from(schema.rolePermissions)
-      .where(inArray(schema.rolePermissions.permissionId, permIds));
+      .where(and(inArray(schema.rolePermissions.permissionId, permIds), eq(schema.rolePermissions.roleId, role.id)));
     const existingPermIds = new Set(existing.map((rp) => rp.permissionId));
     const toAdd: { roleId: string; permissionId: string }[] = [];
     for (const id of permIds) {
