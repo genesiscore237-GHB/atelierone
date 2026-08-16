@@ -130,6 +130,52 @@ const BONUS_RULES = [
   { minScore: 0, maxScore: 2.99, bonusAmount: 0 },
 ];
 
+// RH-06 : référentiel de compétences du garage + niveaux requis par poste + catalogue de formations
+const SKILLS = [
+  { code: "DIAG_ELEC", name: "Diagnostic électronique", category: "Atelier", description: "Lecture et interprétation des calculateurs, valise de diagnostic" },
+  { code: "MECA_MOTEUR", name: "Mécanique moteur", category: "Atelier", description: "Réparation et entretien moteurs essence et diesel" },
+  { code: "TRANSMISSION", name: "Transmission auto", category: "Atelier", description: "Boîtes de vitesses, embrayages, ponts" },
+  { code: "CLIM_AUTO", name: "Climatisation automobile", category: "Atelier", description: "Maintenance et recharge des systèmes de climatisation" },
+  { code: "SOUDURE", name: "Soudure", category: "Carrosserie", description: "Soudure à l'arc et MIG sur tôlerie" },
+  { code: "PEINTURE", name: "Peinture automobile", category: "Carrosserie", description: "Préparation de surface, cabine et retouches" },
+  { code: "ELECTRICITE", name: "Électricité auto", category: "Atelier", description: "Circuits électriques, éclairage, démarreurs" },
+  { code: "ACCUEIL_CLIENT", name: "Accueil client", category: "Accueil", description: "Réception client, devis, suivi des dossiers" },
+  { code: "FACTURATION", name: "Facturation & encaissement", category: "Finance", description: "Émission de factures, encaissements et clôtures de caisse" },
+  { code: "GESTION_STOCK", name: "Gestion du stock", category: "Magasin", description: "Réceptions, inventaires, sorties de pièces" },
+];
+
+const POSITION_REQUIRED_SKILLS: Record<string, Array<{ skill: string; level: number }>> = {
+  DIRECTEUR: [{ skill: "FACTURATION", level: 3 }],
+  CHEF_ATELIER: [
+    { skill: "DIAG_ELEC", level: 4 },
+    { skill: "MECA_MOTEUR", level: 4 },
+    { skill: "TRANSMISSION", level: 3 },
+    { skill: "ELECTRICITE", level: 3 },
+  ],
+  TECHNICIEN: [
+    { skill: "DIAG_ELEC", level: 3 },
+    { skill: "MECA_MOTEUR", level: 4 },
+    { skill: "TRANSMISSION", level: 3 },
+    { skill: "CLIM_AUTO", level: 3 },
+    { skill: "ELECTRICITE", level: 3 },
+  ],
+  CARROSSIER: [
+    { skill: "SOUDURE", level: 4 },
+    { skill: "PEINTURE", level: 3 },
+  ],
+  MAGASINIER: [{ skill: "GESTION_STOCK", level: 4 }],
+  SECRETAIRE: [{ skill: "ACCUEIL_CLIENT", level: 4 }],
+  COMPTABLE: [{ skill: "FACTURATION", level: 4 }],
+};
+
+const TRAININGS = [
+  { title: "Formation diagnostic électronique embarqué", description: "Valise de diagnostic, codes défauts, oscilloscope", provider: "externe", durationHours: 40, skills: ["DIAG_ELEC"] },
+  { title: "Formation climatisation automobile", description: "Réglementation des fluides, recharge, fuites", provider: "externe", durationHours: 24, skills: ["CLIM_AUTO"] },
+  { title: "Formation soudure MIG/TIG", description: "Techniques de soudure sur tôlerie mince", provider: "interne", durationHours: 30, skills: ["SOUDURE"] },
+  { title: "Formation accueil et relation client", description: "Standards d'accueil, devis, suivi client", provider: "interne", durationHours: 12, skills: ["ACCUEIL_CLIENT"] },
+  { title: "Formation gestion des stocks", description: "Inventaire, réceptions, outils du magasin", provider: "interne", durationHours: 16, skills: ["GESTION_STOCK"] },
+];
+
 async function main() {
   const agences = await db.select().from(schema.agences).where(eq(schema.agences.isActive, true)).orderBy(schema.agences.id);
   if (agences.length === 0) {
@@ -405,6 +451,78 @@ async function main() {
       }
     }
     console.log(`Barème de prime de performance vérifié (${BONUS_RULES.length} tranches).`);
+
+    // 13. RH-06 : référentiel de compétences
+    const skillIds: Record<string, number> = {};
+    for (const s of SKILLS) {
+      const [existing] = await db
+        .select({ id: schema.skills.id })
+        .from(schema.skills)
+        .where(and(eq(schema.skills.agenceId, agence.id), eq(schema.skills.code, s.code)))
+        .limit(1);
+      if (existing) {
+        skillIds[s.code] = existing.id;
+      } else {
+        const [row] = await db.insert(schema.skills).values({
+          code: s.code,
+          name: s.name,
+          category: s.category,
+          description: s.description,
+          agenceId: agence.id,
+        } as any).returning() as any;
+        skillIds[s.code] = row.id;
+      }
+    }
+    console.log(`Référentiel de compétences vérifié (${SKILLS.length}).`);
+
+    // 14. RH-06 : compétences requises par poste
+    const positionByCode: Record<string, number> = {};
+    const allPositions = await db.select({ id: schema.positions.id, code: schema.positions.code })
+      .from(schema.positions)
+      .where(eq(schema.positions.agenceId, agence.id));
+    for (const p of allPositions) positionByCode[p.code] = p.id;
+
+    for (const [posCode, reqs] of Object.entries(POSITION_REQUIRED_SKILLS)) {
+      const positionId = positionByCode[posCode];
+      if (!positionId) continue;
+      for (const r of reqs) {
+        const skillId = skillIds[r.skill];
+        if (!skillId) continue;
+        const [existing] = await db
+          .select({ id: schema.positionSkills.id })
+          .from(schema.positionSkills)
+          .where(and(eq(schema.positionSkills.positionId, positionId), eq(schema.positionSkills.skillId, skillId)))
+          .limit(1);
+        if (!existing) {
+          await db.insert(schema.positionSkills).values({
+            positionId,
+            skillId,
+            requiredLevel: r.level,
+          } as any);
+        }
+      }
+    }
+    console.log("Compétences requises par poste vérifiées.");
+
+    // 15. RH-06 : catalogue de formations
+    for (const t of TRAININGS) {
+      const [existing] = await db
+        .select({ id: schema.trainings.id })
+        .from(schema.trainings)
+        .where(and(eq(schema.trainings.agenceId, agence.id), eq(schema.trainings.title, t.title)))
+        .limit(1);
+      if (!existing) {
+        await db.insert(schema.trainings).values({
+          title: t.title,
+          description: t.description,
+          provider: t.provider,
+          durationHours: String(t.durationHours),
+          skillIds: t.skills.map((c) => skillIds[c]).filter(Boolean),
+          agenceId: agence.id,
+        } as any);
+      }
+    }
+    console.log(`Catalogue de formations vérifié (${TRAININGS.length}).`);
   }
 
   console.log("\n=== Seed RH terminé ===");

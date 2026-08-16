@@ -75,6 +75,16 @@
 | T5 | Validation RH-05 (cas 1-5) + non-régression + build | ✅ Validée | Cas 1 grille 6 critères ✓ · Cas 2 campagne ✓ · Cas 3 note pondérée ✓ · Cas 4 barème 15 000 (suggéré → saisi en paie) ✓ · Cas 5 historique ✓ ; build OK ; non-régression 21/21 | Base nettoyée |
 
 ## RH-06 — Compétences & Formations (P2)
+
+| # | Tâche | Statut | Tests | Notes |
+|---|-------|--------|-------|-------|
+| T1 | Tables : skills, position_skills, employee_skills, trainings (skill_ids jsonb), training_sessions, training_participations | ✅ Validée | 6 tables + 12 FK créées en base (SQL généré — prompt drizzle contourné par `archives` comme RH-00) | `rh_competences.ts` |
+| T2 | Seed : 10 compétences garage (Atelier/Carrosserie/Accueil/Finance/Magasin), niveaux requis par poste (Technicien : DIAG_ELEC 3, MECA_MOTEUR 4, TRANSMISSION 3, CLIM_AUTO 3, ELECTRICITE 3), catalogue 5 formations (40 h diagnostic, 24 h clim, 30 h soudure, 12 h accueil, 16 h stock) | ✅ Validée | Idempotent 2 agences (20 skills, 30 exigences, 10 formations) | ajouté à `seed-rh.ts` |
+| T3 | Moteur pur : skillGaps (écart + critique si ≥2), suggestTrainings (couverture des écarts, tri par impact), categoryMastery, monthsSinceLastTraining | ✅ Validée | **11/11 vitest** (4 écarts, 3 suggestions, 1 catégorie, 3 alerte) | `skills-engine.ts` |
+| T4 | Router : référentiel CRUD (contrôle doublon code), exigences poste (upsert/remove), matrice employé (upsert/remove, audit évaluateur), getGaps (moteur : écarts + suggestions), catalogue formations CRUD, sessions CRUD, participations CRUD, getTrainingLapse (alerte ≥6 mois) | ✅ Validée | Flux API : createSession ✓ · addParticipation ✓ · updateParticipation (valide, note 15) ✓ · historique E5 ✓ · évaluer DIAG_ELEC 3 → écart résolu ✓ · gaps Technicien : 5 gaps critiques + 2 suggestions ✓ · alerte 6 employés jamais formés ✓ ; non-régression verte | `rh-competences.ts` (18 procédures) ; fix : sous-requête scalaire drizzle → 2 requêtes (getTrainingLapse) |
+| T5 | Écrans : 5 onglets (Référentiel avec recherche + création, Matrice employés avec gaps/suggestions + évaluation 1-5, Exigences par poste, Formations avec planification de sessions, Plan & historique avec alertes + inscription) | ✅ Validée | UI testée (Playwright) : 5 onglets rendus sans erreur JS, 0 API 4xx/5xx ; référentiel 10 compétences ✓ · matrice sélection ✓ · exigences Technicien ✓ · catalogue 5 formations + planifier ✓ · inscription + alertes ✓ | `CompetencesRH.tsx` (remplace le placeholder) ; confirm() → dialogue React (charte) |
+| T6 | Validation RH-06 (cas 1-4) + non-régression + build | ✅ Validée | Cas 1 compétence requise niveau 4 Technicien ✓ · Cas 2 employé niveau 2 → écart + suggestion ✓ · Cas 3 formation suivie → historique ✓ · Cas 4 matrice consultable ✓ ; build OK ; non-régression 21/21 ; vitest 57/57 | Base nettoyée (sessions/participations/évaluations de test supprimées) |
+
 ## RH-07 — Disciplinaire (P2)
 ## RH-08 — Documents RH (P2)
 ## RH-09 — Tableau de bord & Reporting RH (P1)
@@ -105,4 +115,5 @@
   - Tests : 9/9 vitest (barème IRPP inclus) ; validation API : brut 300 000 → IRPP 32 975 exact ✓ ; build OK ; non-régression 21/21
 - **RH-05 TERMINÉ ✔** — T1 tables (6) + seed grille Technicien + barème · T2 moteur note pondérée + 4 tests · T3 router (grilles, campagnes, évaluations auto-calculées, prime suggérée) · T4 écrans (4 onglets) · T5 validation (cas 1-5, build, non-régression)
 - **TEST D'INTÉGRATION COMPLET ✔ (33/33)** — `scripts/test-workflow-complet.cjs` : RH-00→05 de bout en bout avec 5 employés réels (fiches, présences avec HS autorisées/non, absence, congé approuvé, clôture, évaluation 4,15 → prime 15 000, 5 bulletins avec calculs camerounais exacts vérifiés à la main, paiements MoMo/OM, PDF). Cohérence confirmée : prorata solde congés, HS sans autorisation = 0, congé ≠ absence, IRPP barème exact.
-- Prochaine : RH-06 (Compétences & Formations)
+- **RH-06 TERMINÉ ✔** — T1 tables (6) · T2 seed (10 compétences, exigences par poste, 5 formations) · T3 moteur pur + 11 tests · T4 router (18 procédures : référentiel, matrice, gaps/suggestions, formations, sessions, participations, alertes) · T5 écrans (5 onglets) · T6 validation (cas 1-4, build, non-régression 21/21)
+- Prochaine : RH-07 (Disciplinaire)

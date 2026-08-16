@@ -101,3 +101,11 @@ export {
   evaluationScores,
   performanceBonusRules,
 } from "./rh_evaluation";
+export {
+  skills,
+  positionSkills,
+  employeeSkills,
+  trainings,
+  trainingSessions,
+  trainingParticipations,
+} from "./rh_competences";
