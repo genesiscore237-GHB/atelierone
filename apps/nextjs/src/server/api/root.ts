@@ -25,6 +25,7 @@ import { rhPayrollRouter } from "~/server/api/routers/rh-payroll";
 import { rhEvaluationRouter } from "~/server/api/routers/rh-evaluation";
 import { rhCompetencesRouter } from "~/server/api/routers/rh-competences";
 import { rhDisciplineRouter } from "~/server/api/routers/rh-discipline";
+import { rhDocumentsRouter } from "~/server/api/routers/rh-documents";
 import { partnerRouter } from "~/server/api/routers/partner";
 import { stockRouter } from "~/server/api/routers/stock";
 import { margeRouter } from "~/server/api/routers/marge";
@@ -63,6 +64,7 @@ export const appRouter = createTRPCRouter({
   rhEvaluation: rhEvaluationRouter,
   rhCompetences: rhCompetencesRouter,
   rhDiscipline: rhDisciplineRouter,
+  rhDocuments: rhDocumentsRouter,
   stock: stockRouter,
   partner: partnerRouter,
   marge: margeRouter,

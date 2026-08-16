@@ -2,6 +2,7 @@ import { pgTable, serial, integer, varchar, date, numeric, boolean, timestamp, t
 import { employes } from "./employes";
 import { utilisateurs } from "./utilisateurs";
 import { hrSanctionTypes } from "./rh_parametrage";
+import { hrDocumentTypes } from "./rh_documents";
 
 export const absences = pgTable("absences", {
   id: serial("id").primaryKey(),
@@ -59,11 +60,15 @@ export const contrats = pgTable("contrats", {
 export const documentsEmployes = pgTable("documents_employes", {
   id: serial("id").primaryKey(),
   employeId: integer("employe_id").notNull().references(() => employes.id),
+  documentTypeId: integer("document_type_id").references(() => hrDocumentTypes.id), // lien RH-08 (types paramétrables)
   typeDocument: varchar("type_document", { length: 50 }).notNull(),
   titre: varchar("titre", { length: 255 }),
   fichierUrl: text("fichier_url").notNull(),
   dateEmission: date("date_emission"),
   dateExpiration: date("date_expiration"),
   statut: varchar("statut", { length: 50 }).default("actif"),
+  uploadedBy: integer("uploaded_by").references(() => utilisateurs.id),
+  notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });

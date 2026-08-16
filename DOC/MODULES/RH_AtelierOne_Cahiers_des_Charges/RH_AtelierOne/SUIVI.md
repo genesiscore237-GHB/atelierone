@@ -96,6 +96,16 @@
 | T5 | Validation RH-07 (cas 1-4) + non-régression + build | ✅ Validée | Cas 1 avertissement écrit → dossier ✓ · Cas 2 type RH-00 disponible ✓ · Cas 3 historique complet ✓ · Cas 4 permissions (rhProcedure = RH/Directeur/superadmin) ✓ ; build OK ; non-régression 21/21 ; vitest 66/66 | Base nettoyée (records de test supprimés) |
 
 ## RH-08 — Documents RH (P2)
+
+| # | Tâche | Statut | Tests | Notes |
+|---|-------|--------|-------|-------|
+| T1 | Tables : `hr_document_types` (paramétrables : code, name, has_expiration) + enrichissement `documents_employes` (document_type_id→types, uploaded_by, notes, updated_at) | ✅ Validée | 1 table + 4 colonnes + 3 FK créés en base | `rh_documents.ts` + `absences.ts` |
+| T2 | Seed 8 types (Contrat, Avenant, CIN/Passeport, CNPS, Attestation, Certificat formation, Courrier disciplinaire, Autre) — Contrat et CIN avec expiration | ✅ Validée | Idempotent 2 agences (16 types) | ajouté à `seed-rh.ts` |
+| T3 | Moteur pur : daysUntilExpiry (UTC calendaire), expiryStatus (expire/expire_bientot/valide/sans), expiryAlerts (tri urgence), latestValid (versioning) | ✅ Validée | **6/6 vitest** | `documents-engine.ts` ; fix : parsing ISO → Date.UTC (décalage fuseau) |
+| T4 | Router : CRUD types (contrôle doublon), CRUD documents (type RH-08 validé, uploader auto, statut expiration calculé), getExpirationAlerts (moteur, tri urgence) | ✅ Validée | Flux API : 8 types ✓ · upload contrat rattaché ✓ · **CIN expiré (-6 j) + contrat expirant (+4 j) détectés** ✓ · liste avec statut ✓ ; non-régression verte | `rh-documents.ts` (9 procédures) |
+| T5 | Écrans : 3 onglets (Documents avec recherche + upload, Types paramétrables avec toggle actif, Alertes expiration avec jours restants) | ✅ Validée | UI testée (Playwright) : 3 onglets rendus sans erreur JS, 0 API 4xx/5xx ; liste 2 docs ✓ · types 8 ✓ · alertes 2 ✓ | `DocumentsRH.tsx` (remplace la page existante) |
+| T6 | Validation RH-08 (cas 1-3) + non-régression + build | ✅ Validée | Cas 1 upload contrat → rattaché ✓ · Cas 2 expiration → alerte ✓ · Cas 3 type configurable ✓ ; build OK ; non-régression 21/21 ; vitest 72/72 | Base nettoyée (documents de test supprimés) |
+
 ## RH-09 — Tableau de bord & Reporting RH (P1)
 
 ---
@@ -126,4 +136,5 @@
 - **TEST D'INTÉGRATION COMPLET ✔ (33/33)** — `scripts/test-workflow-complet.cjs` : RH-00→05 de bout en bout avec 5 employés réels (fiches, présences avec HS autorisées/non, absence, congé approuvé, clôture, évaluation 4,15 → prime 15 000, 5 bulletins avec calculs camerounais exacts vérifiés à la main, paiements MoMo/OM, PDF). Cohérence confirmée : prorata solde congés, HS sans autorisation = 0, congé ≠ absence, IRPP barème exact.
 - **RH-06 TERMINÉ ✔** — T1 tables (6) · T2 seed (10 compétences, exigences par poste, 5 formations) · T3 moteur pur + 11 tests · T4 router (18 procédures : référentiel, matrice, gaps/suggestions, formations, sessions, participations, alertes) · T5 écrans (5 onglets) · T6 validation (cas 1-4, build, non-régression 21/21)
 - **RH-07 TERMINÉ ✔** — T1 schéma enrichi (5 colonnes + période glissante) · T2 moteur récidive + 9 tests · T3 router (10 procédures : registre, création avec types RH-00, dossier, récidive, overview) · T4 écrans (3 onglets) · T5 validation (cas 1-4, build, non-régression 21/21)
-- Prochaine : RH-08 (Documents RH)
+- **RH-08 TERMINÉ ✔** — T1 types paramétrables + colonnes docs · T2 seed 8 types · T3 moteur expiration + 6 tests · T4 router (9 procédures : CRUD types/docs, alertes) · T5 écrans (3 onglets) · T6 validation (cas 1-3, build, non-régression 21/21)
+- Prochaine : RH-09 (Tableau de bord RH)

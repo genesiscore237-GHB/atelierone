@@ -109,3 +109,4 @@ export {
   trainingSessions,
   trainingParticipations,
 } from "./rh_competences";
+export { hrDocumentTypes } from "./rh_documents";

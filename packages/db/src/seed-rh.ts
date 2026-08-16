@@ -176,6 +176,18 @@ const TRAININGS = [
   { title: "Formation gestion des stocks", description: "Inventaire, réceptions, outils du magasin", provider: "interne", durationHours: 16, skills: ["GESTION_STOCK"] },
 ];
 
+// RH-08 : types de documents RH paramétrables
+const DOCUMENT_TYPES = [
+  { code: "CONTRAT", name: "Contrat de travail", hasExpiration: true },
+  { code: "AVENANT", name: "Avenant", hasExpiration: false },
+  { code: "PIECE_IDENTITE", name: "CIN / Passeport", hasExpiration: true },
+  { code: "CNPS", name: "Attestation CNPS", hasExpiration: false },
+  { code: "ATTESTATION", name: "Attestation", hasExpiration: false },
+  { code: "CERTIFICAT_FORMATION", name: "Certificat de formation", hasExpiration: false },
+  { code: "COURRIER_DISCIPLINAIRE", name: "Courrier disciplinaire", hasExpiration: false },
+  { code: "AUTRE", name: "Autre", hasExpiration: false },
+];
+
 async function main() {
   const agences = await db.select().from(schema.agences).where(eq(schema.agences.isActive, true)).orderBy(schema.agences.id);
   if (agences.length === 0) {
@@ -523,6 +535,24 @@ async function main() {
       }
     }
     console.log(`Catalogue de formations vérifié (${TRAININGS.length}).`);
+
+    // 16. RH-08 : types de documents paramétrables
+    for (const dt of DOCUMENT_TYPES) {
+      const [existing] = await db
+        .select({ id: schema.hrDocumentTypes.id })
+        .from(schema.hrDocumentTypes)
+        .where(and(eq(schema.hrDocumentTypes.agenceId, agence.id), eq(schema.hrDocumentTypes.code, dt.code)))
+        .limit(1);
+      if (!existing) {
+        await db.insert(schema.hrDocumentTypes).values({
+          code: dt.code,
+          name: dt.name,
+          hasExpiration: dt.hasExpiration,
+          agenceId: agence.id,
+        } as any);
+      }
+    }
+    console.log(`Types de documents vérifiés (${DOCUMENT_TYPES.length}).`);
   }
 
   console.log("\n=== Seed RH terminé ===");
