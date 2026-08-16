@@ -108,6 +108,22 @@
 
 ## RH-09 — Tableau de bord & Reporting RH (P1)
 
+| # | Tâche | Statut | Tests | Notes |
+|---|-------|--------|-------|-------|
+| T1 | Moteur stats pur : presenceRate, repartition, payrollMass, toCsv (RFC 4180), workingDaysInMonth (lun-sam hors fériés) | ✅ Validée | **8/8 vitest** (taux, répartition, masse, CSV échappement, jours ouvrés avec férié) | `rh-stats-engine.ts` ; fix : août 2026 = 26 j ouvrés |
+| T2 | Router : getKpis (effectifs, taux présence via résumés RH-02, masse salariale, évaluations en retard, formations, alertes contrats/docs/soldes, répartitions), exports CSV (employés, présences par mois, matrice compétences, registre disciplinaire) | ✅ Validée | Flux API : KPI 8 employés / présence / masse 1 290 000 F ✓ · alertes docs expirés 1 ✓ · 4 exports CSV générés (BOM UTF-8) ✓ ; non-régression verte | `rh-dashboard.ts` (5 procédures) |
+| T3 | Écrans : 2 onglets (Tableau de bord : 6 KPI + alertes + répartition par département avec barres ; Rapports : 4 exports CSV avec sélecteur de période) | ✅ Validée | UI testée (Playwright) : 2 onglets rendus sans erreur JS, 0 API 4xx/5xx ; KPI ✓ · alerte docs 1 ✓ · rapports ✓ | `DashboardRH.tsx` (remplace l'ancien dashboard) |
+| T4 | Validation RH-09 (cas 1-4) + non-régression + build + **clôture du module RH** | ✅ Validée | Cas 1 effectif correct ✓ · Cas 2 alerte docs expirés visible ✓ · Cas 3 taux présence cohérent RH-02 ✓ · Cas 4 export CSV fonctionnel ✓ ; build OK ; non-régression 21/21 ; vitest 80/80 | Base nettoyée |
+
+---
+
+## ✅ MODULE PERSONNEL (RH) — TERMINÉ (RH-00 → RH-09)
+
+Toutes les composantes du module Personnel sont implémentées et validées :
+- RH-00 Paramétrage · RH-01 Fiches/Organigramme · RH-02 Présences · RH-03 Congés · RH-04 Paie (IRPP barème camerounais, PDF) · RH-05 Évaluation · RH-06 Compétences & Formations · RH-07 Disciplinaire · RH-08 Documents · RH-09 Tableau de bord & Reporting
+- **80 tests vitest** · **non-régression 21/21** · **build OK** · test d'intégration 33/33
+- Critères globaux du module : tout paramétrable en base ✓ · permissions par rôle ✓ · audit des actions sensibles ✓ · rapports RH disponibles ✓
+
 ---
 
 ## Journal des itérations
@@ -137,4 +153,5 @@
 - **RH-06 TERMINÉ ✔** — T1 tables (6) · T2 seed (10 compétences, exigences par poste, 5 formations) · T3 moteur pur + 11 tests · T4 router (18 procédures : référentiel, matrice, gaps/suggestions, formations, sessions, participations, alertes) · T5 écrans (5 onglets) · T6 validation (cas 1-4, build, non-régression 21/21)
 - **RH-07 TERMINÉ ✔** — T1 schéma enrichi (5 colonnes + période glissante) · T2 moteur récidive + 9 tests · T3 router (10 procédures : registre, création avec types RH-00, dossier, récidive, overview) · T4 écrans (3 onglets) · T5 validation (cas 1-4, build, non-régression 21/21)
 - **RH-08 TERMINÉ ✔** — T1 types paramétrables + colonnes docs · T2 seed 8 types · T3 moteur expiration + 6 tests · T4 router (9 procédures : CRUD types/docs, alertes) · T5 écrans (3 onglets) · T6 validation (cas 1-3, build, non-régression 21/21)
-- Prochaine : RH-09 (Tableau de bord RH)
+- **RH-09 TERMINÉ ✔** — T1 moteur stats + 8 tests · T2 router (KPI + 4 exports CSV) · T3 écrans (2 onglets) · T4 validation (cas 1-4, build, non-régression)
+- **MODULE PERSONNEL (RH) TERMINÉ ✔ — RH-00 → RH-09 complet** (80 tests vitest, 21/21 non-régression, 33/33 intégration, build OK)
