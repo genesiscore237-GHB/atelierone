@@ -65,6 +65,14 @@ function mapProductToDefaults(product: any) {
     couleur: product.couleur ?? "",
     format: product.format ?? "",
     matiere_composition: product.matiereComposition ?? "",
+    // Specs 02 §2.1 : champs d'article
+    code_article: product.codeArticle ?? "",
+    designation_courte: product.designationCourte ?? "",
+    ref_oem: product.refOem ?? "",
+    ref_aftermarket: product.refAftermarket ?? "",
+    emplacement_principal_id: product.emplacementPrincipalId ?? null,
+    est_reconditionnable: product.estReconditionnable ?? false,
+    notes: product.notes ?? "",
     unites,
   };
 }

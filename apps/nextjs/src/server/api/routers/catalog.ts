@@ -39,31 +39,39 @@ const unitesInput = z.array(z.object({
   if (units.filter(u => u.est_unite_vente_defaut).length > 1) ctx.addIssue({ code: "custom", message: "Une seule unité de vente par défaut autorisée (RG-014)" });
 });
 function formatProduct(p: typeof produits.$inferSelect) {
-  return {
-    id: String(p.id),
-    typeProduit: p.typeProduit,
-    codeBarre: p.codeBarre,
-    titre: p.titre,
-    editeur: p.editeur,
-    etat: p.etat,
-    description: p.description,
-    categorieId: p.categorieId,
-    fournisseurId: p.fournisseurId,
-    uniteBaseId: p.uniteBaseId,
-    prixVente: String(p.prixVente),
-    prixMinimumVente: p.prixMinimumVente ? String(p.prixMinimumVente) : null,
-    prixAchat: p.prixAchat ? String(p.prixAchat) : null,
-    tva: String(p.tva ?? "0"),
-    seuilAlerte: p.seuilAlerte,
-    seuilCritique: p.seuilCritique,
-    stockMaximum: p.stockMaximum,
-    statutCycleVie: p.statutCycleVie,
-    motifSuspension: p.motifSuspension,
-    dateDiscontinuation: p.dateDiscontinuation,
-    modeleEmballageId: p.modeleEmballageId,
-    statut: p.statut,
-    uniteVente: p.uniteVente,
-    uniteAchat: p.uniteAchat,
+    return {
+      id: String(p.id),
+      typeProduit: p.typeProduit,
+      codeBarre: p.codeBarre,
+      codeArticle: p.codeArticle,
+      designationCourte: p.designationCourte,
+      titre: p.titre,
+      editeur: p.editeur,
+      etat: p.etat,
+      description: p.description,
+      categorieId: p.categorieId,
+      fournisseurId: p.fournisseurId,
+      uniteBaseId: p.uniteBaseId,
+      prixVente: String(p.prixVente),
+      prixMinimumVente: p.prixMinimumVente ? String(p.prixMinimumVente) : null,
+      prixAchat: p.prixAchat ? String(p.prixAchat) : null,
+      dernierPrixAchat: p.dernierPrixAchat ? String(p.dernierPrixAchat) : null,
+      tva: String(p.tva ?? "0"),
+      seuilAlerte: p.seuilAlerte,
+      seuilCritique: p.seuilCritique,
+      stockMaximum: p.stockMaximum,
+      statutCycleVie: p.statutCycleVie,
+      motifSuspension: p.motifSuspension,
+      dateDiscontinuation: p.dateDiscontinuation,
+      modeleEmballageId: p.modeleEmballageId,
+      statut: p.statut,
+      uniteVente: p.uniteVente,
+      uniteAchat: p.uniteAchat,
+      refOem: p.refOem,
+      refAftermarket: p.refAftermarket,
+      emplacementPrincipalId: p.emplacementPrincipalId,
+      estReconditionnable: p.estReconditionnable,
+      notes: p.notes,
     marque: p.marque,
     referenceFabricant: p.referenceFabricant,
     couleur: p.couleur,
@@ -256,7 +264,11 @@ export const catalogRouter = createTRPCRouter({
     .input(z.object({
       codeBarre: z.string().optional(),
       nomCode: z.string().optional(),
+      // Specs 02 §2.1 : code article métier unique (ex. FIL-HUI-001)
+      codeArticle: z.string().optional(),
       titre: z.string().min(1),
+      // Specs 02 §2.1 : désignation courte
+      designationCourte: z.string().optional(),
       editeur: z.string().optional(),
       etat: z.string().default("neuf"),
       description: z.string().optional(),
@@ -276,10 +288,17 @@ export const catalogRouter = createTRPCRouter({
       statutCycleVie: z.enum(["BROUILLON", "ACTIF", "SUSPENDU", "DISCONTINUE", "ARCHIVE"]).optional(),
       uniteBaseId: z.string().optional(),
       marque: z.string().optional(),
+      // Specs 02 §2.1 : références constructeur
       referenceFabricant: z.string().optional(),
+      refOem: z.string().optional(),
+      refAftermarket: z.string().optional(),
       couleur: z.string().optional(),
       format: z.string().optional(),
       matiereComposition: z.string().optional(),
+      // Specs 02 §2.1 : emplacement principal + reconditionnable + notes
+      emplacementPrincipalId: z.number().int().optional(),
+      estReconditionnable: z.boolean().default(false),
+      notes: z.string().optional(),
       fournisseurs: z.array(z.object({
         fournisseurId: z.number(),
         uniteId: z.string().optional(),
@@ -320,6 +339,17 @@ export const catalogRouter = createTRPCRouter({
       if (inputCodeBarre) {
         const [dupBarcode] = await db.select({ id: produits.id }).from(produits).where(eq(produits.codeBarre, inputCodeBarre)).limit(1);
         if (dupBarcode) throw new TRPCError({ code: "CONFLICT", message: "Ce code-barres est déjà utilisé par un autre produit (RG-010)" });
+      }
+
+      // Specs 02 §2.1 / US1.1 : code article unique (code interne métier ex. FIL-HUI-001)
+      if (values.codeArticle) {
+        const [dupCodeArticle] = await db.select({ id: produits.id }).from(produits).where(eq(produits.codeArticle, values.codeArticle)).limit(1);
+        if (dupCodeArticle) throw new TRPCError({ code: "CONFLICT", message: "Ce code article est déjà utilisé par un autre produit (specs : code unique)" });
+      }
+
+      // Specs : initialiser le dernier prix d'achat au premier prix d'achat saisi
+      if (values.prixAchat && !values.dernierPrixAchat) {
+        values.dernierPrixAchat = values.prixAchat;
       }
 
       let barcode = inputCodeBarre;
@@ -431,7 +461,10 @@ export const catalogRouter = createTRPCRouter({
       id: z.string(),
       codeBarre: z.string().optional(),
       nomCode: z.string().optional(),
+      // Specs 02 §2.1 : code article métier unique
+      codeArticle: z.string().optional(),
       titre: z.string().optional(),
+      designationCourte: z.string().optional(),
       editeur: z.string().optional(),
       etat: z.string().optional(),
       description: z.string().optional(),
@@ -454,9 +487,15 @@ export const catalogRouter = createTRPCRouter({
       uniteBaseId: z.string().optional(),
       marque: z.string().optional(),
       referenceFabricant: z.string().optional(),
+      refOem: z.string().optional(),
+      refAftermarket: z.string().optional(),
       couleur: z.string().optional(),
       format: z.string().optional(),
       matiereComposition: z.string().optional(),
+      // Specs 02 §2.1 : emplacement principal + reconditionnable + notes
+      emplacementPrincipalId: z.number().int().nullable().optional(),
+      estReconditionnable: z.boolean().optional(),
+      notes: z.string().optional(),
       unites: z.array(z.object({
         unite_id: z.string(),
         facteur_conversion: z.number().optional(),
@@ -507,9 +546,19 @@ export const catalogRouter = createTRPCRouter({
         if (dupBarcode) throw new TRPCError({ code: "CONFLICT", message: "Ce code-barres est déjà utilisé par un autre produit (RG-010)" });
       }
 
+      // Specs 02 §2.1 / US1.1 : code article unique (sauf pour ce produit)
+      if (data.codeArticle && data.codeArticle !== old.codeArticle) {
+        const [dupCodeArticle] = await db.select({ id: produits.id }).from(produits).where(and(eq(produits.codeArticle, data.codeArticle), ne(produits.id, Number(id)))).limit(1);
+        if (dupCodeArticle) throw new TRPCError({ code: "CONFLICT", message: "Ce code article est déjà utilisé par un autre produit (specs : code unique)" });
+      }
+
       if (photos !== undefined) (data as any).photos = photos;
       if (data.prixAchat && !(data as any).prixAchatReference) {
         (data as any).prixAchatReference = data.prixAchat;
+      }
+      // Specs : dernier prix d'achat mis à jour quand le prix d'achat change
+      if (data.prixAchat && data.prixAchat !== old.prixAchat) {
+        (data as any).dernierPrixAchat = data.prixAchat;
       }
 
       const result = await db.update(produits)

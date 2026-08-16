@@ -87,6 +87,8 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
   const { data: categories } = api.catalog.listCategories.useQuery();
   const { data: unitesMesure } = api.reference.listUnitesMesure.useQuery();
   const { data: fournisseurs } = api.reference.listFournisseurs.useQuery();
+  // Specs 02 §2.1 : emplacements pour l'emplacement principal de l'article
+  const { data: emplacements } = api.stock.listEmplacements.useQuery({});
 
   const [fournisseurRows, setFournisseurRows] = useState<any[]>(() => {
     if (defaultValues?.fournisseurs?.length) return defaultValues.fournisseurs;
@@ -166,6 +168,9 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
     if (s === 1) {
       if (!formValues.titre?.trim()) newErrors.titre = "Désignation requise";
       if (!formValues.categorieParentId) newErrors.categorieParentId = "Catégorie principale requise";
+      if (typeProduit !== "SERVICE" && formValues.code_article && !/^[A-Z0-9-]{2,}$/.test(String(formValues.code_article).trim())) {
+        newErrors.code_article = "Code article invalide (lettres, chiffres, tirets — ex. FIL-HUI-001)";
+      }
     }
     if (s === 3) {
       const base = unites.find((u) => u.est_unite_base);
@@ -208,6 +213,14 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
       titre: formValues.titre,
       codeBarre: formValues.code_barre || undefined,
       nomCode: formValues.nom_code || undefined,
+      // Specs 02 §2.1 : champs ajoutés
+      codeArticle: formValues.code_article ? String(formValues.code_article).trim().toUpperCase() : undefined,
+      designationCourte: formValues.designation_courte || undefined,
+      refOem: formValues.ref_oem || undefined,
+      refAftermarket: formValues.ref_aftermarket || undefined,
+      emplacementPrincipalId: formValues.emplacement_principal_id ?? undefined,
+      estReconditionnable: !!formValues.est_reconditionnable,
+      notes: formValues.notes || undefined,
       editeur: formValues.editeur || undefined,
       description: formValues.description,
       statut: formValues.statut ?? "actif",
@@ -318,12 +331,25 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
       {/* STEP 1 : Infos générales */}
       {step === 1 && (
         <div className="space-y-4">
-          <div>
-            <Label>Désignation *</Label>
-            <Input value={formValues.titre ?? ""} onChange={(e) => updateFormValue("titre", e.target.value)} placeholder="Ex: Filtre à huile universel" maxLength={150} />
-            {errors.titre && <p className={errorCls}>{errors.titre}</p>}
-          </div>
           <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Désignation *</Label>
+              <Input value={formValues.titre ?? ""} onChange={(e) => updateFormValue("titre", e.target.value)} placeholder="Ex: Filtre à huile universel" maxLength={150} />
+              {errors.titre && <p className={errorCls}>{errors.titre}</p>}
+            </div>
+            <div>
+              <Label>Désignation courte</Label>
+              <Input value={formValues.designation_courte ?? ""} onChange={(e) => updateFormValue("designation_courte", e.target.value)} placeholder="Ex: Filtre à huile" maxLength={200} />
+              <p className="mt-1 text-xs text-muted-foreground">Nom abrégé pour les listes et étiquettes (specs stock).</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <Label>Code article *</Label>
+              <Input value={formValues.code_article ?? ""} onChange={(e) => updateFormValue("code_article", e.target.value.toUpperCase())} placeholder="Ex: FIL-HUI-001" maxLength={100} className="uppercase font-mono" />
+              <p className="mt-1 text-xs text-muted-foreground">Code interne unique (specs : code_article).</p>
+              {errors.code_article && <p className={errorCls}>{errors.code_article}</p>}
+            </div>
             <div>
               <Label>Code-barres</Label>
               <Input value={formValues.code_barre ?? ""} onChange={(e) => updateFormValue("code_barre", e.target.value)} placeholder="EAN-13, code interne…" maxLength={100} />
@@ -382,10 +408,29 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
               </Select>
             </div>
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Référence constructeur</Label>
+              <Input value={formValues.reference_fabricant ?? ""} onChange={(e) => updateFormValue("reference_fabricant", e.target.value)} placeholder="Ex: 90915-YZZD1" maxLength={255} />
+            </div>
+            <div>
+              <Label>Référence OEM</Label>
+              <Input value={formValues.ref_oem ?? ""} onChange={(e) => updateFormValue("ref_oem", e.target.value)} placeholder="Référence d'origine constructeur" maxLength={255} />
+            </div>
+            <div>
+              <Label>Référence aftermarket</Label>
+              <Input value={formValues.ref_aftermarket ?? ""} onChange={(e) => updateFormValue("ref_aftermarket", e.target.value)} placeholder="Référence équivalent après-vente" maxLength={255} />
+            </div>
+          </div>
           <div>
             <Label>Description</Label>
             <textarea value={formValues.description ?? ""} onChange={(e) => updateFormValue("description", e.target.value)} rows={2} maxLength={500}
               className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" placeholder="Compatibilité véhicules, remarques…" />
+          </div>
+          <div>
+            <Label>Notes internes</Label>
+            <textarea value={formValues.notes ?? ""} onChange={(e) => updateFormValue("notes", e.target.value)} rows={1} maxLength={500}
+              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" placeholder="Notes internes (specs stock : notes)" />
           </div>
           <div>
             <Label>Photo produit</Label>
@@ -417,9 +462,9 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
             <p className="mt-1 text-xs text-muted-foreground">jpg, png, max 2 Mo</p>
           </div>
           <div>
-            <Label>Statut</Label>
-            <div className="flex gap-3">
-              {[["actif", "Actif"], ["inactif", "Inactif"]].map(([v, l]) => (
+            <Label>Statut (specs : Actif / Inactif / Obsolète / Hors série)</Label>
+            <div className="flex flex-wrap gap-3">
+              {[["actif", "Actif"], ["inactif", "Inactif"], ["obsolete", "Obsolète"], ["hors_serie", "Hors série"]].map(([v, l]) => (
                 <label key={v} className="flex items-center gap-1.5 text-sm">
                   <input type="radio" name="statut" checked={(formValues.statut ?? "actif") === v} onChange={() => updateFormValue("statut", v)} />
                   {l}
@@ -440,6 +485,34 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
           <div>
             <Label>Référence fabricant</Label>
             <Input value={formValues.reference_fabricant ?? ""} onChange={(e) => updateFormValue("reference_fabricant", e.target.value)} maxLength={255} placeholder="Ex: FH-001, OEM 12345…" />
+          </div>
+          <div>
+            <Label>Référence OEM</Label>
+            <Input value={formValues.ref_oem ?? ""} onChange={(e) => updateFormValue("ref_oem", e.target.value)} maxLength={255} placeholder="Référence d'origine constructeur" />
+          </div>
+          <div>
+            <Label>Référence aftermarket</Label>
+            <Input value={formValues.ref_aftermarket ?? ""} onChange={(e) => updateFormValue("ref_aftermarket", e.target.value)} maxLength={255} placeholder="Référence équivalent après-vente" />
+          </div>
+          <div className="sm:col-span-2">
+            <Label>Emplacement principal</Label>
+            <Select value={formValues.emplacement_principal_id?.toString() ?? ""} onValueChange={(v) => updateFormValue("emplacement_principal_id", v === NO_VALUE ? null : Number(v))}>
+              <SelectTrigger><SelectValue placeholder="Aucun emplacement défini" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_VALUE}>Aucun emplacement</SelectItem>
+                {emplacements?.map((e: any) => (
+                  <SelectItem key={e.id} value={String(e.id)}>{e.code}{e.libelle ? ` — ${e.libelle}` : ""}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="mt-1 text-xs text-muted-foreground">Emplacement de stockage par défaut (specs stock : emplacement_principal).</p>
+          </div>
+          <div className="sm:col-span-2">
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!formValues.est_reconditionnable} onChange={(e) => updateFormValue("est_reconditionnable", e.target.checked)} className="size-4 accent-primary" />
+              Article reconditionnable (fût → unités plus petites — huiles, fluides)
+            </label>
+            <p className="mt-1 text-xs text-muted-foreground">Autorise le reconditionnement dans le module Stock (specs stock : est_reconditionnable).</p>
           </div>
           <div>
             <Label>Couleur</Label>

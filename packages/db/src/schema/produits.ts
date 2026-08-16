@@ -12,6 +12,8 @@ export const produits = pgTable("produits", {
   codeBarre: varchar("code_barre", { length: 100 }).unique().notNull(),
   // Code article métier unique (specs stock : ex. FIL-HUI-001)
   codeArticle: varchar("code_article", { length: 100 }).unique(),
+  // Désignation courte (specs 02 §2.1)
+  designationCourte: varchar("designation_courte", { length: 200 }),
   nomCode: varchar("nom_code", { length: 100 }),
   titre: varchar("titre", { length: 500 }).notNull(),
   editeur: varchar("editeur", { length: 255 }),
@@ -46,9 +48,14 @@ export const produits = pgTable("produits", {
   // Fiche technique pièce / service
   marque: varchar("marque", { length: 255 }),
   referenceFabricant: varchar("reference_fabricant", { length: 255 }),
+  // Références constructeur (specs 02 §2.1 : ref_oem / ref_aftermarket)
+  refOem: varchar("ref_oem", { length: 255 }),
+  refAftermarket: varchar("ref_aftermarket", { length: 255 }),
   couleur: varchar("couleur", { length: 100 }),
   format: varchar("format", { length: 50 }),
   matiereComposition: text("matiere_composition"),
+  // Notes internes (specs 02 §2.1)
+  notes: text("notes"),
   photos: jsonb("photos").$type<string[]>().default([]),
   imageUrl: varchar("image_url", { length: 500 }),
   isActive: boolean("is_active").default(true),
