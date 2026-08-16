@@ -8,6 +8,7 @@ import { ThemeToggle } from "@atelierone/ui";
 import { AppSidebar } from "~/components/layout/AppSidebar";
 import { ModuleGuard } from "~/hooks/usePermissions";
 import { MobileBottomNav } from "~/app/(dashboard)/dashboard/_components/MobileBottomNav";
+import { HelpButton } from "~/components/help/HelpButton";
 
 const SIDEBAR_KEY = "ao.sidebar.collapsed";
 
@@ -105,7 +106,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </Link>
             </nav>
           </div>
-          <ThemeToggle />
+          <div className="flex items-center gap-1">
+            <HelpButton />
+            <ThemeToggle />
+          </div>
         </div>
       </header>
 
