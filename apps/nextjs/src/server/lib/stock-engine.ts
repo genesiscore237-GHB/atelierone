@@ -1,4 +1,4 @@
-import { db, stocks, stocksUnites, mouvementsStock, boiteEnvoi, produitUnites, unitesMesureProduits, produits } from "@atelierone/db";
+import { db, stocks, stocksUnites, mouvementsStock, produitUnites, unitesMesureProduits, produits } from "@atelierone/db";
 import { eq, and } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 
@@ -18,6 +18,9 @@ export const TYPES_MOUVEMENT = {
   AJUSTEMENT_INVENTAIRE_POSITIF: "AJUSTEMENT_INVENTAIRE_POSITIF",
   AJUSTEMENT_INVENTAIRE_NEGATIF: "AJUSTEMENT_INVENTAIRE_NEGATIF",
   CASSE_PERTE: "CASSE_PERTE",
+  PERTE: "PERTE",
+  VOL: "VOL",
+  CASSE: "CASSE",
 } as const;
 
 export type TypeMouvement = (typeof TYPES_MOUVEMENT)[keyof typeof TYPES_MOUVEMENT];
@@ -26,6 +29,16 @@ export const SENS = {
   ENTREE: "E",
   SORTIE: "S",
 } as const;
+
+/** Types de mouvement exigeant un motif écrit (specs : perte / vol / casse / ajustement) */
+export const MOTIF_OBLIGATOIRE_TYPES: TypeMouvement[] = [
+  TYPES_MOUVEMENT.PERTE,
+  TYPES_MOUVEMENT.VOL,
+  TYPES_MOUVEMENT.CASSE,
+  TYPES_MOUVEMENT.CASSE_PERTE,
+  TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_NEGATIF,
+  TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_POSITIF,
+];
 
 type MouvementParams = {
   type: TypeMouvement;
@@ -81,6 +94,18 @@ async function getCoutUnitaireMoyen(tx: Tx, produitId: number, agenceId: number)
 
 export async function enregistrerMouvement(tx: Tx, params: MouvementParams) {
   const qte = Number(params.quantite);
+
+  // Règle métier (specs 05 §3) : motif obligatoire pour perte / vol / casse / ajustement
+  if (
+    MOTIF_OBLIGATOIRE_TYPES.includes(params.type) &&
+    (!params.motif || params.motif.trim().length < 3)
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `Motif obligatoire (min. 3 caractères) pour le type de mouvement « ${params.type} ».`,
+    });
+  }
+
   const stockRow = await verifierStockDisponible(
     tx, params.produitId, params.agenceId,
     qte, params.emplacementId, params.lotId,
@@ -309,6 +334,12 @@ export async function mouvementEntreeUnite(
   return { stockAvant, stockApres };
 }
 
+/**
+ * Opération double atomique : sortie source + entrée cible liées par groupeOperationId.
+ * Supporte le reconditionnement INTER-ARTICLES (fût 200L → bidons 5L) :
+ * - produitCibleId par défaut = produitId (même article, ancien comportement)
+ * - sinon produitCibleId = article destination distinct
+ */
 export async function operationDouble(
   tx: Tx,
   params: {
@@ -320,6 +351,9 @@ export async function operationDouble(
     quantiteSource: number;
     uniteCibleId: string;
     quantiteCible: number;
+    produitCibleId?: number; // article destination (reconditionnement inter-articles)
+    emplacementSourceId?: number;
+    emplacementCibleId?: number;
     motif?: string;
     effectuePar?: number;
     coutUnitaireBase?: number | string;
@@ -327,6 +361,7 @@ export async function operationDouble(
   },
 ) {
   const groupeOperationId = crypto.randomUUID();
+  const produitCibleId = params.produitCibleId ?? params.produitId;
 
   await mouvementSortieUnite(tx, {
     produitId: params.produitId,
@@ -341,7 +376,7 @@ export async function operationDouble(
   });
 
   await mouvementEntreeUnite(tx, {
-    produitId: params.produitId,
+    produitId: produitCibleId,
     agenceId: params.agenceId,
     uniteId: params.uniteCibleId,
     quantite: params.quantiteCible,

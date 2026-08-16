@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TYPES_MOUVEMENT, SENS } from "./stock-engine";
+import { TYPES_MOUVEMENT, SENS, MOTIF_OBLIGATOIRE_TYPES } from "./stock-engine";
 
 describe("stock-engine constants", () => {
   it("TYPES_MOUVEMENT defines all expected movement types", () => {
@@ -16,6 +16,10 @@ describe("stock-engine constants", () => {
     expect(TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_POSITIF).toBe("AJUSTEMENT_INVENTAIRE_POSITIF");
     expect(TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_NEGATIF).toBe("AJUSTEMENT_INVENTAIRE_NEGATIF");
     expect(TYPES_MOUVEMENT.CASSE_PERTE).toBe("CASSE_PERTE");
+    // Specs stock 05 §3 : types distincts Perte / Vol / Casse
+    expect(TYPES_MOUVEMENT.PERTE).toBe("PERTE");
+    expect(TYPES_MOUVEMENT.VOL).toBe("VOL");
+    expect(TYPES_MOUVEMENT.CASSE).toBe("CASSE");
   });
 
   it("SENS defines entry and exit", () => {
@@ -25,8 +29,17 @@ describe("stock-engine constants", () => {
 
   it("all movement types are accounted for", () => {
     const values = Object.values(TYPES_MOUVEMENT);
-    expect(values).toHaveLength(13);
+    expect(values).toHaveLength(16);
     const unique = new Set(values);
-    expect(unique.size).toBe(13);
+    expect(unique.size).toBe(16);
+  });
+
+  it("MOTIF_OBLIGATOIRE_TYPES couvre perte/vol/casse/ajustements", () => {
+    expect(MOTIF_OBLIGATOIRE_TYPES).toContain(TYPES_MOUVEMENT.PERTE);
+    expect(MOTIF_OBLIGATOIRE_TYPES).toContain(TYPES_MOUVEMENT.VOL);
+    expect(MOTIF_OBLIGATOIRE_TYPES).toContain(TYPES_MOUVEMENT.CASSE);
+    expect(MOTIF_OBLIGATOIRE_TYPES).toContain(TYPES_MOUVEMENT.CASSE_PERTE);
+    expect(MOTIF_OBLIGATOIRE_TYPES).toContain(TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_POSITIF);
+    expect(MOTIF_OBLIGATOIRE_TYPES).toContain(TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_NEGATIF);
   });
 });

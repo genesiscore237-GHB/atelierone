@@ -1,7 +1,7 @@
-import { z } from "zod";
+﻿import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
 import { db, stocks, produits, categories, unitesMesure, mouvementsStock, inventaires, inventairesSessions, deconditionnements, reconditionnements, emplacements, stocksUnites, ventesLignes, ventes } from "@atelierone/db";
-import { eq, and, desc, sql, lt, lte, gte, isNotNull, isNull, count, sum, avg, asc } from "drizzle-orm";
+import { eq, and, desc, sql, lt, lte, gte, isNotNull, isNull, count, sum, avg, asc, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSortieUnite, mouvementEntreeUnite, TYPES_MOUVEMENT } from "~/server/lib/stock-engine";
 import { PertesService } from "~/server/lib/pertes-service";
@@ -171,7 +171,7 @@ export const stockRouter = createTRPCRouter({
           titre: first?.titre ?? null,
           codeBarre: first?.codeBarre ?? null,
           quantite: data.totalQte,
-          message: `${data.count} ajustements en 7j sur ${first?.titre ?? "produit #" + pid} (total ${data.totalQte} unités)`,
+          message: `${data.count} ajustements en 7j sur ${first?.titre ?? "produit #" + pid} (total ${data.totalQte} unitÃ©s)`,
           date: first?.dateMouvement ?? new Date(),
         });
       }
@@ -186,7 +186,7 @@ export const stockRouter = createTRPCRouter({
         titre: s.titre,
         codeBarre: s.codeBarre,
         quantite: s.quantite,
-        message: `Sortie volumineuse: ${s.titre ?? "produit #" + s.produitId}, ${s.quantite} unités`,
+        message: `Sortie volumineuse: ${s.titre ?? "produit #" + s.produitId}, ${s.quantite} unitÃ©s`,
         date: s.dateMouvement,
       });
     }
@@ -367,7 +367,7 @@ export const stockRouter = createTRPCRouter({
           uniteCibleId: input.uniteCibleId,
           quantiteCible: input.quantiteGeneree,
           motif: input.motif,
-          effectuePar: ctx.user.id,
+          effectuePar: Number(ctx.user.id),
           getFacteurVersBase: (uniteId) => getFacteurVersBase(tx, Number(input.produitId), uniteId),
         });
 
@@ -378,7 +378,7 @@ export const stockRouter = createTRPCRouter({
           quantiteSource: String(input.quantiteSource),
           uniteCibleId: input.uniteCibleId,
           quantiteGeneree: String(input.quantiteGeneree),
-          effectuePar: ctx.user.id,
+          effectuePar: Number(ctx.user.id),
           motif: input.motif || null,
         }) as any;
       }) as any;
@@ -425,7 +425,7 @@ export const stockRouter = createTRPCRouter({
         agenceId: ctx.user.agenceId,
         libelle: input.libelle || `Inventaire du ${new Date().toLocaleDateString("fr-FR")}`,
         statut: "en_cours",
-        effectuePar: ctx.user.id,
+        effectuePar: Number(ctx.user.id),
         notes: input.notes || null,
       }).returning() as any;
       return { id: String(session.id) };
@@ -513,7 +513,7 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(inventairesSessions.id, Number(input.sessionId)), eq(inventairesSessions.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "Session introuvable" });
-        if (session.statut !== "en_cours") throw new TRPCError({ code: "BAD_REQUEST", message: "Session déjà terminée" });
+        if (session.statut !== "en_cours") throw new TRPCError({ code: "BAD_REQUEST", message: "Session dÃ©jÃ  terminÃ©e" });
 
         const [stockRow] = await tx.select()
           .from(stocks)
@@ -543,7 +543,7 @@ export const stockRouter = createTRPCRouter({
             quantiteReelle: input.quantiteReelle,
             ecart: ecart,
             commentaire: input.commentaire || null,
-            effectuePar: ctx.user.id,
+            effectuePar: Number(ctx.user.id),
           }) as any;
         }
         return { quantiteTheorique: qteTheorique, quantiteReelle: input.quantiteReelle, ecart };
@@ -559,7 +559,7 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(inventairesSessions.id, Number(input.id)), eq(inventairesSessions.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "Session introuvable" });
-        if (session.statut !== "en_cours") throw new TRPCError({ code: "BAD_REQUEST", message: "Session déjà terminée" });
+        if (session.statut !== "en_cours") throw new TRPCError({ code: "BAD_REQUEST", message: "Session dÃ©jÃ  terminÃ©e" });
 
         const comptages = await tx.select()
           .from(inventaires)
@@ -585,7 +585,7 @@ export const stockRouter = createTRPCRouter({
               quantite: Math.abs(Number(c.ecart)),
               type: "AJUSTEMENT_INVENTAIRE_NEGATIF",
               motif: `Correction inventaire session #${session.id}`,
-              effectuePar: ctx.user.id,
+              effectuePar: Number(ctx.user.id),
               reference: `INV-${session.id}`,
               referenceType: "INVENTAIRE",
             })
@@ -603,7 +603,7 @@ export const stockRouter = createTRPCRouter({
               reference: `INV-${session.id}`,
               referenceType: "INVENTAIRE",
               motif: `Correction inventaire session #${session.id}`,
-              effectuePar: ctx.user.id,
+              effectuePar: Number(ctx.user.id),
             }) as any;
           }
 
@@ -618,7 +618,7 @@ export const stockRouter = createTRPCRouter({
                 coutUnitaire,
                 montantPerte,
                 typePerte: "INVENTAIRE_NEGATIF",
-                motif: `Écart d'inventaire négatif (session ${session.id})`,
+                motif: `Ã‰cart d'inventaire nÃ©gatif (session ${session.id})`,
                 reference: `INV-${session.id}`,
                 referenceType: "INVENTAIRE",
                 effectuePar: Number(ctx.user.id),
@@ -671,7 +671,7 @@ export const stockRouter = createTRPCRouter({
           stockAvant: String(stockAvant),
           stockApres: String(stockApres),
           motif: input.motif || "Ajustement manuel",
-          effectuePar: ctx.user.id,
+          effectuePar: Number(ctx.user.id),
         }) as any;
 
         return { stockAvant, stockApres, ecart };
@@ -726,7 +726,7 @@ export const stockRouter = createTRPCRouter({
             quantite: input.quantite,
             type: typeMvt as any,
             motif: input.motif,
-            effectuePar: ctx.user.id,
+            effectuePar: Number(ctx.user.id),
             coutUnitaireBase: input.coutUnitaireBase,
             audit: false,
           });
@@ -738,7 +738,7 @@ export const stockRouter = createTRPCRouter({
             quantite: input.quantite,
             type: typeMvt as any,
             motif: input.motif,
-            effectuePar: ctx.user.id,
+            effectuePar: Number(ctx.user.id),
             coutUnitaireBase: input.coutUnitaireBase,
             audit: false,
           });
@@ -751,7 +751,7 @@ export const stockRouter = createTRPCRouter({
             quantite: qteBase,
             type: typeMvt as any,
             motif: input.motif,
-            effectuePar: ctx.user.id,
+            effectuePar: Number(ctx.user.id),
           })
           : [];
 
@@ -765,7 +765,7 @@ export const stockRouter = createTRPCRouter({
           emplacementId: input.emplacementId,
           coutUnitaireBase: input.coutUnitaireBase,
           motif: input.motif,
-          effectuePar: ctx.user.id,
+          effectuePar: Number(ctx.user.id),
           audit: fifoAllocs.length === 0,
         });
 
@@ -791,9 +791,9 @@ export const stockRouter = createTRPCRouter({
       }) as any;
     }),
 
-  // Déclaration d'un aléa (vol, casse, avarie, rebut) : débit du stock du lot
-  // (FIFO) + mouvement + perte financière liée au lot — impact direct sur le
-  // bénéfice estimé du lot.
+  // DÃ©claration d'un alÃ©a (vol, casse, avarie, rebut) : dÃ©bit du stock du lot
+  // (FIFO) + mouvement + perte financiÃ¨re liÃ©e au lot â€” impact direct sur le
+  // bÃ©nÃ©fice estimÃ© du lot.
   declarerPerte: requirePermissionProcedure("stock.modifier")
     .input(z.object({
       produitId: z.string(),
@@ -801,7 +801,7 @@ export const stockRouter = createTRPCRouter({
       uniteId: z.string(),
       quantite: z.number().positive(),
       lotId: z.number().optional(),
-      motif: z.string().min(3, "Motif requis (min. 3 caractères)"),
+      motif: z.string().min(3, "Motif requis (min. 3 caractÃ¨res)"),
     }))
     .mutation(async ({ ctx, input }) => {
       return db.transaction(async (tx) => {
@@ -892,7 +892,7 @@ export const stockRouter = createTRPCRouter({
           quantite: input.quantite,
           type: TYPES_MOUVEMENT.TRANSFERT_SORTIE,
           motif: "Mise en rayon",
-          effectuePar: ctx.user.id,
+          effectuePar: Number(ctx.user.id),
           groupeOperationId,
         });
 
@@ -903,7 +903,7 @@ export const stockRouter = createTRPCRouter({
           quantite: input.quantite,
           type: TYPES_MOUVEMENT.TRANSFERT_ENTREE,
           motif: "Mise en rayon",
-          effectuePar: ctx.user.id,
+          effectuePar: Number(ctx.user.id),
           groupeOperationId,
         });
 
@@ -915,8 +915,8 @@ export const stockRouter = createTRPCRouter({
           quantite: input.quantite,
           uniteId: input.uniteId,
           emplacementId: null,
-          motif: `Sortie stock général vers rayon #${input.emplacementRayonId}`,
-          effectuePar: ctx.user.id,
+          motif: `Sortie stock gÃ©nÃ©ral vers rayon #${input.emplacementRayonId}`,
+          effectuePar: Number(ctx.user.id),
           groupeOperationId,
         });
 
@@ -928,8 +928,8 @@ export const stockRouter = createTRPCRouter({
           quantite: input.quantite,
           uniteId: input.uniteId,
           emplacementId: input.emplacementRayonId,
-          motif: `Entrée rayon #${input.emplacementRayonId}`,
-          effectuePar: ctx.user.id,
+          motif: `EntrÃ©e rayon #${input.emplacementRayonId}`,
+          effectuePar: Number(ctx.user.id),
           groupeOperationId,
         });
 
@@ -962,8 +962,8 @@ export const stockRouter = createTRPCRouter({
           uniteId: input.uniteId,
           quantite: input.quantite,
           type: TYPES_MOUVEMENT.TRANSFERT_SORTIE,
-          motif: `Transfert rayon #${input.emplacementSourceId} → #${input.emplacementCibleId}`,
-          effectuePar: ctx.user.id,
+          motif: `Transfert rayon #${input.emplacementSourceId} â†’ #${input.emplacementCibleId}`,
+          effectuePar: Number(ctx.user.id),
           groupeOperationId,
         });
 
@@ -973,8 +973,8 @@ export const stockRouter = createTRPCRouter({
           uniteId: input.uniteId,
           quantite: input.quantite,
           type: TYPES_MOUVEMENT.TRANSFERT_ENTREE,
-          motif: `Transfert rayon #${input.emplacementSourceId} → #${input.emplacementCibleId}`,
-          effectuePar: ctx.user.id,
+          motif: `Transfert rayon #${input.emplacementSourceId} â†’ #${input.emplacementCibleId}`,
+          effectuePar: Number(ctx.user.id),
           groupeOperationId,
         });
 
@@ -987,7 +987,7 @@ export const stockRouter = createTRPCRouter({
           uniteId: input.uniteId,
           emplacementId: input.emplacementSourceId,
           motif: `Sortie rayon #${input.emplacementSourceId} vers rayon #${input.emplacementCibleId}`,
-          effectuePar: ctx.user.id,
+          effectuePar: Number(ctx.user.id),
           groupeOperationId,
         });
 
@@ -999,8 +999,8 @@ export const stockRouter = createTRPCRouter({
           quantite: input.quantite,
           uniteId: input.uniteId,
           emplacementId: input.emplacementCibleId,
-          motif: `Entrée rayon #${input.emplacementCibleId} depuis rayon #${input.emplacementSourceId}`,
-          effectuePar: ctx.user.id,
+          motif: `EntrÃ©e rayon #${input.emplacementCibleId} depuis rayon #${input.emplacementSourceId}`,
+          effectuePar: Number(ctx.user.id),
           groupeOperationId,
         });
 
@@ -1105,78 +1105,283 @@ export const stockRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const rows = await db.select({
         id: reconditionnements.id,
-        produitId: reconditionnements.produitId,
+        produitSourceId: reconditionnements.produitSourceId,
+        produitCibleId: reconditionnements.produitCibleId,
         quantiteSource: reconditionnements.quantiteSource,
         uniteSourceId: reconditionnements.uniteSourceId,
         uniteCibleId: reconditionnements.uniteCibleId,
         quantiteGeneree: reconditionnements.quantiteGeneree,
+        facteurConversion: reconditionnements.facteurConversion,
         motif: reconditionnements.motif,
         date: reconditionnements.dateReconditionnement,
-        titre: produits.titre,
-        sourceCode: unitesMesure.code,
+        sourceTitre: produits.titre,
+        sourceCode: produits.codeArticle,
+        sourceUnite: unitesMesure.code,
       })
         .from(reconditionnements)
-        .innerJoin(produits, eq(reconditionnements.produitId, produits.id))
+        .innerJoin(produits, eq(reconditionnements.produitSourceId, produits.id))
         .innerJoin(unitesMesure, eq(reconditionnements.uniteSourceId, unitesMesure.id))
         .where(eq(reconditionnements.agenceId, ctx.user.agenceId))
         .orderBy(desc(reconditionnements.dateReconditionnement))
         .limit(input?.limit ?? 50)
         .offset(input?.offset ?? 0);
 
+      // Titres des articles cibles (peut Ãªtre le mÃªme article en intra-article)
+      const cibleIds = [...new Set(rows.map(r => r.produitCibleId).filter(Boolean))];
+      const cibles = cibleIds.length
+        ? await db.select({ id: produits.id, titre: produits.titre }).from(produits).where(inArray(produits.id, cibleIds))
+        : [];
+      const cibleTitre = new Map(cibles.map(c => [c.id, c.titre]));
+
       return rows.map(r => ({
         id: String(r.id),
-        produitId: String(r.produitId),
-        produitTitre: r.titre,
-        quantiteSource: r.quantiteSource,
-        uniteSourceCode: r.sourceCode,
+        produitSourceId: String(r.produitSourceId),
+        produitCibleId: r.produitCibleId ? String(r.produitCibleId) : null,
+        sourceTitre: r.sourceTitre,
+        cibleTitre: r.produitCibleId ? cibleTitre.get(r.produitCibleId) ?? r.sourceTitre : r.sourceTitre,
+        sourceCode: r.sourceCode ?? r.sourceTitre,
+        quantiteSource: String(r.quantiteSource),
+        uniteSourceCode: r.sourceUnite,
         uniteCibleCode: "",
         quantiteGeneree: Number(r.quantiteGeneree),
+        facteurConversion: r.facteurConversion ? Number(r.facteurConversion) : null,
         motif: r.motif,
         date: r.date,
       }));
     }),
 
+  /**
+   * RECONDITIONNEMENT â€” transforme une grande unitÃ© en unitÃ©s plus petites.
+   * Inter-articles : fÃ»t 200L (produitSourceId) â†’ bidons 5L (produitCibleId).
+   * Intra-article (compat) : produitCibleId omis â†’ mÃªme article.
+   * AtomicitÃ© : deux mouvements liÃ©s par groupeOperationId (specs 04 Â§3, 05 Â§5).
+   */
   createReconditionnement: requirePermissionProcedure("stock.modifier")
     .input(z.object({
-      produitId: z.string(),
+      produitSourceId: z.number().int(),
       uniteSourceId: z.string(),
       quantiteSource: z.number().positive(),
+      produitCibleId: z.number().int().optional(),
       uniteCibleId: z.string(),
-      motif: z.string().optional(),
+      motif: z.string().min(3).optional().or(z.literal("")),
     }))
     .mutation(async ({ ctx, input }) => {
       return db.transaction(async (tx) => {
-        const facteur = await getFacteurVersBase(tx as any, Number(input.produitId), input.uniteSourceId);
-        const facteurCible = await getFacteurVersBase(tx as any, Number(input.produitId), input.uniteCibleId);
-        const quantiteGeneree = (input.quantiteSource * facteur) / facteurCible;
+        const produitCibleId = input.produitCibleId ?? input.produitSourceId;
 
-        await operationDouble(tx as any, {
-          produitId: Number(input.produitId),
+        // Ratio explicite dÃ©rivÃ© des facteurs d'unitÃ©s des deux articles
+        const facteurSource = await getFacteurVersBase(tx as any, input.produitSourceId, input.uniteSourceId);
+        const facteurCible = await getFacteurVersBase(tx as any, produitCibleId, input.uniteCibleId);
+
+        // Validation ratio (specs : alerte ou refus si incohÃ©rent)
+        if (facteurCible <= 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Facteur de conversion cible invalide." });
+        }
+        const ratio = facteurSource / facteurCible;
+        const quantiteGeneree = Math.floor(input.quantiteSource * ratio);
+        if (quantiteGeneree <= 0) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Reconditionnement impossible : la quantitÃ© gÃ©nÃ©rÃ©e est 0 (ratio ${ratio.toFixed(4)}). VÃ©rifiez les unitÃ©s et facteurs.`,
+          });
+        }
+
+        const { groupeOperationId } = await operationDouble(tx as any, {
+          produitId: input.produitSourceId,
+          produitCibleId,
           agenceId: ctx.user.agenceId,
           typeSortie: TYPES_MOUVEMENT.RECONDITIONNEMENT_SORTIE as any,
           typeEntree: TYPES_MOUVEMENT.RECONDITIONNEMENT_ENTREE as any,
           uniteSourceId: input.uniteSourceId,
           quantiteSource: input.quantiteSource,
           uniteCibleId: input.uniteCibleId,
-          quantiteCible: Math.floor(quantiteGeneree),
-          motif: input.motif,
-          effectuePar: ctx.user.id,
-          getFacteurVersBase: (uniteId) => getFacteurVersBase(tx as any, Number(input.produitId), uniteId),
+          quantiteCible: quantiteGeneree,
+          motif: input.motif || undefined,
+          effectuePar: Number(ctx.user.id),
+          getFacteurVersBase: (uniteId) => getFacteurVersBase(tx as any, produitCibleId, uniteId),
         });
 
         await tx.insert(reconditionnements).values({
           agenceId: ctx.user.agenceId,
-          produitId: Number(input.produitId),
+          produitSourceId: input.produitSourceId,
           uniteSourceId: input.uniteSourceId,
-          quantiteSource: input.quantiteSource,
+          quantiteSource: String(input.quantiteSource),
+          produitCibleId: input.produitCibleId ?? null,
           uniteCibleId: input.uniteCibleId,
-          quantiteGeneree: String(Math.floor(quantiteGeneree)),
-          facteurConversion: facteurCible,
-          effectuePar: ctx.user.id,
+          quantiteGeneree: String(quantiteGeneree),
+          facteurConversion: String(ratio),
+          effectuePar: Number(ctx.user.id),
           motif: input.motif || null,
-        }) as any;
+          groupeOperationId,
+        } as any);
 
-        return { quantiteGeneree: Math.floor(quantiteGeneree), uniteCible: input.uniteCibleId };
+        return { quantiteGeneree, uniteCible: input.uniteCibleId, ratio, groupeOperationId };
+      }) as any;
+    }),
+
+  // â”€â”€â”€ Emplacements (specs 03 : codification ZONE-ALLEE-RAYON-NIVEAU) â”€â”€â”€
+
+  listEmplacements: stockProcedure
+    .input(z.object({ search: z.string().optional(), type: z.string().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const safe = input ?? {};
+      const conditions = [eq(emplacements.agenceId, ctx.user.agenceId)];
+      if (safe.type) conditions.push(eq(emplacements.type, safe.type));
+      const rows = await db
+        .select()
+        .from(emplacements)
+        .where(and(...conditions))
+        .orderBy(emplacements.code);
+      const filtered = safe.search
+        ? rows.filter(r =>
+            r.code.toLowerCase().includes(safe.search!.toLowerCase()) ||
+            (r.libelle ?? "").toLowerCase().includes(safe.search!.toLowerCase())
+          )
+        : rows;
+      return filtered;
+    }),
+
+  createEmplacement: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      code: z.string().min(1).regex(/^[A-Z0-9]{2,4}(-[A-Z0-9]{1,4}){1,4}$/, "Format attendu : ZONE-ALLEE-RAYON-NIVEAU (ex. MAG-A-01-03, EXT-PNEU)"),
+      libelle: z.string().optional(),
+      type: z.string().default("RAYON"),
+      parentId: z.number().int().optional(),
+      categorieId: z.number().int().optional(),
+      isActive: z.boolean().default(true),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [existing] = await db
+        .select({ id: emplacements.id })
+        .from(emplacements)
+        .where(and(eq(emplacements.agenceId, ctx.user.agenceId), eq(emplacements.code, input.code)))
+        .limit(1);
+      if (existing) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `L'emplacement Â« ${input.code} Â» existe dÃ©jÃ .` });
+      }
+      const [row] = await db.insert(emplacements).values({
+        agenceId: ctx.user.agenceId,
+        code: input.code,
+        libelle: input.libelle ?? null,
+        type: input.type,
+        parentId: input.parentId ?? null,
+        profondeur: input.parentId ? 1 : 0,
+        categorieId: input.categorieId ?? null,
+        isActive: input.isActive,
+      } as any).returning();
+      return row;
+    }),
+
+  updateEmplacement: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      id: z.number().int(),
+      libelle: z.string().optional(),
+      type: z.string().optional(),
+      isActive: z.boolean().optional(),
+      categorieId: z.number().int().nullable().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { id, ...rest } = input;
+      await db.update(emplacements).set({ ...rest, updatedAt: new Date() } as any).where(eq(emplacements.id, id));
+      return { success: true };
+    }),
+
+  // â”€â”€â”€ Contenu d'un emplacement (specs 07 : recherche emplacement) â”€â”€â”€
+  getEmplacementContenu: stockProcedure
+    .input(z.object({ emplacementId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await db
+        .select({
+          produitId: stocks.produitId,
+          titre: produits.titre,
+          codeBarre: produits.codeBarre,
+          codeArticle: produits.codeArticle,
+          quantite: stocks.quantite,
+          cmup: stocks.coutUnitaireMoyen,
+          lotId: stocks.lotId,
+        })
+        .from(stocks)
+        .innerJoin(produits, eq(stocks.produitId, produits.id))
+        .where(and(eq(stocks.agenceId, ctx.user.agenceId), eq(stocks.emplacementId, input.emplacementId)))
+        .orderBy(produits.titre);
+      return rows.map(r => ({ ...r, quantite: Number(r.quantite), valeur: Number(r.quantite) * Number(r.cmup ?? 0) }));
+    }),
+
+  // â”€â”€â”€ Inventaire initial (specs 04 Â§1 : stock de dÃ©part historisÃ©) â”€â”€â”€
+  createInventaireInitial: requirePermissionProcedure("stock.inventaire")
+    .input(z.object({
+      libelle: z.string().default("Inventaire initial"),
+      lignes: z.array(z.object({
+        produitId: z.number().int(),
+        emplacementId: z.number().int().optional(),
+        quantitePhysique: z.number().min(0),
+      })).min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [session] = await tx.insert(inventairesSessions).values({
+          agenceId: ctx.user.agenceId,
+          libelle: input.libelle,
+          statut: "en_cours",
+          effectuePar: Number(ctx.user.id),
+          notes: "Inventaire initial â€” stock de dÃ©part",
+        } as any).returning();
+
+        const groupeOperationId = crypto.randomUUID();
+        let comptees = 0;
+
+        for (const ligne of input.lignes) {
+          // QuantitÃ© thÃ©orique actuelle (souvent 0 au dÃ©marrage)
+          const [theo] = await tx
+            .select({ quantite: stocks.quantite })
+            .from(stocks)
+            .where(and(
+              eq(stocks.produitId, ligne.produitId),
+              eq(stocks.agenceId, ctx.user.agenceId),
+              ligne.emplacementId ? eq(stocks.emplacementId, ligne.emplacementId) : isNull(stocks.emplacementId),
+            ))
+            .limit(1);
+          const quantiteTheorique = theo ? Number(theo.quantite) : 0;
+          const ecart = ligne.quantitePhysique - quantiteTheorique;
+
+          await tx.insert(inventaires).values({
+            sessionId: session.id,
+            produitId: ligne.produitId,
+            agenceId: ctx.user.agenceId,
+            quantiteTheorique: String(quantiteTheorique),
+            quantiteReelle: String(ligne.quantitePhysique),
+            ecart: String(ecart),
+            commentaire: "Inventaire initial",
+            effectuePar: Number(ctx.user.id),
+          } as any);
+
+          if (ecart !== 0) {
+            const type = ecart > 0
+              ? TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_POSITIF
+              : TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_NEGATIF;
+            await enregistrerMouvement(tx as any, {
+              type: type as any,
+              sens: ecart > 0 ? "E" : "S",
+              produitId: ligne.produitId,
+              agenceId: ctx.user.agenceId,
+              quantite: Math.abs(ecart),
+              emplacementId: ligne.emplacementId ?? null,
+              groupeOperationId,
+              reference: `INV-INIT-${session.id}`,
+              referenceType: "INVENTAIRE",
+              documentLie: `INV-INIT-${session.id}`,
+              motif: `Inventaire initial (Ã©cart ${ecart > 0 ? "+" : ""}${ecart})`,
+              effectuePar: Number(ctx.user.id),
+            });
+          }
+          comptees++;
+        }
+
+        await tx.update(inventairesSessions)
+          .set({ statut: "valide", validePar: ctx.user.id, dateFin: new Date() } as any)
+          .where(eq(inventairesSessions.id, session.id));
+
+        return { sessionId: session.id, lignesComptees: comptees };
       }) as any;
     }),
 });
