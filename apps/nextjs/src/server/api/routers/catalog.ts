@@ -23,14 +23,14 @@ const photoDataUrl = z.string().refine(v => v.startsWith("data:image/") && v.len
 const photosInput = z.array(photoDataUrl).max(3, "3 photos maximum").optional();
 
 const unitesInput = z.array(z.object({
-  unite_id: z.string().min(1, "Unité requise"),
+  unite_id: z.string().min(1, "Unité requise").nullable(),
   facteur_conversion: z.number().int("Le facteur de conversion doit être un entier (RG-017)").positive("Le facteur de conversion doit être strictement positif (RG-017)").default(1),
   prix_achat: z.number().optional(),
   prix_vente: z.number().optional(),
   est_unite_achat_defaut: z.boolean().optional(),
   est_unite_vente_defaut: z.boolean().optional(),
   est_unite_base: z.boolean().optional(),
-})).superRefine((units, ctx) => {
+})).transform(units => units.filter(u => u.unite_id !== null && u.unite_id !== "")).superRefine((units, ctx) => {
   const bases = units.filter(u => u.est_unite_base);
   if (bases.length === 0) ctx.addIssue({ code: "custom", message: "Au moins une unité de base est requise (RG-012)" });
   if (bases.length > 1) ctx.addIssue({ code: "custom", message: "Une seule unité de base autorisée" });
@@ -497,14 +497,14 @@ export const catalogRouter = createTRPCRouter({
       estReconditionnable: z.boolean().optional(),
       notes: z.string().optional(),
       unites: z.array(z.object({
-        unite_id: z.string(),
-        facteur_conversion: z.number().optional(),
-        prix_achat: z.number().optional(),
-        prix_vente: z.number().optional(),
-        est_unite_achat_defaut: z.boolean().optional(),
-        est_unite_vente_defaut: z.boolean().optional(),
-        est_unite_base: z.boolean().optional(),
-      })).optional(),
+          unite_id: z.string().nullable(),
+          facteur_conversion: z.number().optional(),
+          prix_achat: z.number().optional(),
+          prix_vente: z.number().optional(),
+          est_unite_achat_defaut: z.boolean().optional(),
+          est_unite_vente_defaut: z.boolean().optional(),
+          est_unite_base: z.boolean().optional(),
+        })).optional(),
       fournisseurs: z.array(z.object({
         fournisseurId: z.number(),
         uniteId: z.string().optional(),
@@ -587,12 +587,14 @@ export const catalogRouter = createTRPCRouter({
       }
 
       if (unites) {
-        // Désactivation des unités retirées de la liste (les unités encore
-        // présentes sont réactivées/upsertées ci-dessous pour respecter
-        // unq_produit_unites_produit_unite)
-        await db.update(produitUnites)
-          .set({ statut: "INACTIF", dateFinValidite: new Date() })
-          .where(and(eq(produitUnites.produitId, Number(id)), eq(produitUnites.statut, "ACTIF")));
+          // Ignorer les lignes d'unités vides (unite_id null) — cohérent avec unitesInput
+          unites = unites.filter(u => u.unite_id !== null && u.unite_id !== "");
+          // Désactivation des unités retirées de la liste (les unités encore
+          // présentes sont réactivées/upsertées ci-dessous pour respecter
+          // unq_produit_unites_produit_unite)
+          await db.update(produitUnites)
+            .set({ statut: "INACTIF", dateFinValidite: new Date() })
+            .where(and(eq(produitUnites.produitId, Number(id)), eq(produitUnites.statut, "ACTIF")));
         const base = unites.find(u => u.est_unite_base);
         let basePuid: string | null = null;
         if (base) {

@@ -252,15 +252,17 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
       matiereComposition: formValues.matiere_composition,
     };
     payload.uniteBaseId = unites.find((u) => u.est_unite_base)?.unite_id;
-    payload.unites = unites.map((u) => ({
-      unite_id: u.unite_id,
-      facteur_conversion: u.facteur_conversion,
-      prix_achat: u.prix_achat,
-      prix_vente: u.prix_vente,
-      est_unite_achat_defaut: u.est_unite_achat_defaut,
-      est_unite_vente_defaut: u.est_unite_vente_defaut,
-      est_unite_base: u.est_unite_base,
-    }));
+    payload.unites = unites
+      .filter((u) => u.unite_id) // ignorer les lignes d'unités non remplies
+      .map((u) => ({
+        unite_id: u.unite_id,
+        facteur_conversion: u.facteur_conversion,
+        prix_achat: u.prix_achat,
+        prix_vente: u.prix_vente,
+        est_unite_achat_defaut: u.est_unite_achat_defaut,
+        est_unite_vente_defaut: u.est_unite_vente_defaut,
+        est_unite_base: u.est_unite_base,
+      }));
     await onSave(payload);
     try { localStorage.removeItem(DRAFT_KEY); } catch {}
   };
