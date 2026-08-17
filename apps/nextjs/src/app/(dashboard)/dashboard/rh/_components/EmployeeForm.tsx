@@ -127,8 +127,8 @@ function AffectationSection({
 export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeFormProps) {
   const isEdit = employeeId !== null;
 
-  const { data: existing } = api.rh.get.useQuery(
-    { id: employeeId! },
+  const { data: existing, error: getError } = api.rh.get.useQuery(
+    { id: String(employeeId) },
     { enabled: isEdit && isOpen },
   );
 
@@ -217,7 +217,7 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
     if (isEdit && employeeId) {
       updateMutation.mutate(
         {
-          id: employeeId,
+          id: String(employeeId),
           civilite: form.civilite || null,
           nom: form.nom, prenom: form.prenom, fonction: form.fonction,
           typeEmploye: form.typeEmploye as any,
