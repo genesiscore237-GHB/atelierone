@@ -49,6 +49,10 @@ export const lignesOrdreReparation = pgTable("lignes_ordre_reparation", {
   technicienId: integer("technicien_id").references(() => employes.id),
   dureeHeures: numeric("duree_heures", { precision: 6, scale: 2 }),
   statut: varchar("statut", { length: 30 }).default("a_faire"), // a_faire | en_cours | fait | valide
+  // specs V2 §04 processus 8 — pièces fournies par le client : traçabilité sans impact stock
+  fournieParClient: boolean("fournie_par_client").default(false),
+  remiseAuClient: boolean("remise_au_client").default(false),
+  motifClient: text("motif_client"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

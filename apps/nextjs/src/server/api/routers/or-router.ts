@@ -11,6 +11,7 @@ import {
 } from "@atelierone/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
 
 /**
  * MODULE ORDRE DE RÉPARATION (OR) — specs GPJ / Architecture §3.2.
@@ -331,6 +332,52 @@ export const orRouter = createTRPCRouter({
       await db.delete(lignesOrdreReparation).where(eq(lignesOrdreReparation.id, input.id));
       if (ligne) await recalculerTotaux(ctx.user.agenceId, ligne.ordreId);
       return { success: true };
+    }),
+
+  // ─── Pièces fournies par le client (specs V2 §04 processus 8, §05 règle 10) ───
+  addPieceClient: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      produitId: z.number().int().optional(),
+      libelle: z.string().max(255).optional(),
+      quantite: z.number().positive(),
+      motif: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const libelle = input.libelle?.trim();
+      if (!input.produitId && !libelle) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Choisissez un article ou saisissez un libellé." });
+      }
+      return db.transaction(async (tx) => {
+        return tracerPieceClient(tx as any, {
+          orId: input.orId,
+          agenceId: ctx.user.agenceId,
+          produitId: input.produitId,
+          libelle: libelle ?? "",
+          quantite: input.quantite,
+          motif: input.motif ?? "Pièce fournie par le client",
+          effectuePar: Number(ctx.user.id),
+        });
+      }) as any;
+    }),
+
+  remettrePieceClient: requirePermissionProcedure("or.modifier")
+    .input(z.object({ ligneId: z.number().int(), orId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        return remettrePieceClient(tx as any, {
+          ligneId: input.ligneId,
+          orId: input.orId,
+          agenceId: ctx.user.agenceId,
+          effectuePar: Number(ctx.user.id),
+        });
+      }) as any;
+    }),
+
+  listerPiecesClient: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      return listerPiecesClientService(input.orId, ctx.user.agenceId);
     }),
 });
 

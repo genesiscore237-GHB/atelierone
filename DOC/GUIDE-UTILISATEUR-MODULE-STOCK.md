@@ -225,6 +225,14 @@ Dans la fiche article, onglet unités :
 
 > 💡 Un kit ne peut pas être composant de lui-même, et les doublons de composition sont refusés. La composition se gère dans la fiche article.
 
+### 8sexies. Pièces fournies par le client — specs V2 processus 8, règle 10
+
+1. Dans la fiche OR, section **« Pièces fournies par le client »** : choisissez l'article (optionnel), saisissez le **libellé** et la **quantité**.
+2. **« Enregistrer la pièce client »** : la pièce est tracée sur l'OR (type PIECE_CLIENT) **sans toucher au stock** — elle appartient au client.
+3. En fin de travaux, **« Remettre l'ancienne pièce au client »** : la ligne passe en « remise au client » (l'ancienne pièce déposée est rendue).
+
+> 💡 Règle 10 (specs V2) : les pièces fournies par le client ne sont ni décomptées du stock ni facturées — uniquement tracées sur l'OR.
+
 ---
 
 ## 9. Comment enregistrer une perte / un vol

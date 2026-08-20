@@ -178,6 +178,7 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [reservationForm, setReservationForm] = useState({ produitId: 0, quantite: 1, motif: "" });
   const [coreForm, setCoreForm] = useState({ produitId: 0, quantite: 1, valeurCore: 0, motif: "" });
   const [kitForm, setKitForm] = useState({ kitId: 0, quantite: 1, motif: "" });
+  const [pcForm, setPcForm] = useState({ produitId: 0, libelle: "", quantite: 1, motif: "" });
 
   const addLigne = api.or.addLigne.useMutation({
     onSuccess: () => { toast.success("Ligne ajoutée"); utils.or.getById.invalidate(); },
@@ -213,6 +214,15 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
     onError: (e) => toast.error(e.message),
   });
   const { data: kitsDispo } = api.catalog.listKits.useQuery();
+  const { data: piecesClient } = api.or.listerPiecesClient.useQuery({ orId: id }, { enabled: !!id });
+  const addPieceClient = api.or.addPieceClient.useMutation({
+    onSuccess: (r: any) => { toast.success(`Pièce client enregistrée (${r.libelle}) — stock non impacté`); utils.or.listerPiecesClient.invalidate(); utils.or.getById.invalidate(); setPcForm({ produitId: 0, libelle: "", quantite: 1, motif: "" }); },
+    onError: (e) => toast.error(e.message),
+  });
+  const remettrePiece = api.or.remettrePieceClient.useMutation({
+    onSuccess: () => { toast.success("Ancienne pièce remise au client"); utils.or.listerPiecesClient.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
   const sortirKit = api.stock.sortirKit.useMutation({
     onSuccess: () => { toast.success("Kit sorti (composants décomptés)"); utils.or.getById.invalidate(); utils.stock.listMouvementsParOR.invalidate(); setKitForm({ kitId: 0, quantite: 1, motif: "" }); },
     onError: (e) => toast.error(e.message),
@@ -466,6 +476,48 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
           </Button>
         </div>
         <p className="mt-2 text-[10px] text-muted-foreground">Le kit et ses composants (composition définie dans la fiche article) sont sortis du stock avec des mouvements liés à l'OR.</p>
+      </div>
+
+      {/* Pièces fournies par le client (specs V2 §04 processus 8, règle 10) */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+          <ClipboardList size={14} className="text-primary" /> Pièces fournies par le client
+        </div>
+        <div className="grid gap-2 lg:grid-cols-4">
+          <select className="rounded-lg border border-border bg-background px-3 py-2 text-sm" value={pcForm.produitId} onChange={(e) => setPcForm({ ...pcForm, produitId: Number(e.target.value) })}>
+            <option value={0}>Article du catalogue (optionnel)...</option>
+            {listeProduits.map((p: any) => <option key={p.id} value={Number(p.id)}>{p.titre}</option>)}
+          </select>
+          <Input placeholder="Libellé (ex. frein fourni par le client)" value={pcForm.libelle} onChange={(e) => setPcForm({ ...pcForm, libelle: e.target.value })} />
+          <Input type="number" min={1} placeholder="Qté" value={pcForm.quantite} onChange={(e) => setPcForm({ ...pcForm, quantite: Number(e.target.value) })} />
+          <Button onClick={() => { if (!pcForm.produitId && !pcForm.libelle.trim()) { toast.error("Choisissez un article ou un libellé"); return; } addPieceClient.mutate({ orId: id, produitId: pcForm.produitId || undefined, libelle: pcForm.libelle.trim() || undefined, quantite: pcForm.quantite, motif: pcForm.motif || undefined }); }} disabled={addPieceClient.isPending} className="gap-2">
+            <ClipboardList size={14} /> {addPieceClient.isPending ? "Enregistrement..." : "Enregistrer la pièce client"}
+          </Button>
+        </div>
+        <p className="mt-2 text-[10px] text-muted-foreground">Pièce apportée par le client : tracée sur l'OR (type PIECE_CLIENT) sans décrémenter le stock.</p>
+        <div className="mt-3 space-y-2">
+          {!piecesClient?.length ? (
+            <p className="text-sm text-muted-foreground">Aucune pièce fournie par le client pour cet OR.</p>
+          ) : (
+            piecesClient.map((pc: any) => (
+              <div key={pc.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+                <div>
+                  <span className="font-medium">{pc.libelle}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">× {pc.quantite}</span>
+                  <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${pc.remiseAuClient ? "bg-success/10 text-success-foreground" : "bg-warning/10 text-warning-foreground"}`}>
+                    {pc.remiseAuClient ? "Ancienne pièce remise au client" : "En attente"}
+                  </span>
+                  {pc.motifClient && <span className="ml-2 text-xs text-muted-foreground">· {pc.motifClient}</span>}
+                </div>
+                {!pc.remiseAuClient && (
+                  <Button size="sm" variant="outline" className="text-xs" onClick={() => remettrePiece.mutate({ ligneId: pc.id, orId: id })} disabled={remettrePiece.isPending}>
+                    Remettre l'ancienne pièce au client
+                  </Button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

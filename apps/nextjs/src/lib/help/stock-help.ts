@@ -222,6 +222,30 @@ export const STOCK_HELP_FICHES: HelpFiche[] = [
     ],
   },
   {
+    id: "stock-pieces-client",
+    titre: "Pièces fournies par le client",
+    courte: "Tracé des pièces apportées par le client (type PIECE_CLIENT) sans impact sur le stock.",
+    priorite: "P1",
+    route: "/dashboard/ordres-reparation",
+    prerequis: ["Un OR ouvert", "Permission or.modifier (chef d'atelier)"],
+    fonctionnalites: [
+      "Enregistrement d'une pièce fournie par le client (libellé libre ou article du catalogue)",
+      "Aucun impact stock : la pièce appartient au client, elle est seulement tracée sur l'OR",
+      "Remise au client de l'ancienne pièce en fin de travaux (remise_au_client)",
+      "Refus : ni libellé ni article, quantité ≤ 0, OR clos",
+    ],
+    etapes: [
+      { titre: "Enregistrer la pièce", detail: "Fiche OR → Pièces fournies par le client → article (optionnel) + libellé + quantité → « Enregistrer la pièce client »." },
+      { titre: "Remettre l'ancienne pièce", detail: "En fin de travaux, cliquer « Remettre l'ancienne pièce au client » : la ligne passe en « remise au client »." },
+    ],
+    regles: [
+      { titre: "Règle 10 (specs V2)", detail: "Les pièces fournies par le client sont tracées sans décrémentation de stock ni facturation." },
+    ],
+    faq: [
+      { q: "Le stock est-il affecté ?", r: "Non : la pièce fournie par le client ne passe par aucun mouvement de stock." },
+    ],
+  },
+  {
     id: "stock-inventaire",
     titre: "Inventaire (initial & cyclique)",
     courte: "Comptage physique, écarts théorique vs réel, ajustements automatiques.",
