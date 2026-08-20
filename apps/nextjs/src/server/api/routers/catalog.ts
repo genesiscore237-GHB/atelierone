@@ -73,6 +73,8 @@ function formatProduct(p: typeof produits.$inferSelect) {
       estReconditionnable: p.estReconditionnable,
       origineQualite: p.origineQualite,
       dlcJours: p.dlcJours,
+      estCore: p.estCore,
+      valeurCore: p.valeurCore,
       notes: p.notes,
     marque: p.marque,
     referenceFabricant: p.referenceFabricant,
@@ -304,6 +306,9 @@ export const catalogRouter = createTRPCRouter({
       origineQualite: z.enum(["CONSTRUCTEUR", "OEM", "AFTERMARKET", "AUTRE"]).optional(),
       // Specs V2 §02/§05 : DLC — délai d'alerte avant péremption (jours)
       dlcJours: z.number().int().positive().optional(),
+      // Specs V2 §02 règle 9 : échange standard (core) + valeur du dépôt
+      estCore: z.boolean().default(false),
+      valeurCore: z.number().nonnegative().optional(),
       notes: z.string().optional(),
       fournisseurs: z.array(z.object({
         fournisseurId: z.number(),
@@ -505,6 +510,9 @@ export const catalogRouter = createTRPCRouter({
       origineQualite: z.enum(["CONSTRUCTEUR", "OEM", "AFTERMARKET", "AUTRE"]).optional(),
       // Specs V2 §02/§05 : DLC — délai d'alerte avant péremption (jours)
       dlcJours: z.number().int().positive().optional(),
+      // Specs V2 §02 règle 9 : échange standard (core) + valeur du dépôt
+      estCore: z.boolean().optional(),
+      valeurCore: z.number().nonnegative().optional(),
       notes: z.string().optional(),
       unites: z.array(z.object({
           unite_id: z.string().nullable(),

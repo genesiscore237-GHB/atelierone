@@ -6,6 +6,7 @@ import { TRPCError } from "@trpc/server";
 import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSortieUnite, mouvementEntreeUnite, TYPES_MOUVEMENT, sortirPourOR, retourAtelier, reserverStock, libererStock } from "~/server/lib/stock-engine";
 import { PertesService } from "~/server/lib/pertes-service";
 import { sortirStockFIFO, verifierDispoNonPerimee, listerAlertesDlc } from "~/server/lib/lot-service";
+import { creerEchangeCore, retournerCoquille, listerCores } from "~/server/lib/core-service";
 import { ordresReparation, vehicules, produits as produitsTable } from "@atelierone/db";
 
 export const stockRouter = createTRPCRouter({
@@ -1608,6 +1609,64 @@ export const stockRouter = createTRPCRouter({
     .input(z.object({ seuilJours: z.number().int().positive().default(30) }))
     .query(async ({ ctx, input }) => {
       return listerAlertesDlc(ctx.user.agenceId, input.seuilJours);
+    }),
+
+  // ─── Échange standard (CORES) : specs V2 §04 processus 8, §05 règle 9 ───
+  creerEchangeCore: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      produitId: z.number().int(),
+      quantite: z.number().positive(),
+      valeurCore: z.number().nonnegative(),
+      motif: z.string().min(3).optional().or(z.literal("")),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [or] = await tx
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, vehiculeId: ordresReparation.vehiculeId, statut: ordresReparation.statut })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Ordre de réparation introuvable." });
+        if (or.statut === "annule" || or.statut === "termine" || or.statut === "facture") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de créer un échange sur un OR ${or.statut}.` });
+        }
+        await verifierDispoNonPerimee(tx as any, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+        });
+        return creerEchangeCore(tx as any, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+          orId: or.id,
+          vehiculeId: or.vehiculeId,
+          numeroOR: or.numero,
+          valeurCore: input.valeurCore,
+          motif: input.motif || undefined,
+          effectuePar: Number(ctx.user.id),
+        });
+      }) as any;
+    }),
+
+  retournerCoquille: requirePermissionProcedure("stock.modifier")
+    .input(z.object({ echangeId: z.number().int(), perdue: z.boolean().default(false) }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        return retournerCoquille(tx as any, {
+          echangeId: input.echangeId,
+          agenceId: ctx.user.agenceId,
+          perdue: input.perdue,
+          effectuePar: Number(ctx.user.id),
+        });
+      }) as any;
+    }),
+
+  listerCores: requirePermissionProcedure("stock.consulter")
+    .input(z.object({ orId: z.number().int().optional(), statut: z.string().optional(), limit: z.number().int().default(100) }))
+    .query(async ({ ctx, input }) => {
+      return listerCores(ctx.user.agenceId, input);
     }),
 });
 

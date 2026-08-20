@@ -110,6 +110,7 @@ Pour chaque pièce : **Articles / Catalogue → + Nouveau** :
 - **Origine / Qualité** (specs V2) : Constructeur (Genuine), OEM équivalent, Aftermarket ou Autre — reflète la qualité de la pièce
 - **DLC** (specs V2) : délai d'alerte avant péremption en jours (fluides, colles…) — le tableau de bord alerte avant péremption et **la sortie est bloquée si le stock est périmé** (specs V2 §05 règle 8)
 - **Équivalences / Supersession** : dans la fiche article, ajouter la pièce remplaçante (SUPERSESSION) ou interchangeables (même pièce sous une autre référence)
+- **Échange standard (core)** : cocher pour les pièces en échange standard (alternateurs, démarreurs…) et saisir la **valeur du dépôt** (coquille) — specs V2 §05 règle 9
 
 ### 4.3 Créer les unités de conversion
 
@@ -203,6 +204,16 @@ Dans la fiche article, onglet unités :
 6. Si la pièce n'est finalement pas utilisée → bouton **« Libérer la réservation »** : le stock disponible est réintégré (mouvement **LIBERATION_RESERVATION**).
 
 > 💡 La réservation permet d'attribuer une pièce rare/coûteuse à un OR sans la déduire du stock tant que la vente n'est pas confirmée. Une sortie est refusée si le stock disponible (actuel − réservé) est insuffisant.
+
+### 8quater. Échange standard (cores) — specs V2 processus 8
+
+1. **Prérequis** : l'article doit être marqué **« Pièce en échange standard (core) »** avec une **valeur de dépôt** (fiche article).
+2. Dans la fiche OR, section **« Échanges standard (cores) »** : sélectionnez le produit core + la quantité + le montant du dépôt.
+3. **« Créer l'échange »** : la pièce **neuve sort du stock** (mouvement SORTIE_OR lié à l'OR) et le **dépôt est enregistré** (statut EN_ATTENTE).
+4. Quand le client ramène l'ancienne pièce (coquille) : **« Rendre la coquille »** → dépôt remboursé (COQUILLE_RETOURNEE).
+5. Si la coquille n'est pas rendue : **« Perdue »** → le dépôt est conservé (COQUILLE_PERDUE).
+
+> 💡 Le suivi du dépôt est obligatoire (specs V2 §05 règle 9) : chaque échange est tracé avec l'OR et le mouvement de sortie.
 
 ---
 

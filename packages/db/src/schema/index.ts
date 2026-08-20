@@ -2,6 +2,7 @@ export { agences } from "./agences";
 export { categories } from "./categories";
 export { produits } from "./produits";
 export { articleEquivalences } from "./article_equivalences";
+export { echangesCores } from "./echanges_cores";
 export { unitesMesure } from "./unites_mesure";
 export { unitesMesureProduits } from "./unites_mesure_produits";
 export { codesBarres } from "./codes_barres";

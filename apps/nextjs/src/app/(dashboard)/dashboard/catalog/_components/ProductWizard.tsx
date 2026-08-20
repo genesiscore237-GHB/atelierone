@@ -222,6 +222,8 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
       origineQualite: formValues.origine_qualite || "AUTRE",
       dlcJours: formValues.dlc_jours || undefined,
       estReconditionnable: !!formValues.est_reconditionnable,
+      estCore: !!formValues.est_core,
+      valeurCore: formValues.valeur_core || undefined,
       notes: formValues.notes || undefined,
       editeur: formValues.editeur || undefined,
       description: formValues.description,
@@ -535,6 +537,19 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
               Article reconditionnable (fût → unités plus petites — huiles, fluides)
             </label>
             <p className="mt-1 text-xs text-muted-foreground">Autorise le reconditionnement dans le module Stock (specs stock : est_reconditionnable).</p>
+          </div>
+          <div className="sm:col-span-2">
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!formValues.est_core} onChange={(e) => updateFormValue("est_core", e.target.checked)} className="size-4 accent-primary" />
+              Pièce en échange standard (core) — specs V2
+            </label>
+            <p className="mt-1 text-xs text-muted-foreground">Autorise la sortie en échange standard avec suivi du dépôt (coquille) à retourner.</p>
+            {!!formValues.est_core && (
+              <div className="mt-2">
+                <Label>Valeur du dépôt (coquille) — FCFA</Label>
+                <Input type="number" min={0} value={formValues.valeur_core ?? ""} onChange={(e) => updateFormValue("valeur_core", e.target.value ? Number(e.target.value) : null)} placeholder="ex. 25000" />
+              </div>
+            )}
           </div>
           <div>
             <Label>Couleur</Label>

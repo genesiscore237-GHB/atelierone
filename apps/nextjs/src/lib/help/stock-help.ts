@@ -160,6 +160,38 @@ export const STOCK_HELP_FICHES: HelpFiche[] = [
     ],
   },
   {
+    id: "stock-cores",
+    titre: "Échange standard (cores)",
+    courte: "Pièces en échange standard : sortie de la pièce neuve liée à l'OR + suivi du dépôt de coquille.",
+    priorite: "P1",
+    route: "/dashboard/ordres-reparation",
+    prerequis: [
+      "Un article marqué « Pièce en échange standard (core) » avec une valeur de dépôt (fiche article)",
+      "Un OR ouvert et de l'article en stock",
+      "Permission stock.modifier (magasinier)",
+    ],
+    fonctionnalites: [
+      "Création d'échange : sort la pièce neuve (mouvement SORTIE_OR lié à l'OR) et enregistre le dépôt (valeur_core)",
+      "Suivi des dépôts : liste des échanges par OR, statut EN_ATTENTE / COQUILLE_RETOURNEE / COQUILLE_PERDUE",
+      "Retour de coquille : rembourse le dépôt (statut COQUILLE_RETOURNEE + date)",
+      "Coquille perdue : dépôt conservé (statut COQUILLE_PERDUE)",
+      "Refus : article non core, dépôt nul, échange déjà traité, OR clos",
+    ],
+    etapes: [
+      { titre: "Marquer un article core", detail: "Fiche article → cocher « Pièce en échange standard (core) » + saisir la valeur du dépôt." },
+      { titre: "Créer l'échange", detail: "Dans la fiche OR → Échanges standard (cores) → produit core + quantité + dépôt → Créer l'échange : la pièce neuve sort du stock." },
+      { titre: "Retourner la coquille", detail: "Quand le client ramène l'ancienne pièce → « Rendre la coquille » (dépôt remboursé) ou « Perdue » (dépôt conservé)." },
+    ],
+    regles: [
+      { titre: "Règle 9 (specs V2)", detail: "Le dépôt (valeur_core) est suivi jusqu'au retour de la coquille ; il est remboursé au retour, conservé si la coquille est perdue." },
+      { titre: "Traçabilité", detail: "L'échange est lié à l'OR (or_id) et à un mouvement SORTIE_OR (mouvement_id)." },
+    ],
+    faq: [
+      { q: "Où voir les coquilles en attente ?", r: "Dans la fiche OR → section Échanges standard (cores) : les coquilles à rendre sont en EN_ATTENTE (orange)." },
+      { q: "Puis-je faire un échange sans dépôt ?", r: "Non : la valeur du dépôt doit être positive (saisie sur l'article core)." },
+    ],
+  },
+  {
     id: "stock-inventaire",
     titre: "Inventaire (initial & cyclique)",
     courte: "Comptage physique, écarts théorique vs réel, ajustements automatiques.",

@@ -74,6 +74,8 @@ function mapProductToDefaults(product: any) {
     origine_qualite: product.origineQualite ?? "AUTRE",
     dlc_jours: product.dlcJours ?? null,
     est_reconditionnable: product.estReconditionnable ?? false,
+    est_core: product.estCore ?? false,
+    valeur_core: product.valeurCore ?? null,
     notes: product.notes ?? "",
     unites,
   };

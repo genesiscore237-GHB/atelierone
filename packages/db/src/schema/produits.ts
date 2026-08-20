@@ -50,6 +50,9 @@ export const produits = pgTable("produits", {
   origineQualite: varchar("origine_qualite", { length: 20 }).default("AUTRE"),
   // Specs V2 §02/§05 : DLC — délai d'alerte avant péremption (jours) pour fluides, colles…
   dlcJours: integer("dlc_jours"),
+  // Specs V2 §02 règle 9 : échange standard — pièce en échange standard (core) + valeur du dépôt
+  estCore: boolean("est_core").default(false),
+  valeurCore: numeric("valeur_core", { precision: 12, scale: 2 }),
   // Fiche technique pièce / service
   marque: varchar("marque", { length: 255 }),
   referenceFabricant: varchar("reference_fabricant", { length: 255 }),

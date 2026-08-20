@@ -395,6 +395,7 @@ function ApercuTab({ product, stock, arbre }: { product: any; stock: any; arbre?
                 <>
                   <Row label="Origine / Qualité" value={product.origineQualite === "CONSTRUCTEUR" ? "Constructeur (Genuine)" : product.origineQualite === "OEM" ? "OEM équivalent" : product.origineQualite === "AFTERMARKET" ? "Aftermarket" : product.origineQualite === "AUTRE" ? "Autre" : "—"} />
                   <Row label="DLC (alerte avant péremption)" value={product.dlcJours ? `${product.dlcJours} jour(s)` : "Non concerné"} />
+                  <Row label="Échange standard (core)" value={product.estCore ? `Oui — dépôt ${Number(product.valeurCore ?? 0).toLocaleString("fr-FR")} F` : "Non"} />
                   <Row label="Marque" value={product.marque ?? "—"} />
                   <Row label="Réf. OEM" value={product.refOem ?? "—"} />
                   <Row label="Réf. Aftermarket" value={product.refAftermarket ?? "—"} />

@@ -12,6 +12,7 @@ import {
   Search,
   Undo2,
   Wrench,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -175,6 +176,7 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [sortieForm, setSortieForm] = useState({ produitId: 0, quantite: 1, motif: "" });
   const [retourForm, setRetourForm] = useState({ produitId: 0, quantite: 1, motif: "" });
   const [reservationForm, setReservationForm] = useState({ produitId: 0, quantite: 1, motif: "" });
+  const [coreForm, setCoreForm] = useState({ produitId: 0, quantite: 1, valeurCore: 0, motif: "" });
 
   const addLigne = api.or.addLigne.useMutation({
     onSuccess: () => { toast.success("Ligne ajoutée"); utils.or.getById.invalidate(); },
@@ -198,6 +200,15 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
   });
   const liberer = api.stock.libererStock.useMutation({
     onSuccess: (r: any) => { toast.success(`Réservation libérée (dispo ${r.disponible})`); utils.or.getById.invalidate(); utils.stock.listMouvementsParOR.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const { data: coresOR } = api.stock.listerCores.useQuery({ orId: id }, { enabled: !!id });
+  const creerCore = api.stock.creerEchangeCore.useMutation({
+    onSuccess: (r: any) => { toast.success(`Échange core créé (dépôt ${r.echangeId})`); utils.stock.listerCores.invalidate(); utils.or.getById.invalidate(); utils.stock.listMouvementsParOR.invalidate(); setCoreForm({ produitId: 0, quantite: 1, valeurCore: 0, motif: "" }); },
+    onError: (e) => toast.error(e.message),
+  });
+  const retournerCore = api.stock.retournerCoquille.useMutation({
+    onSuccess: () => { toast.success("Coquille traitée"); utils.stock.listerCores.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
   const { data: mvts } = api.stock.listMouvementsParOR.useQuery({ orId: id });
@@ -385,6 +396,51 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* Échanges standard (cores) — specs V2 processus 8 */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+          <RefreshCw size={14} className="text-primary" /> Échanges standard (cores)
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-2">
+            <select className="rounded-lg border border-border bg-background px-3 py-2 text-sm" value={coreForm.produitId} onChange={(e) => { const p = listeProduits.find((x: any) => Number(x.id) === Number(e.target.value)); setCoreForm({ ...coreForm, produitId: Number(e.target.value), valeurCore: p?.valeurCore ? Number(p.valeurCore) : 0 }); }}>
+              <option value={0}>Pièce en échange standard (core)...</option>
+              {listeProduits.filter((p: any) => p.estCore).map((p: any) => <option key={p.id} value={Number(p.id)}>{p.titre}</option>)}
+            </select>
+            <div className="grid grid-cols-3 gap-2">
+              <Input type="number" min={1} placeholder="Qté" value={coreForm.quantite} onChange={(e) => setCoreForm({ ...coreForm, quantite: Number(e.target.value) })} />
+              <Input type="number" min={0} placeholder="Dépôt (F)" value={coreForm.valeurCore || ""} onChange={(e) => setCoreForm({ ...coreForm, valeurCore: Number(e.target.value) })} />
+              <Input placeholder="Motif" value={coreForm.motif} onChange={(e) => setCoreForm({ ...coreForm, motif: e.target.value })} />
+            </div>
+            <Button onClick={() => { if (!coreForm.produitId) { toast.error("Produit core requis"); return; } creerCore.mutate({ orId: id, produitId: coreForm.produitId, quantite: coreForm.quantite, valeurCore: coreForm.valeurCore, motif: coreForm.motif || undefined }); }} disabled={creerCore.isPending} className="gap-2">
+              <RefreshCw size={14} /> {creerCore.isPending ? "Création..." : "Créer l'échange (sort la pièce neuve)"}
+            </Button>
+            <p className="text-[10px] text-muted-foreground">La pièce neuve est sortie du stock (SORTIE_OR) et le dépôt (valeur_core) est enregistré jusqu'au retour de la coquille.</p>
+          </div>
+          <div className="space-y-2">
+            {!coresOR?.length ? (
+              <p className="text-sm text-muted-foreground">Aucun échange pour cet OR.</p>
+            ) : (
+              coresOR.map((c: any) => (
+                <div key={c.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+                  <div>
+                    <span className="font-medium">{c.produitTitre}</span>
+                    <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${c.statut === "EN_ATTENTE" ? "bg-warning/10 text-warning-foreground" : "bg-success/10 text-success-foreground"}`}>{c.statut === "EN_ATTENTE" ? "Coquille à rendre" : c.statut === "COQUILLE_RETOURNEE" ? "Coquille rendue" : "Coquille perdue"}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">dépôt {Number(c.valeurCore).toLocaleString("fr-FR")} F × {c.quantite}</span>
+                  </div>
+                  {c.statut === "EN_ATTENTE" && (
+                    <div className="flex gap-1.5 shrink-0">
+                      <Button size="sm" variant="outline" className="text-xs" onClick={() => retournerCore.mutate({ echangeId: c.id, perdue: false })} disabled={retournerCore.isPending}>Rendre la coquille</Button>
+                      <Button size="sm" variant="ghost" className="text-xs text-destructive" onClick={() => retournerCore.mutate({ echangeId: c.id, perdue: true })} disabled={retournerCore.isPending}>Perdue</Button>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
