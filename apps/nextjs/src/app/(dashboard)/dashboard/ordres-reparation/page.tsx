@@ -174,6 +174,7 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
 
   const [sortieForm, setSortieForm] = useState({ produitId: 0, quantite: 1, motif: "" });
   const [retourForm, setRetourForm] = useState({ produitId: 0, quantite: 1, motif: "" });
+  const [reservationForm, setReservationForm] = useState({ produitId: 0, quantite: 1, motif: "" });
 
   const addLigne = api.or.addLigne.useMutation({
     onSuccess: () => { toast.success("Ligne ajoutée"); utils.or.getById.invalidate(); },
@@ -189,6 +190,14 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
   });
   const retour = api.stock.retourAtelier.useMutation({
     onSuccess: (r: any) => { toast.success(`Pièce réintégrée (stock ${r.stockApres})`); utils.or.getById.invalidate(); utils.stock.listMouvementsParOR.invalidate(); setRetourForm({ produitId: 0, quantite: 1, motif: "" }); },
+    onError: (e) => toast.error(e.message),
+  });
+  const reserver = api.stock.reserverStock.useMutation({
+    onSuccess: (r: any) => { toast.success(`Pièce réservée (dispo ${r.disponible})`); utils.or.getById.invalidate(); utils.stock.listMouvementsParOR.invalidate(); setReservationForm({ produitId: 0, quantite: 1, motif: "" }); },
+    onError: (e) => toast.error(e.message),
+  });
+  const liberer = api.stock.libererStock.useMutation({
+    onSuccess: (r: any) => { toast.success(`Réservation libérée (dispo ${r.disponible})`); utils.or.getById.invalidate(); utils.stock.listMouvementsParOR.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
   const { data: mvts } = api.stock.listMouvementsParOR.useQuery({ orId: id });
@@ -238,8 +247,8 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
         </div>
       </div>
 
-      {/* Sortie / Retour de pièces */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* Sortie / Retour / Réservation de pièces */}
+      <div className="grid gap-4 lg:grid-cols-3">
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
             <Package size={14} className="text-primary" /> Sortir une pièce (liée à l'OR)
@@ -275,6 +284,31 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <Button onClick={() => { if (!retourForm.produitId) { toast.error("Produit requis"); return; } retour.mutate({ orId: id, produitId: retourForm.produitId, quantite: retourForm.quantite, motif: retourForm.motif || undefined }); }} disabled={retour.isPending} className="gap-2">
               <Undo2 size={14} /> {retour.isPending ? "Retour..." : "Réintégrer au stock"}
             </Button>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+            <Package size={14} className="text-info-foreground" /> Réservation de pièce (pour l'OR)
+          </div>
+          <div className="grid gap-2">
+            <select className="rounded-lg border border-border bg-background px-3 py-2 text-sm" value={reservationForm.produitId} onChange={(e) => setReservationForm({ ...reservationForm, produitId: Number(e.target.value) })}>
+              <option value={0}>Produit...</option>
+              {listeProduits.map((p: any) => <option key={p.id} value={Number(p.id)}>{p.titre}</option>)}
+            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <Input type="number" min={1} placeholder="Quantité" value={reservationForm.quantite} onChange={(e) => setReservationForm({ ...reservationForm, quantite: Number(e.target.value) })} />
+              <Input placeholder="Motif (min 3)" value={reservationForm.motif} onChange={(e) => setReservationForm({ ...reservationForm, motif: e.target.value })} />
+            </div>
+            <Button onClick={() => { if (!reservationForm.produitId) { toast.error("Produit requis"); return; } reserver.mutate({ orId: id, produitId: reservationForm.produitId, quantite: reservationForm.quantite, motif: reservationForm.motif || undefined }); }} disabled={reserver.isPending} className="gap-2">
+              <Package size={14} /> {reserver.isPending ? "Réservation..." : "Réserver la pièce"}
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5 text-xs"
+              onClick={() => { if (!reservationForm.produitId) { toast.error("Produit requis"); return; } liberer.mutate({ orId: id, produitId: reservationForm.produitId, quantite: reservationForm.quantite, motif: "Libération manuelle" }); }}
+              disabled={liberer.isPending}>
+              Libérer la réservation
+            </Button>
+            <p className="text-[10px] text-muted-foreground">La réservation met la pièce de côté (stock disponible − réservé). À libérer si la pièce n'est finalement pas utilisée.</p>
           </div>
         </div>
       </div>

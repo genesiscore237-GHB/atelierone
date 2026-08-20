@@ -3,7 +3,7 @@ import { createTRPCRouter, protectedProcedure, stockProcedure, requirePermission
 import { db, stocks, produits, categories, unitesMesure, mouvementsStock, inventaires, inventairesSessions, deconditionnements, reconditionnements, emplacements, stocksUnites, ventesLignes, ventes } from "@atelierone/db";
 import { eq, and, desc, sql, lt, lte, gte, isNotNull, isNull, count, sum, avg, asc, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSortieUnite, mouvementEntreeUnite, TYPES_MOUVEMENT, sortirPourOR, retourAtelier } from "~/server/lib/stock-engine";
+import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSortieUnite, mouvementEntreeUnite, TYPES_MOUVEMENT, sortirPourOR, retourAtelier, reserverStock, libererStock } from "~/server/lib/stock-engine";
 import { PertesService } from "~/server/lib/pertes-service";
 import { sortirStockFIFO } from "~/server/lib/lot-service";
 import { ordresReparation, vehicules, produits as produitsTable } from "@atelierone/db";
@@ -1519,6 +1519,75 @@ export const stockRouter = createTRPCRouter({
         .where(and(eq(mouvementsStock.orId, input.orId), eq(mouvementsStock.agenceId, ctx.user.agenceId)))
         .orderBy(desc(mouvementsStock.dateMouvement));
       return rows.map((r) => ({ ...r, quantite: Number(r.quantite), stockAvant: Number(r.stockAvant), stockApres: Number(r.stockApres) }));
+    }),
+
+  // ─── Réservation de stock pour un OR (specs V2 §04 processus 5) ───
+  reserverStock: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      produitId: z.number().int(),
+      quantite: z.number().positive(),
+      uniteId: z.string().optional(),
+      emplacementId: z.number().int().optional(),
+      motif: z.string().min(3).optional().or(z.literal("")),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [or] = await tx
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, vehiculeId: ordresReparation.vehiculeId, statut: ordresReparation.statut })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Ordre de réparation introuvable." });
+        if (or.statut === "annule" || or.statut === "termine" || or.statut === "facture") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de réserver des pièces sur un OR ${or.statut}.` });
+        }
+        return await reserverStock(tx as any, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+          orId: or.id,
+          vehiculeId: or.vehiculeId,
+          numeroOR: or.numero,
+          uniteId: input.uniteId,
+          emplacementId: input.emplacementId,
+          motif: input.motif || undefined,
+          effectuePar: Number(ctx.user.id),
+        });
+      }) as any;
+    }),
+
+  // ─── Libération de réservation (specs V2 §04 processus 5) ───
+  libererStock: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      produitId: z.number().int(),
+      quantite: z.number().positive(),
+      uniteId: z.string().optional(),
+      emplacementId: z.number().int().optional(),
+      motif: z.string().min(3).optional().or(z.literal("")),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [or] = await tx
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, vehiculeId: ordresReparation.vehiculeId })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Ordre de réparation introuvable." });
+        return await libererStock(tx as any, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+          orId: or.id,
+          vehiculeId: or.vehiculeId,
+          numeroOR: or.numero,
+          uniteId: input.uniteId,
+          emplacementId: input.emplacementId,
+          motif: input.motif || undefined,
+          effectuePar: Number(ctx.user.id),
+        });
+      }) as any;
     }),
 });
 

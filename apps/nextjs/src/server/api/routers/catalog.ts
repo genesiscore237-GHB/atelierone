@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { createTRPCRouter, protectedProcedure, adminProcedure, stockProcedure } from "~/server/api/trpc";
-import { db, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, modelesEmballage, fournisseurs, produitsFournisseurs, agences } from "@atelierone/db";
+import { createTRPCRouter, protectedProcedure, adminProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
+import { db, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, modelesEmballage, fournisseurs, produitsFournisseurs, agences, articleEquivalences } from "@atelierone/db";
 import { eq, ilike, and, desc, sql, inArray, ne, getTableColumns, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { generateBarcode, autoGenerateBarcode, ensureBarcodeSequence } from "@atelierone/db/utils";
@@ -71,6 +71,7 @@ function formatProduct(p: typeof produits.$inferSelect) {
       refAftermarket: p.refAftermarket,
       emplacementPrincipalId: p.emplacementPrincipalId,
       estReconditionnable: p.estReconditionnable,
+      origineQualite: p.origineQualite,
       notes: p.notes,
     marque: p.marque,
     referenceFabricant: p.referenceFabricant,
@@ -298,6 +299,8 @@ export const catalogRouter = createTRPCRouter({
       // Specs 02 §2.1 : emplacement principal + reconditionnable + notes
       emplacementPrincipalId: z.number().int().optional(),
       estReconditionnable: z.boolean().default(false),
+      // Specs V2 §02 : origine / qualité (Constructeur / OEM / Aftermarket / Autre)
+      origineQualite: z.enum(["CONSTRUCTEUR", "OEM", "AFTERMARKET", "AUTRE"]).optional(),
       notes: z.string().optional(),
       fournisseurs: z.array(z.object({
         fournisseurId: z.number(),
@@ -495,6 +498,8 @@ export const catalogRouter = createTRPCRouter({
       // Specs 02 §2.1 : emplacement principal + reconditionnable + notes
       emplacementPrincipalId: z.number().int().nullable().optional(),
       estReconditionnable: z.boolean().optional(),
+      // Specs V2 §02 : origine / qualité
+      origineQualite: z.enum(["CONSTRUCTEUR", "OEM", "AFTERMARKET", "AUTRE"]).optional(),
       notes: z.string().optional(),
       unites: z.array(z.object({
           unite_id: z.string().nullable(),
@@ -1266,6 +1271,73 @@ export const catalogRouter = createTRPCRouter({
       const children = await db.select().from(produitUnites).where(eq(produitUnites.parentId, input.id)).limit(1);
       if (children[0]) throw new TRPCError({ code: "BAD_REQUEST", message: "Supprimez d'abord les sous-unités" });
       await db.update(produitUnites).set({ statut: "INACTIF", dateFinValidite: new Date() }).where(eq(produitUnites.id, input.id)) as any;
+      return { success: true };
+    }),
+
+  // ─── Équivalences / Supersession (specs V2 §02) ───
+  listEquivalences: stockProcedure
+    .input(z.object({ produitId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await db
+        .select({
+          id: articleEquivalences.id,
+          articleId: articleEquivalences.articleId,
+          articleEquivalentId: articleEquivalences.articleEquivalentId,
+          type: articleEquivalences.type,
+          priorite: articleEquivalences.priorite,
+          notes: articleEquivalences.notes,
+          titre: produits.titre,
+          codeArticle: produits.codeArticle,
+          codeBarre: produits.codeBarre,
+          origineQualite: produits.origineQualite,
+        })
+        .from(articleEquivalences)
+        .innerJoin(produits, eq(articleEquivalences.articleEquivalentId, produits.id))
+        .where(and(eq(articleEquivalences.agenceId, ctx.user.agenceId), eq(articleEquivalences.articleId, input.produitId)))
+        .orderBy(articleEquivalences.priorite);
+      return rows;
+    }),
+
+  addEquivalence: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      articleId: z.number().int(),
+      articleEquivalentId: z.number().int(),
+      type: z.enum(["SUPERSESSION", "INTERCHANGEABLE", "KIT_COMPOSANT"]).default("SUPERSESSION"),
+      priorite: z.number().int().default(0),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.articleId === input.articleEquivalentId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Un article ne peut pas être équivalent à lui-même." });
+      }
+      const [existing] = await db
+        .select({ id: articleEquivalences.id })
+        .from(articleEquivalences)
+        .where(and(
+          eq(articleEquivalences.agenceId, ctx.user.agenceId),
+          eq(articleEquivalences.articleId, input.articleId),
+          eq(articleEquivalences.articleEquivalentId, input.articleEquivalentId),
+        ))
+        .limit(1);
+      if (existing) throw new TRPCError({ code: "BAD_REQUEST", message: "Cette équivalence existe déjà." });
+      const [row] = await db
+        .insert(articleEquivalences)
+        .values({
+          agenceId: ctx.user.agenceId,
+          articleId: input.articleId,
+          articleEquivalentId: input.articleEquivalentId,
+          type: input.type,
+          priorite: input.priorite,
+          notes: input.notes ?? null,
+        } as any)
+        .returning();
+      return row;
+    }),
+
+  deleteEquivalence: requirePermissionProcedure("stock.modifier")
+    .input(z.object({ id: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      await db.delete(articleEquivalences).where(eq(articleEquivalences.id, input.id));
       return { success: true };
     }),
 });

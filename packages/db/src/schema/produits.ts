@@ -45,6 +45,9 @@ export const produits = pgTable("produits", {
   emplacementPrincipalId: integer("emplacement_principal_id").references(() => emplacements.id),
   // Article reconditionnable : fût → unités plus petites (specs stock)
   estReconditionnable: boolean("est_reconditionnable").default(false),
+  // Specs V2 §02 : origine / qualité de la pièce
+  // CONSTRUCTEUR (Genuine) | OEM (équivalent) | AFTERMARKET | AUTRE
+  origineQualite: varchar("origine_qualite", { length: 20 }).default("AUTRE"),
   // Fiche technique pièce / service
   marque: varchar("marque", { length: 255 }),
   referenceFabricant: varchar("reference_fabricant", { length: 255 }),

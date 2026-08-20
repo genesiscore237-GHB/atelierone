@@ -16,11 +16,11 @@ describe("stock-engine constants", () => {
     expect(TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_POSITIF).toBe("AJUSTEMENT_INVENTAIRE_POSITIF");
     expect(TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_NEGATIF).toBe("AJUSTEMENT_INVENTAIRE_NEGATIF");
     expect(TYPES_MOUVEMENT.CASSE_PERTE).toBe("CASSE_PERTE");
-    // Specs stock 05 §3 : types distincts Perte / Vol / Casse
+    // Specs stock 05 Â§3 : types distincts Perte / Vol / Casse
     expect(TYPES_MOUVEMENT.PERTE).toBe("PERTE");
     expect(TYPES_MOUVEMENT.VOL).toBe("VOL");
     expect(TYPES_MOUVEMENT.CASSE).toBe("CASSE");
-    // Specs V2 §04 : sortie liée à un OR + retour atelier
+    // Specs V2 Â§04 : sortie liÃ©e Ã  un OR + retour atelier
     expect(TYPES_MOUVEMENT.SORTIE_OR).toBe("SORTIE_OR");
     expect(TYPES_MOUVEMENT.RETOUR_ATELIER).toBe("RETOUR_ATELIER");
   });
@@ -32,9 +32,9 @@ describe("stock-engine constants", () => {
 
   it("all movement types are accounted for", () => {
     const values = Object.values(TYPES_MOUVEMENT);
-    expect(values).toHaveLength(18);
+    expect(values).toHaveLength(20);
     const unique = new Set(values);
-    expect(unique.size).toBe(18);
+    expect(unique.size).toBe(20);
   });
 
   it("MOTIF_OBLIGATOIRE_TYPES couvre perte/vol/casse/ajustements", () => {

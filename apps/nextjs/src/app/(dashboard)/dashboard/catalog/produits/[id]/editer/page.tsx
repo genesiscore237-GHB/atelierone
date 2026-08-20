@@ -71,6 +71,7 @@ function mapProductToDefaults(product: any) {
     ref_oem: product.refOem ?? "",
     ref_aftermarket: product.refAftermarket ?? "",
     emplacement_principal_id: product.emplacementPrincipalId ?? null,
+    origine_qualite: product.origineQualite ?? "AUTRE",
     est_reconditionnable: product.estReconditionnable ?? false,
     notes: product.notes ?? "",
     unites,

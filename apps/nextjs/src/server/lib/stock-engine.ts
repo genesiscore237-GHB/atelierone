@@ -24,6 +24,9 @@ export const TYPES_MOUVEMENT = {
   // Specs V2 Â§04/Â§05 : sortie atelier liÃ©e Ã  un OR + retour atelier
   SORTIE_OR: "SORTIE_OR",
   RETOUR_ATELIER: "RETOUR_ATELIER",
+  // Specs V2 Â§04 processus 5 : rÃ©servation / libÃ©ration de stock
+  RESERVATION: "RESERVATION",
+  LIBERATION_RESERVATION: "LIBERATION_RESERVATION",
 } as const;
 
 export type TypeMouvement = (typeof TYPES_MOUVEMENT)[keyof typeof TYPES_MOUVEMENT];
@@ -33,7 +36,7 @@ export const SENS = {
   SORTIE: "S",
 } as const;
 
-/** Types de mouvement exigeant un motif Ã©crit (specs : perte / vol / casse / ajustement) */
+/** Types de mouvement exigeant un motif ÃƒÂ©crit (specs : perte / vol / casse / ajustement) */
 export const MOTIF_OBLIGATOIRE_TYPES: TypeMouvement[] = [
   TYPES_MOUVEMENT.PERTE,
   TYPES_MOUVEMENT.VOL,
@@ -52,8 +55,8 @@ type MouvementParams = {
   uniteId?: string;
   emplacementId?: number;
   lotId?: number;
-  orId?: number; // lien OR (specs V2 : Sortie_OR, traÃ§abilitÃ©)
-  vehiculeId?: number; // lien vÃ©hicule (specs V2 : traÃ§abilitÃ©)
+  orId?: number; // lien OR (specs V2 : Sortie_OR, traÃƒÂ§abilitÃƒÂ©)
+  vehiculeId?: number; // lien vÃƒÂ©hicule (specs V2 : traÃƒÂ§abilitÃƒÂ©)
   coutUnitaireBase?: number | string;
   groupeOperationId?: string;
   reference?: string;
@@ -88,7 +91,7 @@ async function verifierStockDisponible(
   return row;
 }
 
-/** Stock disponible = stock actuel âˆ’ stock rÃ©servÃ© (specs V2 Â§05 rÃ¨gle 4) */
+/** Stock disponible = stock actuel Ã¢Ë†â€™ stock rÃƒÂ©servÃƒÂ© (specs V2 Ã‚Â§05 rÃƒÂ¨gle 4) */
 export function stockDisponible(stockActuel: number, stockReserve: number | null): number {
   return stockActuel - (stockReserve ?? 0);
 }
@@ -105,14 +108,14 @@ async function getCoutUnitaireMoyen(tx: Tx, produitId: number, agenceId: number)
 export async function enregistrerMouvement(tx: Tx, params: MouvementParams) {
   const qte = Number(params.quantite);
 
-  // RÃ¨gle mÃ©tier (specs 05 Â§3) : motif obligatoire pour perte / vol / casse / ajustement
+  // RÃƒÂ¨gle mÃƒÂ©tier (specs 05 Ã‚Â§3) : motif obligatoire pour perte / vol / casse / ajustement
   if (
     MOTIF_OBLIGATOIRE_TYPES.includes(params.type) &&
     (!params.motif || params.motif.trim().length < 3)
   ) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: `Motif obligatoire (min. 3 caractÃ¨res) pour le type de mouvement Â« ${params.type} Â».`,
+      message: `Motif obligatoire (min. 3 caractÃƒÂ¨res) pour le type de mouvement Ã‚Â« ${params.type} Ã‚Â».`,
     });
   }
 
@@ -123,13 +126,13 @@ export async function enregistrerMouvement(tx: Tx, params: MouvementParams) {
   const stockAvant = stockRow ? Number(stockRow.quantite) : 0;
   const reservee = stockRow ? Number(stockRow.reserve ?? 0) : 0;
 
-  // Specs V2 Â§05 rÃ¨gle 4 : une sortie ne peut pas dÃ©passer le stock DISPONIBLE (actuel âˆ’ rÃ©servÃ©)
+  // Specs V2 Ã‚Â§05 rÃƒÂ¨gle 4 : une sortie ne peut pas dÃƒÂ©passer le stock DISPONIBLE (actuel Ã¢Ë†â€™ rÃƒÂ©servÃƒÂ©)
   if (params.sens === "S") {
     const disponible = stockDisponible(stockAvant, reservee);
     if (disponible < qte) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: `Stock disponible insuffisant: ${disponible} disponible (${stockAvant} en stock, ${reservee} rÃ©servÃ©) < ${qte} (produit ${params.produitId})`,
+        message: `Stock disponible insuffisant: ${disponible} disponible (${stockAvant} en stock, ${reservee} rÃƒÂ©servÃƒÂ©) < ${qte} (produit ${params.produitId})`,
       });
     }
   }
@@ -145,7 +148,7 @@ export async function enregistrerMouvement(tx: Tx, params: MouvementParams) {
     if (prod?.stockMaximum && stockApres > prod.stockMaximum) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: `Stock maximum dÃ©passÃ©: ${stockApres} > ${prod.stockMaximum} (produit ${params.produitId})`,
+        message: `Stock maximum dÃƒÂ©passÃƒÂ©: ${stockApres} > ${prod.stockMaximum} (produit ${params.produitId})`,
       });
     }
   }
@@ -236,7 +239,7 @@ export async function mouvementSortieUnite(
   if (stockAvant < qteSortie) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: `Stock insuffisant pour l'unitÃ© ${params.uniteId}: ${stockAvant} < ${qteSortie}`,
+      message: `Stock insuffisant pour l'unitÃƒÂ© ${params.uniteId}: ${stockAvant} < ${qteSortie}`,
     });
   }
 
@@ -352,9 +355,9 @@ export async function mouvementEntreeUnite(
 }
 
 /**
- * OpÃ©ration double atomique : sortie source + entrÃ©e cible liÃ©es par groupeOperationId.
- * Supporte le reconditionnement INTER-ARTICLES (fÃ»t 200L â†’ bidons 5L) :
- * - produitCibleId par dÃ©faut = produitId (mÃªme article, ancien comportement)
+ * OpÃƒÂ©ration double atomique : sortie source + entrÃƒÂ©e cible liÃƒÂ©es par groupeOperationId.
+ * Supporte le reconditionnement INTER-ARTICLES (fÃƒÂ»t 200L Ã¢â€ â€™ bidons 5L) :
+ * - produitCibleId par dÃƒÂ©faut = produitId (mÃƒÂªme article, ancien comportement)
  * - sinon produitCibleId = article destination distinct
  */
 export async function operationDouble(
@@ -435,8 +438,8 @@ export async function getFacteurVersBase(
 }
 
 /**
- * SORTIE DE PIÃˆCE LIÃ‰E Ã€ UN OR (specs V2 Â§04 processus 4, Â§05 rÃ¨gle 6).
- * VÃ©rifie le stock DISPONIBLE (actuel âˆ’ rÃ©servÃ©), dÃ©crÃ©mente, et trace le mouvement
+ * SORTIE DE PIÃƒË†CE LIÃƒâ€°E Ãƒâ‚¬ UN OR (specs V2 Ã‚Â§04 processus 4, Ã‚Â§05 rÃƒÂ¨gle 6).
+ * VÃƒÂ©rifie le stock DISPONIBLE (actuel Ã¢Ë†â€™ rÃƒÂ©servÃƒÂ©), dÃƒÂ©crÃƒÂ©mente, et trace le mouvement
  * SORTIE_OR avec or_id, vehicule_id et documentLie = "OR-{numero}".
  */
 export async function sortirPourOR(
@@ -469,7 +472,7 @@ export async function sortirPourOR(
     orId: params.orId,
     vehiculeId: params.vehiculeId,
     documentLie: `OR-${params.numeroOR}`,
-    motif: params.motif ?? `Sortie piÃ¨ce liÃ©e OR-${params.numeroOR}`,
+    motif: params.motif ?? `Sortie piÃƒÂ¨ce liÃƒÂ©e OR-${params.numeroOR}`,
     commentaire: params.commentaire,
     effectuePar: params.effectuePar,
     coutUnitaireBase: params.coutUnitaireBase,
@@ -478,9 +481,9 @@ export async function sortirPourOR(
 }
 
 /**
- * RETOUR DE PIÃˆCE DEPUIS L'ATELIER (specs V2 processus 4, cas particulier V1 Â§05).
- * RÃ©intÃ¨gre la piÃ¨ce non utilisÃ©e au stock et trace le mouvement RETOUR_ATELIER
- * liÃ© Ã  l'OR d'origine.
+ * RETOUR DE PIÃƒË†CE DEPUIS L'ATELIER (specs V2 processus 4, cas particulier V1 Ã‚Â§05).
+ * RÃƒÂ©intÃƒÂ¨gre la piÃƒÂ¨ce non utilisÃƒÂ©e au stock et trace le mouvement RETOUR_ATELIER
+ * liÃƒÂ© ÃƒÂ  l'OR d'origine.
  */
 export async function retourAtelier(
   tx: Tx,
@@ -511,7 +514,7 @@ export async function retourAtelier(
     orId: params.orId,
     vehiculeId: params.vehiculeId,
     documentLie: `OR-${params.numeroOR}`,
-    motif: params.motif ?? `Retour piÃ¨ce atelier OR-${params.numeroOR}`,
+    motif: params.motif ?? `Retour piÃƒÂ¨ce atelier OR-${params.numeroOR}`,
     commentaire: params.commentaire,
     effectuePar: params.effectuePar,
   });
@@ -531,4 +534,135 @@ async function uniteBaseId(tx: Tx, produitId: number): Promise<string> {
     .where(eq(produits.id, produitId))
     .limit(1);
   return p?.uniteBaseId ?? "";
+}
+
+/**
+ * RÃ‰SERVATION DE STOCK pour un OR (specs V2 Â§04 processus 5, Â§05 rÃ¨gle 4).
+ * Augmente quantite_reservee (le stock disponible diminue) et trace un
+ * mouvement RESERVATION liÃ© Ã  l'OR. Ne modifie pas le stock actuel.
+ */
+export async function reserverStock(
+  tx: Tx,
+  params: {
+    produitId: number;
+    agenceId: number;
+    quantite: number;
+    orId: number;
+    vehiculeId: number;
+    numeroOR: string;
+    uniteId?: string;
+    emplacementId?: number;
+    motif?: string;
+    effectuePar?: number;
+  },
+) {
+  const facteur = await getFacteurVersBase(tx, params.produitId, params.uniteId ?? (await uniteBaseId(tx, params.produitId)));
+  const qteBase = params.quantite * facteur;
+
+  const stockRow = await verifierStockDisponible(tx, params.produitId, params.agenceId, qteBase, params.emplacementId);
+  const stockActuel = stockRow ? Number(stockRow.quantite) : 0;
+  const reservee = stockRow ? Number(stockRow.reserve ?? 0) : 0;
+  const disponible = stockDisponible(stockActuel, reservee);
+
+  if (disponible < qteBase) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `Stock disponible insuffisant pour rÃ©servation: ${disponible} disponible (${stockActuel} en stock, ${reservee} rÃ©servÃ©) < ${qteBase}`,
+    });
+  }
+
+  if (stockRow) {
+    await tx.update(stocks)
+      .set({ quantiteReservee: String(reservee + qteBase) } as any)
+      .where(eq(stocks.id, stockRow.id)) as any;
+  } else {
+    await tx.insert(stocks).values({
+      produitId: params.produitId,
+      agenceId: params.agenceId,
+      quantite: "0",
+      quantiteReservee: String(qteBase),
+      emplacementId: params.emplacementId || null,
+      uniteReferenceId: params.uniteId || null,
+    } as any);
+  }
+
+  await tx.insert(mouvementsStock).values({
+    produitId: params.produitId,
+    agenceId: params.agenceId,
+    type: TYPES_MOUVEMENT.RESERVATION as any,
+    sens: "S",
+    quantite: String(qteBase),
+    uniteId: params.uniteId || null,
+    emplacementId: params.emplacementId || null,
+    orId: params.orId,
+    vehiculeId: params.vehiculeId,
+    stockAvant: String(stockActuel),
+    stockApres: String(stockActuel),
+    documentLie: `OR-${params.numeroOR}`,
+    motif: params.motif ?? `RÃ©servation pour OR-${params.numeroOR}`,
+    effectuePar: params.effectuePar || null,
+  } as any);
+
+  return { stockActuel, reservee: reservee + qteBase, disponible: disponible - qteBase };
+}
+
+/**
+ * LIBÃ‰RATION DE RÃ‰SERVATION (specs V2 Â§04 processus 5).
+ * Diminue quantite_reservee (le stock disponible remonte) et trace un mouvement
+ * LIBERATION_RESERVATION. Ã€ utiliser quand la piÃ¨ce rÃ©servÃ©e est rendue
+ * disponible (OR annulÃ©, piÃ¨ce non utilisÃ©e, etc.).
+ */
+export async function libererStock(
+  tx: Tx,
+  params: {
+    produitId: number;
+    agenceId: number;
+    quantite: number;
+    orId: number;
+    vehiculeId: number;
+    numeroOR: string;
+    uniteId?: string;
+    emplacementId?: number;
+    motif?: string;
+    effectuePar?: number;
+  },
+) {
+  const facteur = await getFacteurVersBase(tx, params.produitId, params.uniteId ?? (await uniteBaseId(tx, params.produitId)));
+  const qteBase = params.quantite * facteur;
+
+  const stockRow = await verifierStockDisponible(tx, params.produitId, params.agenceId, qteBase, params.emplacementId);
+  const stockActuel = stockRow ? Number(stockRow.quantite) : 0;
+  const reservee = stockRow ? Number(stockRow.reserve ?? 0) : 0;
+
+  if (reservee < qteBase) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `QuantitÃ© rÃ©servÃ©e insuffisante pour libÃ©ration: ${reservee} rÃ©servÃ© < ${qteBase}`,
+    });
+  }
+
+  if (stockRow) {
+    await tx.update(stocks)
+      .set({ quantiteReservee: String(reservee - qteBase) } as any)
+      .where(eq(stocks.id, stockRow.id)) as any;
+  }
+
+  await tx.insert(mouvementsStock).values({
+    produitId: params.produitId,
+    agenceId: params.agenceId,
+    type: TYPES_MOUVEMENT.LIBERATION_RESERVATION as any,
+    sens: "E",
+    quantite: String(qteBase),
+    uniteId: params.uniteId || null,
+    emplacementId: params.emplacementId || null,
+    orId: params.orId,
+    vehiculeId: params.vehiculeId,
+    stockAvant: String(stockActuel),
+    stockApres: String(stockActuel),
+    documentLie: `OR-${params.numeroOR}`,
+    motif: params.motif ?? `LibÃ©ration rÃ©servation OR-${params.numeroOR}`,
+    effectuePar: params.effectuePar || null,
+  } as any);
+
+  return { stockActuel, reservee: reservee - qteBase, disponible: stockDisponible(stockActuel, reservee - qteBase) };
 }

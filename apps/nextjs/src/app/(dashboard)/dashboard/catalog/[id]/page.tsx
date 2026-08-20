@@ -951,6 +951,95 @@ function TarifsTab({ productId, product }: { productId: string; product: any }) 
           </>
         )}
       </div>
+
+      <EquivalencesSection produitId={productId} />
+    </div>
+  );
+}
+
+/* ───── Équivalences / Supersession (specs V2 §02) ───── */
+function EquivalencesSection({ produitId }: { produitId: string }) {
+  const utils = api.useUtils();
+  const { data: equivalences, isLoading } = api.catalog.listEquivalences.useQuery({ produitId: Number(produitId) });
+  const { data: produits } = api.catalog.list.useQuery({ limit: 300 });
+  const [addForm, setAddForm] = useState({ articleEquivalentId: 0, type: "SUPERSESSION", priorite: 1, notes: "" });
+
+  const add = api.catalog.addEquivalence.useMutation({
+    onSuccess: () => { toast.success("Équivalence ajoutée"); utils.catalog.listEquivalences.invalidate(); setAddForm({ articleEquivalentId: 0, type: "SUPERSESSION", priorite: 1, notes: "" }); },
+    onError: (e) => toast.error(e.message),
+  });
+  const del = api.catalog.deleteEquivalence.useMutation({
+    onSuccess: () => { toast.success("Équivalence supprimée"); utils.catalog.listEquivalences.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const listeProduits = (produits?.items ?? []).filter((p: any) => Number(p.id) !== Number(produitId));
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-5">
+      <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+        <Tag size={14} className="text-primary" /> Équivalences / Supersession
+      </div>
+      {isLoading ? (
+        <Skeleton className="h-16 rounded-lg bg-muted" />
+      ) : (
+        <div className="space-y-2">
+          {!equivalences?.length ? (
+            <p className="text-sm text-muted-foreground">Aucune pièce équivalente définie.</p>
+          ) : (
+            <div className="space-y-2">
+              {equivalences.map((eq: any) => (
+                <div key={eq.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+                  <div>
+                    <span className="font-medium">{eq.articleEquivalent?.titre ?? `Produit #${eq.articleEquivalentId}`}</span>
+                    <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${eq.type === "SUPERSESSION" ? "bg-primary/10 text-primary" : "bg-info/10 text-info-foreground"}`}>
+                      {eq.type === "SUPERSESSION" ? "Remplace" : eq.type === "INTERCHANGEABLE" ? "Interchangeable" : "Kit"}
+                    </span>
+                    {eq.priorite > 1 && <span className="ml-2 text-xs text-muted-foreground">priorité {eq.priorite}</span>}
+                    {eq.notes && <span className="ml-2 text-xs text-muted-foreground">· {eq.notes}</span>}
+                  </div>
+                  <Button variant="ghost" size="icon" className="size-7 text-destructive" onClick={() => del.mutate({ id: eq.id })} disabled={del.isPending}>
+                    <Trash2 size={14} />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-3 rounded-lg border border-dashed border-border p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Ajouter une équivalence</div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <select
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                value={addForm.articleEquivalentId}
+                onChange={(e) => setAddForm({ ...addForm, articleEquivalentId: Number(e.target.value) })}
+              >
+                <option value={0}>Pièce équivalente...</option>
+                {listeProduits.map((p: any) => <option key={p.id} value={Number(p.id)}>{p.titre}</option>)}
+              </select>
+              <select
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                value={addForm.type}
+                onChange={(e) => setAddForm({ ...addForm, type: e.target.value })}
+              >
+                <option value="SUPERSESSION">Remplace (supersession)</option>
+                <option value="INTERCHANGEABLE">Interchangeable</option>
+                <option value="KIT_COMPOSANT">Composant de kit</option>
+              </select>
+              <Input placeholder="Notes (optionnel)" value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })} />
+              <Button
+                className="gap-1.5"
+                disabled={!addForm.articleEquivalentId || add.isPending}
+                onClick={() => add.mutate({ articleId: Number(produitId), articleEquivalentId: addForm.articleEquivalentId, type: addForm.type as any, priorite: addForm.priorite, notes: addForm.notes || undefined })}
+              >
+                <Plus size={14} /> {add.isPending ? "Ajout..." : "Ajouter"}
+              </Button>
+            </div>
+            <p className="mt-2 text-[10px] text-muted-foreground">
+              Type SUPERSESSION : cette pièce remplace celle-ci (nouvelle référence). INTERCHANGEABLE : échangeable sans modification.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

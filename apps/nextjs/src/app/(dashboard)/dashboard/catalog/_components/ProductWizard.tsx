@@ -219,6 +219,7 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
       refOem: formValues.ref_oem || undefined,
       refAftermarket: formValues.ref_aftermarket || undefined,
       emplacementPrincipalId: formValues.emplacement_principal_id ?? undefined,
+      origineQualite: formValues.origine_qualite || "AUTRE",
       estReconditionnable: !!formValues.est_reconditionnable,
       notes: formValues.notes || undefined,
       editeur: formValues.editeur || undefined,
@@ -495,6 +496,19 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
           <div>
             <Label>Référence aftermarket</Label>
             <Input value={formValues.ref_aftermarket ?? ""} onChange={(e) => updateFormValue("ref_aftermarket", e.target.value)} maxLength={255} placeholder="Référence équivalent après-vente" />
+          </div>
+          <div>
+            <Label>Origine / Qualité (specs V2)</Label>
+            <Select value={formValues.origine_qualite ?? "AUTRE"} onValueChange={(v) => updateFormValue("origine_qualite", v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="CONSTRUCTEUR">Constructeur (Genuine)</SelectItem>
+                <SelectItem value="OEM">OEM équivalent</SelectItem>
+                <SelectItem value="AFTERMARKET">Aftermarket</SelectItem>
+                <SelectItem value="AUTRE">Autre</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="mt-1 text-xs text-muted-foreground">Distinction de la qualité/origine de la pièce.</p>
           </div>
           <div className="sm:col-span-2">
             <Label>Emplacement principal</Label>

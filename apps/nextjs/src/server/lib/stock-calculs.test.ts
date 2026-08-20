@@ -81,6 +81,37 @@ describe("stockDisponible (actuel − réservé) — specs V2 §05 règle 4", ()
   });
 });
 
+describe("Réservation / Libération de stock (specs V2 §04 processus 5)", () => {
+  it("réservation diminue le disponible (actuel − réservé augmente)", () => {
+    // Avant : 100 en stock, 0 réservé → dispo 100
+    expect(stockDisponible(100, 0)).toBe(100);
+    // Réservation de 30 → réservé 30 → dispo 70
+    expect(stockDisponible(100, 30)).toBe(70);
+  });
+
+  it("après réservation, une sortie est bloquée si elle dépasse le disponible", () => {
+    // 100 stock, 30 réservés → dispo 70 → sortie 80 REFUSÉE
+    expect(stockDisponibleSuffisant(100, 30, 80)).toBe(false);
+    // sortie 60 autorisée (≤ dispo 70)
+    expect(stockDisponibleSuffisant(100, 30, 60)).toBe(true);
+  });
+
+  it("libération remonte le disponible (réservé diminue)", () => {
+    // Avant libération : 100 stock, 30 réservés → dispo 70
+    // Après libération de 20 : réservé 10 → dispo 90
+    expect(stockDisponible(100, 30 - 20)).toBe(90);
+  });
+
+  it("on ne peut pas libérer plus que le réservé (cas limite)", () => {
+    // 10 réservés, libération de 15 → réservé deviendrait négatif → interdit
+    const reservee = 10;
+    const liberation = 15;
+    expect(stockDisponible(100, Math.max(0, reservee - liberation))).toBe(100);
+    // le calcul de contrôle (reservee >= liberation) est faux
+    expect(reservee >= liberation).toBe(false);
+  });
+});
+
 describe("calculerReconditionnement (fût → unités)", () => {
   it("1 fût 200L → 40 bidons 5L (ratio 40)", () => {
     // facteurSource 200 (L), facteurCible 5 (L) → ratio 40

@@ -107,6 +107,8 @@ Pour chaque pièce : **Articles / Catalogue → + Nouveau** :
 - **Seuils** : seuil d'alerte (stock bas), seuil critique, stock maximum
 - **Emplacement principal** (optionnel)
 - **Reconditionnable** : cocher pour les huiles en fût
+- **Origine / Qualité** (specs V2) : Constructeur (Genuine), OEM équivalent, Aftermarket ou Autre — reflète la qualité de la pièce
+- **Équivalences / Supersession** : dans la fiche article, ajouter la pièce remplaçante (SUPERSESSION) ou interchangeables (même pièce sous une autre référence)
 
 ### 4.3 Créer les unités de conversion
 
@@ -189,6 +191,17 @@ Dans la fiche article, onglet unités :
 1. Dans la fiche OR, section **« Retour de pièce (atelier → stock) »**.
 2. Sélectionnez le produit + la quantité + un motif.
 3. Le stock est **réintégré** et le mouvement **RETOUR_ATELIER** est tracé.
+
+### 8ter. Réserver une pièce pour un OR (specs V2)
+
+1. Dans la fiche OR, section **« Réservation de pièce (pour l'OR) »**.
+2. Sélectionnez le produit + la quantité + un motif.
+3. La pièce est **mise de côté** : le **stock disponible** (actuel − réservé) diminue, le stock actuel reste inchangé.
+4. Le mouvement **RESERVATION** est tracé avec l'OR.
+5. À la confirmation du client → faites une **Sortie de pièce** (la réservation est alors consommée par la sortie).
+6. Si la pièce n'est finalement pas utilisée → bouton **« Libérer la réservation »** : le stock disponible est réintégré (mouvement **LIBERATION_RESERVATION**).
+
+> 💡 La réservation permet d'attribuer une pièce rare/coûteuse à un OR sans la déduire du stock tant que la vente n'est pas confirmée. Une sortie est refusée si le stock disponible (actuel − réservé) est insuffisant.
 
 ---
 
