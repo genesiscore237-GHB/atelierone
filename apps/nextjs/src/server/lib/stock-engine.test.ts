@@ -20,6 +20,9 @@ describe("stock-engine constants", () => {
     expect(TYPES_MOUVEMENT.PERTE).toBe("PERTE");
     expect(TYPES_MOUVEMENT.VOL).toBe("VOL");
     expect(TYPES_MOUVEMENT.CASSE).toBe("CASSE");
+    // Specs V2 §04 : sortie liée à un OR + retour atelier
+    expect(TYPES_MOUVEMENT.SORTIE_OR).toBe("SORTIE_OR");
+    expect(TYPES_MOUVEMENT.RETOUR_ATELIER).toBe("RETOUR_ATELIER");
   });
 
   it("SENS defines entry and exit", () => {
@@ -29,9 +32,9 @@ describe("stock-engine constants", () => {
 
   it("all movement types are accounted for", () => {
     const values = Object.values(TYPES_MOUVEMENT);
-    expect(values).toHaveLength(16);
+    expect(values).toHaveLength(18);
     const unique = new Set(values);
-    expect(unique.size).toBe(16);
+    expect(unique.size).toBe(18);
   });
 
   it("MOTIF_OBLIGATOIRE_TYPES couvre perte/vol/casse/ajustements", () => {

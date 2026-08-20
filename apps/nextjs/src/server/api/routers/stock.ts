@@ -3,9 +3,10 @@ import { createTRPCRouter, protectedProcedure, stockProcedure, requirePermission
 import { db, stocks, produits, categories, unitesMesure, mouvementsStock, inventaires, inventairesSessions, deconditionnements, reconditionnements, emplacements, stocksUnites, ventesLignes, ventes } from "@atelierone/db";
 import { eq, and, desc, sql, lt, lte, gte, isNotNull, isNull, count, sum, avg, asc, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSortieUnite, mouvementEntreeUnite, TYPES_MOUVEMENT } from "~/server/lib/stock-engine";
+import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSortieUnite, mouvementEntreeUnite, TYPES_MOUVEMENT, sortirPourOR, retourAtelier } from "~/server/lib/stock-engine";
 import { PertesService } from "~/server/lib/pertes-service";
 import { sortirStockFIFO } from "~/server/lib/lot-service";
+import { ordresReparation, vehicules, produits as produitsTable } from "@atelierone/db";
 
 export const stockRouter = createTRPCRouter({
   getDashboard: requirePermissionProcedure("stock.consulter").query(async ({ ctx }) => {
@@ -1411,6 +1412,113 @@ export const stockRouter = createTRPCRouter({
 
         return { sessionId: session.id, lignesComptees: comptees };
       }) as any;
+    }),
+
+  // ─── Sortie de pièce liée à un OR (specs V2 §04 processus 4, §05 règle 6) ───
+  sortirPourOR: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      produitId: z.number().int(),
+      quantite: z.number().positive(),
+      uniteId: z.string().optional(),
+      emplacementId: z.number().int().optional(),
+      motif: z.string().min(3).optional().or(z.literal("")),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [or] = await tx
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, vehiculeId: ordresReparation.vehiculeId, statut: ordresReparation.statut })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Ordre de réparation introuvable." });
+        if (or.statut === "annule" || or.statut === "termine" || or.statut === "facture") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de sortir des pièces sur un OR ${or.statut}.` });
+        }
+
+        const [prod] = await tx
+          .select({ titre: produitsTable.titre })
+          .from(produitsTable)
+          .where(eq(produitsTable.id, input.produitId))
+          .limit(1);
+        if (!prod) throw new TRPCError({ code: "BAD_REQUEST", message: "Produit introuvable." });
+
+        const res = await sortirPourOR(tx as any, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+          orId: or.id,
+          vehiculeId: or.vehiculeId,
+          numeroOR: or.numero,
+          uniteId: input.uniteId,
+          emplacementId: input.emplacementId,
+          motif: input.motif || undefined,
+          effectuePar: Number(ctx.user.id),
+        });
+
+        return { stockAvant: res.stockAvant, stockApres: res.stockApres, orId: or.id, numeroOR: or.numero, produitTitre: prod.titre };
+      }) as any;
+    }),
+
+  // ─── Retour de pièce depuis l'atelier (specs V2 processus, cas particulier V1 §05) ───
+  retourAtelier: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      produitId: z.number().int(),
+      quantite: z.number().positive(),
+      uniteId: z.string().optional(),
+      emplacementId: z.number().int().optional(),
+      motif: z.string().min(3).optional().or(z.literal("")),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [or] = await tx
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, vehiculeId: ordresReparation.vehiculeId })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Ordre de réparation introuvable." });
+
+        const res = await retourAtelier(tx as any, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+          orId: or.id,
+          vehiculeId: or.vehiculeId,
+          numeroOR: or.numero,
+          uniteId: input.uniteId,
+          emplacementId: input.emplacementId,
+          motif: input.motif || undefined,
+          effectuePar: Number(ctx.user.id),
+        });
+
+        return { stockAvant: res.stockAvant, stockApres: res.stockApres, orId: or.id, numeroOR: or.numero };
+      }) as any;
+    }),
+
+  // ─── Historique des mouvements d'un OR (specs V2 : traçabilité) ───
+  listMouvementsParOR: requirePermissionProcedure("stock.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await db
+        .select({
+          id: mouvementsStock.id,
+          produitId: mouvementsStock.produitId,
+          type: mouvementsStock.type,
+          sens: mouvementsStock.sens,
+          quantite: mouvementsStock.quantite,
+          stockAvant: mouvementsStock.stockAvant,
+          stockApres: mouvementsStock.stockApres,
+          dateMouvement: mouvementsStock.dateMouvement,
+          motif: mouvementsStock.motif,
+          documentLie: mouvementsStock.documentLie,
+          produitTitre: produitsTable.titre,
+        })
+        .from(mouvementsStock)
+        .leftJoin(produitsTable, eq(mouvementsStock.produitId, produitsTable.id))
+        .where(and(eq(mouvementsStock.orId, input.orId), eq(mouvementsStock.agenceId, ctx.user.agenceId)))
+        .orderBy(desc(mouvementsStock.dateMouvement));
+      return rows.map((r) => ({ ...r, quantite: Number(r.quantite), stockAvant: Number(r.stockAvant), stockApres: Number(r.stockApres) }));
     }),
 });
 

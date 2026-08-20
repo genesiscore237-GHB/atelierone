@@ -29,6 +29,7 @@ import { rhDocumentsRouter } from "~/server/api/routers/rh-documents";
 import { rhDashboardRouter } from "~/server/api/routers/rh-dashboard";
 import { partnerRouter } from "~/server/api/routers/partner";
 import { stockRouter } from "~/server/api/routers/stock";
+import { orRouter } from "~/server/api/routers/or-router";
 import { margeRouter } from "~/server/api/routers/marge";
 import { profitRouter } from "~/server/api/routers/profit";
 import { exportRouter } from "~/server/api/routers/export";
@@ -68,6 +69,7 @@ export const appRouter = createTRPCRouter({
   rhDocuments: rhDocumentsRouter,
   rhDashboard: rhDashboardRouter,
   stock: stockRouter,
+  or: orRouter,
   partner: partnerRouter,
   marge: margeRouter,
   profit: profitRouter,

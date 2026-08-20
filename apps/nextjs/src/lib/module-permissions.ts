@@ -29,6 +29,8 @@ export const MODULE_PERMISSIONS: Record<string, string[]> = {
   settings: ["admin.parametres", "admin.agence.gerer", "admin.roles.gerer", "admin.permissions.gerer"],
   vehicules: ["vehicules.consulter", "vehicules.creer", "vehicules.modifier"],
   or: ["or.consulter", "or.creer", "or.modifier", "or.valider"],
+  "ordres-reparation": ["or.consulter", "or.creer", "or.modifier", "or.valider"],
+  "ordres-reparation/": ["or.consulter", "or.creer", "or.modifier", "or.valider"],
   contrats: ["contrats.consulter", "contrats.creer"],
   creances: ["creances.consulter", "creances.encaisser"],
   planning: ["planning.consulter", "planning.assigner"],

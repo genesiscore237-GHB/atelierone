@@ -21,6 +21,9 @@ export const TYPES_MOUVEMENT = {
   PERTE: "PERTE",
   VOL: "VOL",
   CASSE: "CASSE",
+  // Specs V2 Â§04/Â§05 : sortie atelier liÃ©e Ã  un OR + retour atelier
+  SORTIE_OR: "SORTIE_OR",
+  RETOUR_ATELIER: "RETOUR_ATELIER",
 } as const;
 
 export type TypeMouvement = (typeof TYPES_MOUVEMENT)[keyof typeof TYPES_MOUVEMENT];
@@ -30,7 +33,7 @@ export const SENS = {
   SORTIE: "S",
 } as const;
 
-/** Types de mouvement exigeant un motif écrit (specs : perte / vol / casse / ajustement) */
+/** Types de mouvement exigeant un motif Ã©crit (specs : perte / vol / casse / ajustement) */
 export const MOTIF_OBLIGATOIRE_TYPES: TypeMouvement[] = [
   TYPES_MOUVEMENT.PERTE,
   TYPES_MOUVEMENT.VOL,
@@ -49,6 +52,8 @@ type MouvementParams = {
   uniteId?: string;
   emplacementId?: number;
   lotId?: number;
+  orId?: number; // lien OR (specs V2 : Sortie_OR, traÃ§abilitÃ©)
+  vehiculeId?: number; // lien vÃ©hicule (specs V2 : traÃ§abilitÃ©)
   coutUnitaireBase?: number | string;
   groupeOperationId?: string;
   reference?: string;
@@ -76,11 +81,16 @@ async function verifierStockDisponible(
     lotId ? eq(stocks.lotId, lotId) : undefined,
   );
   const [row] = await tx
-    .select({ id: stocks.id, quantite: stocks.quantite, cmup: stocks.coutUnitaireMoyen })
+    .select({ id: stocks.id, quantite: stocks.quantite, cmup: stocks.coutUnitaireMoyen, reserve: stocks.quantiteReservee })
     .from(stocks)
     .where(where)
     .for("update");
   return row;
+}
+
+/** Stock disponible = stock actuel âˆ’ stock rÃ©servÃ© (specs V2 Â§05 rÃ¨gle 4) */
+export function stockDisponible(stockActuel: number, stockReserve: number | null): number {
+  return stockActuel - (stockReserve ?? 0);
 }
 
 async function getCoutUnitaireMoyen(tx: Tx, produitId: number, agenceId: number): Promise<string | null> {
@@ -95,14 +105,14 @@ async function getCoutUnitaireMoyen(tx: Tx, produitId: number, agenceId: number)
 export async function enregistrerMouvement(tx: Tx, params: MouvementParams) {
   const qte = Number(params.quantite);
 
-  // Règle métier (specs 05 §3) : motif obligatoire pour perte / vol / casse / ajustement
+  // RÃ¨gle mÃ©tier (specs 05 Â§3) : motif obligatoire pour perte / vol / casse / ajustement
   if (
     MOTIF_OBLIGATOIRE_TYPES.includes(params.type) &&
     (!params.motif || params.motif.trim().length < 3)
   ) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: `Motif obligatoire (min. 3 caractères) pour le type de mouvement « ${params.type} ».`,
+      message: `Motif obligatoire (min. 3 caractÃ¨res) pour le type de mouvement Â« ${params.type} Â».`,
     });
   }
 
@@ -111,12 +121,17 @@ export async function enregistrerMouvement(tx: Tx, params: MouvementParams) {
     qte, params.emplacementId, params.lotId,
   );
   const stockAvant = stockRow ? Number(stockRow.quantite) : 0;
+  const reservee = stockRow ? Number(stockRow.reserve ?? 0) : 0;
 
-  if (params.sens === "S" && stockAvant < qte) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: `Stock insuffisant: ${stockAvant} < ${qte} (produit ${params.produitId})`,
-    });
+  // Specs V2 Â§05 rÃ¨gle 4 : une sortie ne peut pas dÃ©passer le stock DISPONIBLE (actuel âˆ’ rÃ©servÃ©)
+  if (params.sens === "S") {
+    const disponible = stockDisponible(stockAvant, reservee);
+    if (disponible < qte) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Stock disponible insuffisant: ${disponible} disponible (${stockAvant} en stock, ${reservee} rÃ©servÃ©) < ${qte} (produit ${params.produitId})`,
+      });
+    }
   }
 
   const stockApres = params.sens === "E" ? stockAvant + qte : stockAvant - qte;
@@ -130,7 +145,7 @@ export async function enregistrerMouvement(tx: Tx, params: MouvementParams) {
     if (prod?.stockMaximum && stockApres > prod.stockMaximum) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: `Stock maximum dépassé: ${stockApres} > ${prod.stockMaximum} (produit ${params.produitId})`,
+        message: `Stock maximum dÃ©passÃ©: ${stockApres} > ${prod.stockMaximum} (produit ${params.produitId})`,
       });
     }
   }
@@ -148,6 +163,8 @@ export async function enregistrerMouvement(tx: Tx, params: MouvementParams) {
       uniteId: params.uniteId || null,
       emplacementId: params.emplacementId || null,
       lotId: params.lotId || null,
+      orId: params.orId || null,
+      vehiculeId: params.vehiculeId || null,
       coutUnitaireBase: params.coutUnitaireBase ? String(params.coutUnitaireBase) : null,
       stockAvant: String(stockAvant),
       stockApres: String(stockApres),
@@ -219,7 +236,7 @@ export async function mouvementSortieUnite(
   if (stockAvant < qteSortie) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: `Stock insuffisant pour l'unité ${params.uniteId}: ${stockAvant} < ${qteSortie}`,
+      message: `Stock insuffisant pour l'unitÃ© ${params.uniteId}: ${stockAvant} < ${qteSortie}`,
     });
   }
 
@@ -335,9 +352,9 @@ export async function mouvementEntreeUnite(
 }
 
 /**
- * Opération double atomique : sortie source + entrée cible liées par groupeOperationId.
- * Supporte le reconditionnement INTER-ARTICLES (fût 200L → bidons 5L) :
- * - produitCibleId par défaut = produitId (même article, ancien comportement)
+ * OpÃ©ration double atomique : sortie source + entrÃ©e cible liÃ©es par groupeOperationId.
+ * Supporte le reconditionnement INTER-ARTICLES (fÃ»t 200L â†’ bidons 5L) :
+ * - produitCibleId par dÃ©faut = produitId (mÃªme article, ancien comportement)
  * - sinon produitCibleId = article destination distinct
  */
 export async function operationDouble(
@@ -415,4 +432,103 @@ export async function getFacteurVersBase(
     return ump ? Number(ump.facteur) : 1;
   }
   return Number(pu.facteurVersBase);
+}
+
+/**
+ * SORTIE DE PIÃˆCE LIÃ‰E Ã€ UN OR (specs V2 Â§04 processus 4, Â§05 rÃ¨gle 6).
+ * VÃ©rifie le stock DISPONIBLE (actuel âˆ’ rÃ©servÃ©), dÃ©crÃ©mente, et trace le mouvement
+ * SORTIE_OR avec or_id, vehicule_id et documentLie = "OR-{numero}".
+ */
+export async function sortirPourOR(
+  tx: Tx,
+  params: {
+    produitId: number;
+    agenceId: number;
+    quantite: number;
+    orId: number;
+    vehiculeId: number;
+    numeroOR: string;
+    uniteId?: string;
+    emplacementId?: number;
+    motif?: string;
+    commentaire?: string;
+    effectuePar?: number;
+    coutUnitaireBase?: number | string;
+  },
+) {
+  const facteur = await getFacteurVersBase(tx, params.produitId, params.uniteId ?? (await uniteBaseId(tx, params.produitId)));
+  const qteBase = params.quantite * facteur;
+  const res = await enregistrerMouvement(tx, {
+    type: TYPES_MOUVEMENT.SORTIE_OR as any,
+    sens: "S",
+    produitId: params.produitId,
+    agenceId: params.agenceId,
+    quantite: qteBase,
+    uniteId: params.uniteId,
+    emplacementId: params.emplacementId,
+    orId: params.orId,
+    vehiculeId: params.vehiculeId,
+    documentLie: `OR-${params.numeroOR}`,
+    motif: params.motif ?? `Sortie piÃ¨ce liÃ©e OR-${params.numeroOR}`,
+    commentaire: params.commentaire,
+    effectuePar: params.effectuePar,
+    coutUnitaireBase: params.coutUnitaireBase,
+  });
+  return res;
+}
+
+/**
+ * RETOUR DE PIÃˆCE DEPUIS L'ATELIER (specs V2 processus 4, cas particulier V1 Â§05).
+ * RÃ©intÃ¨gre la piÃ¨ce non utilisÃ©e au stock et trace le mouvement RETOUR_ATELIER
+ * liÃ© Ã  l'OR d'origine.
+ */
+export async function retourAtelier(
+  tx: Tx,
+  params: {
+    produitId: number;
+    agenceId: number;
+    quantite: number;
+    orId: number;
+    vehiculeId: number;
+    numeroOR: string;
+    uniteId?: string;
+    emplacementId?: number;
+    motif?: string;
+    commentaire?: string;
+    effectuePar?: number;
+  },
+) {
+  const facteur = await getFacteurVersBase(tx, params.produitId, params.uniteId ?? (await uniteBaseId(tx, params.produitId)));
+  const qteBase = params.quantite * facteur;
+  const res = await enregistrerMouvement(tx, {
+    type: TYPES_MOUVEMENT.RETOUR_ATELIER as any,
+    sens: "E",
+    produitId: params.produitId,
+    agenceId: params.agenceId,
+    quantite: qteBase,
+    uniteId: params.uniteId,
+    emplacementId: params.emplacementId,
+    orId: params.orId,
+    vehiculeId: params.vehiculeId,
+    documentLie: `OR-${params.numeroOR}`,
+    motif: params.motif ?? `Retour piÃ¨ce atelier OR-${params.numeroOR}`,
+    commentaire: params.commentaire,
+    effectuePar: params.effectuePar,
+  });
+  return res;
+}
+
+async function uniteBaseId(tx: Tx, produitId: number): Promise<string> {
+  const [pu] = await tx
+    .select({ uniteId: produitUnites.uniteId })
+    .from(produitUnites)
+    .where(and(eq(produitUnites.produitId, produitId), eq(produitUnites.estUniteBase, true)))
+    .limit(1);
+  if (pu?.uniteId) return pu.uniteId;
+  const [p] = await tx
+    .select({ uniteBaseId: produits.uniteBaseId })
+    .from(produits)
+    .where(eq(produits.id, produitId))
+    .limit(1);
+  return p?.uniteBaseId ?? "";
 }

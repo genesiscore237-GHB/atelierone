@@ -31,6 +31,20 @@ export function stockSuffisant(stockActuel: number, quantiteSortie: number): boo
   return stockActuel >= quantiteSortie;
 }
 
+/** Stock disponible = stock actuel − stock réservé (specs V2 §05 règle 4) */
+export function stockDisponible(stockActuel: number, stockReserve: number | null): number {
+  return stockActuel - (stockReserve ?? 0);
+}
+
+/** Une sortie est-elle autorisée sur le stock disponible (pas seulement actuel) ? */
+export function stockDisponibleSuffisant(
+  stockActuel: number,
+  stockReserve: number | null,
+  quantiteSortie: number
+): boolean {
+  return stockDisponible(stockActuel, stockReserve) >= quantiteSortie;
+}
+
 // ─── Reconditionnement (fût → unités) ───
 
 export interface ResultatReconditionnement {

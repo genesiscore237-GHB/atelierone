@@ -3,6 +3,8 @@ import {
   calculerPmp,
   stockApresSortie,
   stockSuffisant,
+  stockDisponible,
+  stockDisponibleSuffisant,
   calculerReconditionnement,
   verifierRatio,
   calculerEcartInventaire,
@@ -46,6 +48,36 @@ describe("stockApresSortie / stockSuffisant", () => {
   it("stock exact → autorisé, résultat 0", () => {
     expect(stockSuffisant(5, 5)).toBe(true);
     expect(stockApresSortie(5, 5)).toBe(0);
+  });
+});
+
+describe("stockDisponible (actuel − réservé) — specs V2 §05 règle 4", () => {
+  it("disponible = actuel − réservé", () => {
+    expect(stockDisponible(100, 30)).toBe(70);
+    expect(stockDisponible(100, null)).toBe(100);
+    expect(stockDisponible(100, 0)).toBe(100);
+  });
+
+  it("sortie autorisée si la quantité ≤ disponible (même si stock actuel suffit)", () => {
+    // 100 en stock, 30 réservés → disponible 70 → sortie 50 OK
+    expect(stockDisponibleSuffisant(100, 30, 50)).toBe(true);
+  });
+
+  it("sortie REFUSÉE si elle dépasse le disponible mais pas le stock actuel (cas limite critique)", () => {
+    // 100 en stock, 60 réservés → disponible 40 → sortie 50 REFUSÉE
+    // (stockSuffisant classique dirait true, mais specs V2 exige disponible)
+    expect(stockSuffisant(100, 50)).toBe(true);
+    expect(stockDisponibleSuffisant(100, 60, 50)).toBe(false);
+  });
+
+  it("sortie exactement égale au disponible → autorisée", () => {
+    expect(stockDisponibleSuffisant(100, 30, 70)).toBe(true);
+    expect(stockDisponibleSuffisant(100, 30, 71)).toBe(false);
+  });
+
+  it("sans réservation, disponible = actuel", () => {
+    expect(stockDisponibleSuffisant(10, null, 10)).toBe(true);
+    expect(stockDisponibleSuffisant(10, 0, 10)).toBe(true);
   });
 });
 

@@ -5,6 +5,8 @@ import { unitesMesure } from "./unites_mesure";
 import { utilisateurs } from "./utilisateurs";
 import { emplacements } from "./emplacements";
 import { lots } from "./lots";
+import { ordresReparation } from "./ordres_reparation";
+import { vehicules } from "./vehicules";
 
 export const mouvementsStock = pgTable("mouvements_stock", {
   id: integer("id").generatedByDefaultAsIdentity().primaryKey(),
@@ -16,6 +18,9 @@ export const mouvementsStock = pgTable("mouvements_stock", {
   uniteId: uuid("unite_id").references(() => unitesMesure.id),
   emplacementId: integer("emplacement_id").references(() => emplacements.id),
   lotId: integer("lot_id").references(() => lots.id),
+  // Lien OR / véhicule (specs V2 §04 : Sortie_OR, traçabilité véhicule)
+  orId: integer("or_id").references(() => ordresReparation.id),
+  vehiculeId: integer("vehicule_id").references(() => vehicules.id),
   coutUnitaireBase: numeric("cout_unitaire_base", { precision: 12, scale: 2 }),
   stockAvant: numeric("stock_avant", { precision: 12, scale: 2 }).notNull(),
   stockApres: numeric("stock_apres", { precision: 12, scale: 2 }).notNull(),
