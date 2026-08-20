@@ -9,7 +9,7 @@ const PARCOURS_STOCK = [
   { label: "3. Inventaire initial", route: "/dashboard/stock/inventaire" },
   { label: "4. Faire une entrée", route: "/dashboard/stock/mouvements" },
   { label: "5. Reconditionner (fût → bidons)", route: "/dashboard/stock/reconditionnement" },
-  { label: "6. Sortir pour un OR", route: "/dashboard/stock/mouvements" },
+  { label: "6. Sortir pour un OR", route: "/dashboard/ordres-reparation" },
   { label: "7. Consulter la vue d'ensemble", route: "/dashboard/stock/apercu" },
 ];
 

@@ -175,11 +175,20 @@ Dans la fiche article, onglet unités :
 
 ## 8. Comment sortir une pièce pour un OR
 
-1. Depuis l'**Ordre de Réparation** (module Véhicules & Atelier) ou depuis le magasin.
-2. Sélectionnez l'article + la quantité.
-3. Liez la sortie à l'**OR / véhicule** (fortement recommandé : on sait sur quel véhicule la pièce est partie).
-4. Le stock est **décrémenté** automatiquement et le mouvement « Sortie » est enregistré.
-5. Si le stock est insuffisant : message clair + possibilité de créer une **demande de commande** (réapprovisionnement).
+1. **Ordres de Réparation** (`/dashboard/ordres-reparation`) → ouvrez l'OR du véhicule.
+2. Dans la fiche OR, section **« Sortir une pièce (liée à l'OR) »** : sélectionnez le produit + la quantité + un motif.
+3. Le système vérifie le **stock disponible** (stock actuel − stock réservé) et **décrémente** automatiquement.
+4. Le mouvement **SORTIE_OR** est tracé avec l'OR et le véhicule (référence `OR-{numero}`).
+5. L'historique « Mouvements de stock liés à l'OR » affiche toutes les sorties/retours.
+6. Si le stock est insuffisant : message « Stock disponible insuffisant » (aucun mouvement créé).
+
+> **Règle d'or GPJ** : toute pièce sortie du magasin est imputée à un OR (ou à une vente comptoir).
+
+### 8bis. Retour de pièce depuis l'atelier
+
+1. Dans la fiche OR, section **« Retour de pièce (atelier → stock) »**.
+2. Sélectionnez le produit + la quantité + un motif.
+3. Le stock est **réintégré** et le mouvement **RETOUR_ATELIER** est tracé.
 
 ---
 

@@ -106,7 +106,44 @@ export const STOCK_HELP_FICHES: HelpFiche[] = [
     ],
     faq: [
       { q: "J'ai fait une erreur de saisie, comment corriger ?", r: "Créez un mouvement inverse (ajustement) avec le motif « Erreur de saisie »." },
-      { q: "Pourquoi une sortie est refusée ?", r: "Le stock disponible est inférieur à la quantité demandée (pas de stock négatif)." },
+      { q: "Pourquoi une sortie est refusée ?", r: "Le stock disponible (stock actuel − stock réservé) est inférieur à la quantité demandée (pas de stock négatif)." },
+    ],
+  },
+  {
+    id: "or-sortie-pieces",
+    titre: "Sortie de pièces liée à un OR",
+    courte: "Sortir des pièces pour un Ordre de Réparation avec contrôle du stock disponible, et réintégrer les retours atelier.",
+    priorite: "P0",
+    route: "/dashboard/ordres-reparation",
+    prerequis: [
+      "Un OR créé (Ordres de Réparation) avec un véhicule",
+      "Permission stock.modifier (magasinier) ou or.*",
+    ],
+    fonctionnalites: [
+      "Sortie de pièce liée à un OR : décrémente le stock et trace le mouvement SORTIE_OR avec or_id + vehicule_id",
+      "Contrôle du stock DISPONIBLE (stock actuel − stock réservé) avant la sortie — refus si insuffisant",
+      "Document lié : le mouvement porte la référence OR-{numero}",
+      "Retour de pièce depuis l'atelier : réintègre le stock (mouvement RETOUR_ATELIER)",
+      "Historique complet des mouvements d'un OR (type, article, quantité, stock avant/après)",
+      "Lignes de l'OR (pièces & main d'œuvre) + totaux (pièces, MO, TTC)",
+      "Changement de statut de l'OR (ouvert → en cours → attente pièce → terminé → facturé)",
+      "Création de véhicules et clients depuis la page OR",
+    ],
+    etapes: [
+      { titre: "Créer un OR", detail: "Ordres de Réparation → véhicule + plainte → Créer l'OR." },
+      { titre: "Sortir une pièce", detail: "Dans la fiche OR → Sortir une pièce → produit + quantité + motif → le stock disponible est vérifié et décrémenté." },
+      { titre: "Retourner une pièce", detail: "Dans la fiche OR → Retour de pièce → produit + quantité → le stock est réintégré (RETOUR_ATELIER)." },
+      { titre: "Suivre", detail: "Le panneau « Mouvements de stock liés à l'OR » affiche l'historique complet." },
+    ],
+    regles: [
+      { titre: "Règle d'or GPJ", detail: "Toute pièce sortie du magasin est imputée à un OR ou à une vente comptoir (règle non négociable du manuel)." },
+      { titre: "Stock disponible", detail: "Une sortie ne peut pas dépasser le stock actuel − stock réservé (specs V2 §05 règle 4)." },
+      { titre: "OR clos", detail: "Impossible de sortir des pièces sur un OR annulé, terminé ou facturé." },
+      { titre: "Traçabilité", detail: "Chaque sortie/retour est lié à l'OR (or_id) et au véhicule (vehicule_id) avec document OR-{numero}." },
+    ],
+    faq: [
+      { q: "Pourquoi ma sortie est refusée ?", r: "Le stock disponible est insuffisant (actuel − réservé), ou l'OR est terminé/annulé." },
+      { q: "Comment réintégrer une pièce non utilisée ?", r: "Dans la fiche OR → Retour de pièce : le stock est réintégré et le mouvement RETOUR_ATELIER est tracé." },
     ],
   },
   {
