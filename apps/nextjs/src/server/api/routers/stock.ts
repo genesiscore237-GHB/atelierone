@@ -7,6 +7,7 @@ import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSor
 import { PertesService } from "~/server/lib/pertes-service";
 import { sortirStockFIFO, verifierDispoNonPerimee, listerAlertesDlc } from "~/server/lib/lot-service";
 import { creerEchangeCore, retournerCoquille, listerCores } from "~/server/lib/core-service";
+import { sortirKit } from "~/server/lib/kit-service";
 import { ordresReparation, vehicules, produits as produitsTable } from "@atelierone/db";
 
 export const stockRouter = createTRPCRouter({
@@ -1520,6 +1521,7 @@ export const stockRouter = createTRPCRouter({
           dateMouvement: mouvementsStock.dateMouvement,
           motif: mouvementsStock.motif,
           documentLie: mouvementsStock.documentLie,
+          groupeOperationId: mouvementsStock.groupeOperationId,
           produitTitre: produitsTable.titre,
         })
         .from(mouvementsStock)
@@ -1667,6 +1669,32 @@ export const stockRouter = createTRPCRouter({
     .input(z.object({ orId: z.number().int().optional(), statut: z.string().optional(), limit: z.number().int().default(100) }))
     .query(async ({ ctx, input }) => {
       return listerCores(ctx.user.agenceId, input);
+    }),
+
+  sortirKit: requirePermissionProcedure("stock.modifier")
+    .input(z.object({ orId: z.number().int(), kitId: z.number().int(), quantite: z.number().positive(), motif: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id, statut: ordresReparation.statut, numero: ordresReparation.numero, vehiculeId: ordresReparation.vehiculeId })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "Ordre de réparation introuvable." });
+      if (or.statut === "cloture" || or.statut === "annule") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `OR ${or.numero} est ${or.statut} : sortie impossible.` });
+      }
+      return db.transaction(async (tx) => {
+        return sortirKit(tx as any, {
+          kitId: input.kitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+          orId: or.id,
+          vehiculeId: or.vehiculeId ?? 0,
+          numeroOR: or.numero,
+          motif: input.motif,
+          effectuePar: Number(ctx.user.id),
+        });
+      }) as any;
     }),
 });
 

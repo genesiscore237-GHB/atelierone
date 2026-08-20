@@ -111,6 +111,7 @@ Pour chaque pièce : **Articles / Catalogue → + Nouveau** :
 - **DLC** (specs V2) : délai d'alerte avant péremption en jours (fluides, colles…) — le tableau de bord alerte avant péremption et **la sortie est bloquée si le stock est périmé** (specs V2 §05 règle 8)
 - **Équivalences / Supersession** : dans la fiche article, ajouter la pièce remplaçante (SUPERSESSION) ou interchangeables (même pièce sous une autre référence)
 - **Échange standard (core)** : cocher pour les pièces en échange standard (alternateurs, démarreurs…) et saisir la **valeur du dépôt** (coquille) — specs V2 §05 règle 9
+- **Composition du kit** : pour un article de type KIT, ajouter chaque composant avec sa quantité — la sortie du kit décompte le kit et ses composants — specs V2 §02
 
 ### 4.3 Créer les unités de conversion
 
@@ -214,6 +215,15 @@ Dans la fiche article, onglet unités :
 5. Si la coquille n'est pas rendue : **« Perdue »** → le dépôt est conservé (COQUILLE_PERDUE).
 
 > 💡 Le suivi du dépôt est obligatoire (specs V2 §05 règle 9) : chaque échange est tracé avec l'OR et le mouvement de sortie.
+
+### 8quinquies. Sortie de kit — specs V2 processus 8
+
+1. **Prérequis** : l'article KIT doit avoir une **composition** définie (fiche article → « Composition du kit » : composants + quantités).
+2. Dans la fiche OR, section **« Sortie de kit »** : sélectionnez le kit + la quantité.
+3. **« Sortir le kit »** : le kit **et ses composants** sont décomptés du stock en une seule transaction (un mouvement SORTIE_OR par article, lié à l'OR).
+4. Si un composant est insuffisant : **rien n'est sorti** (transaction annulée) et un message explique le manque.
+
+> 💡 Un kit ne peut pas être composant de lui-même, et les doublons de composition sont refusés. La composition se gère dans la fiche article.
 
 ---
 

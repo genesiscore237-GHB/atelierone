@@ -192,6 +192,36 @@ export const STOCK_HELP_FICHES: HelpFiche[] = [
     ],
   },
   {
+    id: "stock-kits",
+    titre: "Kits (sortie groupée)",
+    courte: "Article de type KIT : sa sortie décompte le kit ET ses composants avec des mouvements liés à l'OR.",
+    priorite: "P1",
+    route: "/dashboard/ordres-reparation",
+    prerequis: [
+      "Un article KIT avec une composition définie (fiche article → Composition du kit)",
+      "Chaque composant en stock",
+      "Permission stock.modifier (magasinier)",
+    ],
+    fonctionnalites: [
+      "Composition : ajout de composants (quantité) dans la fiche article, doublons et auto-référence refusés",
+      "Sortie de kit liée à un OR : kit + composants décrémentés en une transaction atomique",
+      "Traçabilité : chaque composant a son mouvement SORTIE_OR, tous partagent le même groupe d'opération",
+      "Refus : composition vide, composant insuffisant (rollback complet), OR clos",
+    ],
+    etapes: [
+      { titre: "Définir la composition", detail: "Fiche article → Composition du kit → ajouter chaque composant avec sa quantité (ex. courroie ×2, pompe ×1)." },
+      { titre: "Sortir le kit", detail: "Fiche OR → Sortie de kit → choisir le kit + quantité → « Sortir le kit » : le kit et ses composants sortent du stock." },
+    ],
+    regles: [
+      { titre: "Règle 5 (specs V2)", detail: "La sortie d'un kit est atomique : si un composant manque, aucune décrémentation n'est appliquée (rollback)." },
+      { titre: "Anti-boucle", detail: "Un kit ne peut ni se contenir, ni contenir un kit qui le contient." },
+    ],
+    faq: [
+      { q: "Que se passe-t-il si un composant manque ?", r: "La sortie est refusée dans son ensemble : aucun mouvement n'est enregistré (transaction annulée)." },
+      { q: "Où voir les composants sortis ?", r: "Dans l'historique de l'OR : un mouvement SORTIE_OR par composant, avec le même groupe d'opération." },
+    ],
+  },
+  {
     id: "stock-inventaire",
     titre: "Inventaire (initial & cyclique)",
     courte: "Comptage physique, écarts théorique vs réel, ajustements automatiques.",

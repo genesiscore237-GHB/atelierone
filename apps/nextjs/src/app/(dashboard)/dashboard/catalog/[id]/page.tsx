@@ -8,7 +8,7 @@ import {
   ArrowLeft, Package, Trash2, Barcode, Info,
   BarChart3, History, ShoppingCart, Eye, AlertTriangle,
   Loader2, Plus, ChevronRight, ChevronDown,
-  Play, Pause, Ban, Archive, Star, Check, Tag, Receipt,
+  Play, Pause, Ban, Archive, Star, Check, Tag, Receipt, Boxes,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -963,6 +963,8 @@ function TarifsTab({ productId, product }: { productId: string; product: any }) 
       </div>
 
       <EquivalencesSection produitId={productId} />
+
+      <KitCompositionSection produitId={productId} />
     </div>
   );
 }
@@ -1046,6 +1048,82 @@ function EquivalencesSection({ produitId }: { produitId: string }) {
             </div>
             <p className="mt-2 text-[10px] text-muted-foreground">
               Type SUPERSESSION : cette pièce remplace celle-ci (nouvelle référence). INTERCHANGEABLE : échangeable sans modification.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ───── Composition de kit (specs V2 §02, US18) ───── */
+function KitCompositionSection({ produitId }: { produitId: string }) {
+  const utils = api.useUtils();
+  const { data: lignes, isLoading } = api.catalog.listKitLignes.useQuery({ kitId: Number(produitId) });
+  const { data: produits } = api.catalog.list.useQuery({ limit: 300 });
+  const [addForm, setAddForm] = useState({ composantId: 0, quantite: 1 });
+
+  const add = api.catalog.addKitLigne.useMutation({
+    onSuccess: () => { toast.success("Composant ajouté au kit"); utils.catalog.listKitLignes.invalidate(); setAddForm({ composantId: 0, quantite: 1 }); },
+    onError: (e) => toast.error(e.message),
+  });
+  const del = api.catalog.deleteKitLigne.useMutation({
+    onSuccess: () => { toast.success("Composant retiré"); utils.catalog.listKitLignes.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const listeProduits = (produits?.items ?? []).filter((p: any) => Number(p.id) !== Number(produitId));
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-5">
+      <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+        <Boxes size={14} className="text-primary" /> Composition du kit
+      </div>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Un article de type KIT sort du stock avec ses composants (mouvements liés à l'OR). Définissez ici sa composition.
+      </p>
+      {isLoading ? (
+        <Skeleton className="h-16 rounded-lg bg-muted" />
+      ) : (
+        <div className="space-y-2">
+          {!lignes?.length ? (
+            <p className="text-sm text-muted-foreground">Aucune composition définie pour cet article.</p>
+          ) : (
+            lignes.map((l: any) => (
+              <div key={l.id} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+                <div>
+                  <span className="font-medium">{l.titre}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">× {l.quantite}</span>
+                  {l.codeBarre && <span className="ml-2 font-mono text-[10px] text-muted-foreground">{l.codeBarre}</span>}
+                </div>
+                <Button variant="ghost" size="icon" className="size-7 text-destructive" onClick={() => del.mutate({ id: l.id })} disabled={del.isPending}>
+                  <Trash2 size={14} />
+                </Button>
+              </div>
+            ))
+          )}
+          <div className="mt-3 rounded-lg border border-dashed border-border p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Ajouter un composant</div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <select
+                className="rounded-lg border border-border bg-background px-3 py-2 text-sm sm:col-span-2"
+                value={addForm.composantId}
+                onChange={(e) => setAddForm({ ...addForm, composantId: Number(e.target.value) })}
+              >
+                <option value={0}>Composant (pièce / fluide)...</option>
+                {listeProduits.map((p: any) => <option key={p.id} value={Number(p.id)}>{p.titre}</option>)}
+              </select>
+              <Input type="number" min={1} placeholder="Qté" value={addForm.quantite} onChange={(e) => setAddForm({ ...addForm, quantite: Number(e.target.value) })} />
+              <Button
+                className="gap-1.5 sm:col-span-3"
+                disabled={!addForm.composantId || add.isPending}
+                onClick={() => add.mutate({ kitId: Number(produitId), composantId: addForm.composantId, quantite: addForm.quantite })}
+              >
+                <Plus size={14} /> {add.isPending ? "Ajout..." : "Ajouter le composant"}
+              </Button>
+            </div>
+            <p className="mt-2 text-[10px] text-muted-foreground">
+              À la sortie du kit, chaque composant est décrémenté (quantité × composition) avec un mouvement tracé lié à l'OR.
             </p>
           </div>
         </div>

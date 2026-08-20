@@ -177,6 +177,7 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [retourForm, setRetourForm] = useState({ produitId: 0, quantite: 1, motif: "" });
   const [reservationForm, setReservationForm] = useState({ produitId: 0, quantite: 1, motif: "" });
   const [coreForm, setCoreForm] = useState({ produitId: 0, quantite: 1, valeurCore: 0, motif: "" });
+  const [kitForm, setKitForm] = useState({ kitId: 0, quantite: 1, motif: "" });
 
   const addLigne = api.or.addLigne.useMutation({
     onSuccess: () => { toast.success("Ligne ajoutée"); utils.or.getById.invalidate(); },
@@ -209,6 +210,11 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
   });
   const retournerCore = api.stock.retournerCoquille.useMutation({
     onSuccess: () => { toast.success("Coquille traitée"); utils.stock.listerCores.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const { data: kitsDispo } = api.catalog.listKits.useQuery();
+  const sortirKit = api.stock.sortirKit.useMutation({
+    onSuccess: () => { toast.success("Kit sorti (composants décomptés)"); utils.or.getById.invalidate(); utils.stock.listMouvementsParOR.invalidate(); setKitForm({ kitId: 0, quantite: 1, motif: "" }); },
     onError: (e) => toast.error(e.message),
   });
   const { data: mvts } = api.stock.listMouvementsParOR.useQuery({ orId: id });
@@ -441,6 +447,25 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Sortie de kit (specs V2 §02, US18) */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+          <Package size={14} className="text-primary" /> Sortie de kit
+        </div>
+        <div className="grid gap-2 lg:grid-cols-4">
+          <select className="rounded-lg border border-border bg-background px-3 py-2 text-sm" value={kitForm.kitId} onChange={(e) => setKitForm({ ...kitForm, kitId: Number(e.target.value) })}>
+            <option value={0}>Kit (avec composition)...</option>
+            {(kitsDispo ?? []).map((k: any) => <option key={k.id} value={Number(k.id)}>{k.titre}</option>)}
+          </select>
+          <Input type="number" min={1} placeholder="Qté" value={kitForm.quantite} onChange={(e) => setKitForm({ ...kitForm, quantite: Number(e.target.value) })} />
+          <Input placeholder="Motif" value={kitForm.motif} onChange={(e) => setKitForm({ ...kitForm, motif: e.target.value })} />
+          <Button onClick={() => { if (!kitForm.kitId) { toast.error("Sélectionnez un kit"); return; } sortirKit.mutate({ orId: id, kitId: kitForm.kitId, quantite: kitForm.quantite, motif: kitForm.motif || undefined }); }} disabled={sortirKit.isPending} className="gap-2">
+            <Package size={14} /> {sortirKit.isPending ? "Sortie..." : "Sortir le kit"}
+          </Button>
+        </div>
+        <p className="mt-2 text-[10px] text-muted-foreground">Le kit et ses composants (composition définie dans la fiche article) sont sortis du stock avec des mouvements liés à l'OR.</p>
       </div>
     </div>
   );

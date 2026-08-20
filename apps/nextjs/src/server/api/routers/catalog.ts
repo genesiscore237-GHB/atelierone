@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, adminProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, modelesEmballage, fournisseurs, produitsFournisseurs, agences, articleEquivalences } from "@atelierone/db";
+import { db, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, modelesEmballage, fournisseurs, produitsFournisseurs, agences, articleEquivalences, kitsLignes } from "@atelierone/db";
 import { eq, ilike, and, desc, sql, inArray, ne, getTableColumns, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { generateBarcode, autoGenerateBarcode, ensureBarcodeSequence } from "@atelierone/db/utils";
 import { appendFileSync } from "fs";
 import { join } from "path";
+import { listerKitLignes } from "~/server/lib/kit-service";
 
 const ADMIN_ROLES = ["superadmin", "directeur", "admin"];
 
@@ -1351,6 +1352,53 @@ export const catalogRouter = createTRPCRouter({
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       await db.delete(articleEquivalences).where(eq(articleEquivalences.id, input.id));
+      return { success: true };
+    }),
+
+  listKitLignes: stockProcedure
+    .input(z.object({ kitId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      return listerKitLignes(input.kitId);
+    }),
+
+  listKits: stockProcedure
+    .query(async ({ ctx }) => {
+      const rows = await db
+        .select({ id: produits.id, titre: produits.titre, codeArticle: produits.codeArticle })
+        .from(kitsLignes)
+        .innerJoin(produits, eq(kitsLignes.kitId, produits.id))
+        .groupBy(produits.id, produits.titre, produits.codeArticle)
+        .orderBy(produits.titre);
+      return rows;
+    }),
+
+  addKitLigne: requirePermissionProcedure("stock.modifier")
+    .input(z.object({ kitId: z.number().int(), composantId: z.number().int(), quantite: z.number().positive().default(1) }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.kitId === input.composantId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Un kit ne peut pas être composant de lui-même." });
+      }
+      const [existing] = await db
+        .select({ id: kitsLignes.id })
+        .from(kitsLignes)
+        .where(and(eq(kitsLignes.kitId, input.kitId), eq(kitsLignes.composantId, input.composantId)))
+        .limit(1);
+      if (existing) throw new TRPCError({ code: "BAD_REQUEST", message: "Ce composant est déjà dans la composition du kit." });
+      const composantEnKit = await listerKitLignes(input.composantId);
+      if (composantEnKit.some((l) => l.composantId === input.kitId)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Boucle de composition interdite (le composant est lui-même un kit contenant ce kit)." });
+      }
+      const [row] = await db
+        .insert(kitsLignes)
+        .values({ kitId: input.kitId, composantId: input.composantId, quantite: input.quantite } as any)
+        .returning();
+      return row;
+    }),
+
+  deleteKitLigne: requirePermissionProcedure("stock.modifier")
+    .input(z.object({ id: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      await db.delete(kitsLignes).where(eq(kitsLignes.id, input.id));
       return { success: true };
     }),
 });
