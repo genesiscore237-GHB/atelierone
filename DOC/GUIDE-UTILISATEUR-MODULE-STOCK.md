@@ -233,6 +233,17 @@ Dans la fiche article, onglet unités :
 
 > 💡 Règle 10 (specs V2) : les pièces fournies par le client ne sont ni décomptées du stock ni facturées — uniquement tracées sur l'OR.
 
+### 8septies. Cycle de vie d'une session d'inventaire — specs V2 Annexe Statuts
+
+Une session d'inventaire suit un cycle strict : **Brouillon → En cours → Validé → Clôturé**.
+
+1. **« Nouvelle session »** : la session est créée en **BROUILLON** (aucun comptage possible).
+2. **« Démarrer »** : la session passe en **EN COURS** — le comptage devient possible.
+3. **« Valider »** : les écarts sont appliqués au stock (mouvements AJUSTEMENT ±, pertes si négatif) — session **VALIDÉE**.
+4. **« Clôturer »** : la session est **CLÔTURÉE** (archivée) — plus rien ne peut être modifié.
+
+> 💡 Le comptage est refusé en dehors du statut « En cours ». Les transitions sont strictes (une session brouillon ne peut pas être clôturée directement, etc.).
+
 ---
 
 ## 9. Comment enregistrer une perte / un vol

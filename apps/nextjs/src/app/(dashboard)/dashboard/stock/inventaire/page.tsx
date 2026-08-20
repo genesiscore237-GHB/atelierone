@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api } from "~/trpc/react";
 import { motion } from "framer-motion";
-import { Plus, ClipboardList, CheckCircle, Clock, AlertTriangle, X, Eye, Play } from "lucide-react";
+import { Plus, ClipboardList, CheckCircle, Clock, AlertTriangle, X, Eye, Play, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { usePermissions } from "~/hooks/usePermissions";
 
@@ -48,9 +48,29 @@ export default function InventairePage() {
     onError: (e) => toast.error(e.message),
   });
 
+  const demarrer = api.stock.demarrerSessionInventaire.useMutation({
+    onSuccess: () => {
+      utils.stock.listSessionsInventaire.invalidate();
+      selectedSession && utils.stock.getSessionInventaire.invalidate({ id: selectedSession });
+      toast.success("Session démarrée : comptage possible");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const cloturer = api.stock.cloturerSessionInventaire.useMutation({
+    onSuccess: () => {
+      utils.stock.listSessionsInventaire.invalidate();
+      selectedSession && utils.stock.getSessionInventaire.invalidate({ id: selectedSession });
+      toast.success("Session clôturée (archivée)");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const statusConfig: Record<string, { icon: any; label: string; color: string }> = {
+    brouillon: { icon: Plus, label: "Brouillon", color: "bg-muted/50 text-muted-foreground dark:bg-muted/50 dark:text-foreground/70" },
     en_cours: { icon: Clock, label: "En cours", color: "bg-primary/10 text-primary dark:bg-primary/10 dark:text-primary" },
     valide: { icon: CheckCircle, label: "Validé", color: "bg-success/10 text-success-foreground dark:bg-success/10 dark:text-success-foreground" },
+    cloture: { icon: Lock, label: "Clôturé", color: "bg-destructive/10 text-destructive dark:bg-destructive/10 dark:text-destructive" },
   };
 
   return (
@@ -113,12 +133,28 @@ export default function InventairePage() {
                           >
                             <Eye size={14} /> Détails
                           </button>
+                          {s.statut === "brouillon" && hasPermission("stock.inventaire") && (
+                            <button
+                              onClick={() => demarrer.mutate({ id: s.id })}
+                              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 dark:text-primary dark:hover:bg-primary/10 transition-colors"
+                            >
+                              <Play size={14} /> Démarrer
+                            </button>
+                          )}
                           {s.statut === "en_cours" && hasPermission("stock.inventaire") && (
                             <button
                               onClick={() => valider.mutate({ id: s.id })}
                               className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-success-foreground hover:bg-success/10 dark:text-success-foreground dark:hover:bg-success/10 transition-colors"
                             >
                               <CheckCircle size={14} /> Valider
+                            </button>
+                          )}
+                          {s.statut === "valide" && hasPermission("stock.inventaire") && (
+                            <button
+                              onClick={() => cloturer.mutate({ id: s.id })}
+                              className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 dark:text-destructive dark:hover:bg-destructive/10 transition-colors"
+                            >
+                              <Lock size={14} /> Clôturer
                             </button>
                           )}
                         </td>
@@ -140,37 +176,47 @@ export default function InventairePage() {
               <span className="text-xs text-muted-foreground">{sessionDetail?.totalProduits ?? 0} produits, {sessionDetail?.totalEcarts ?? 0} écarts</span>
             </div>
 
-            <div className="mb-4 rounded-lg bg-muted/50 dark:bg-muted/50 p-3">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">Produit</label>
-                  <select className="w-full rounded-lg border border-border/50 dark:border-border bg-background dark:bg-muted px-3 py-1.5 text-xs text-foreground outline-none" value={countForm.produitId} onChange={(e) => setCountForm({ ...countForm, produitId: e.target.value })}>
-                    <option value="">Sélectionner</option>
-                    {produits?.map((p: any) => <option key={p.id} value={p.id}>{p.titre}</option>)}
+            {sessionDetail?.statut === "en_cours" ? (
+              <div className="mb-4 rounded-lg bg-muted/50 dark:bg-muted/50 p-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Produit</label>
+                    <select className="w-full rounded-lg border border-border/50 dark:border-border bg-background dark:bg-muted px-3 py-1.5 text-xs text-foreground outline-none" value={countForm.produitId} onChange={(e) => setCountForm({ ...countForm, produitId: e.target.value })}>
+                      <option value="">Sélectionner</option>
+                      {produits?.map((p: any) => <option key={p.id} value={p.id}>{p.titre}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Qté réelle</label>
+                    <input type="number" min={0} className="w-full rounded-lg border border-border/50 dark:border-border bg-background dark:bg-muted px-3 py-1.5 text-xs text-foreground outline-none" value={countForm.quantiteReelle || ""} onChange={(e) => setCountForm({ ...countForm, quantiteReelle: Number(e.target.value) })} />
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Unité de comptage (optionnel)</label>
+                  <select className="w-full rounded-lg border border-border/50 dark:border-border bg-background dark:bg-muted px-3 py-1.5 text-xs text-foreground outline-none" value={countForm.uniteId} onChange={(e) => setCountForm({ ...countForm, uniteId: e.target.value })}>
+                    <option value="">Unité de base (défaut)</option>
+                    {unites?.map((u: any) => <option key={u.id} value={u.id}>{u.nom} ({u.code})</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">Qté réelle</label>
-                  <input type="number" min={0} className="w-full rounded-lg border border-border/50 dark:border-border bg-background dark:bg-muted px-3 py-1.5 text-xs text-foreground outline-none" value={countForm.quantiteReelle || ""} onChange={(e) => setCountForm({ ...countForm, quantiteReelle: Number(e.target.value) })} />
-                </div>
+                {hasPermission("stock.inventaire") && (
+                  <button
+                    onClick={() => countForm.produitId && compter.mutate({ sessionId: selectedSession, produitId: countForm.produitId, uniteId: countForm.uniteId || undefined, quantiteReelle: countForm.quantiteReelle, commentaire: countForm.commentaire })}
+                    disabled={!countForm.produitId || compter.isPending}
+                    className="mt-2 w-full rounded-lg bg-primary py-1.5 text-xs font-semibold text-foreground hover:bg-primary/80 disabled:opacity-50 transition-colors"
+                  >
+                    {compter.isPending ? "..." : "Enregistrer le comptage"}
+                  </button>
+                )}
               </div>
-              <div className="mt-2">
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Unité de comptage (optionnel)</label>
-                <select className="w-full rounded-lg border border-border/50 dark:border-border bg-background dark:bg-muted px-3 py-1.5 text-xs text-foreground outline-none" value={countForm.uniteId} onChange={(e) => setCountForm({ ...countForm, uniteId: e.target.value })}>
-                  <option value="">Unité de base (défaut)</option>
-                  {unites?.map((u: any) => <option key={u.id} value={u.id}>{u.nom} ({u.code})</option>)}
-                </select>
+            ) : (
+              <div className="mb-4 rounded-lg bg-muted/30 dark:bg-muted/30 p-3 text-center text-xs text-muted-foreground">
+                {sessionDetail?.statut === "brouillon"
+                  ? "Session en brouillon : démarrez-la pour saisir les comptages."
+                  : sessionDetail?.statut === "cloture"
+                    ? "Session clôturée : aucun comptage possible (archivée)."
+                    : "Session validée : les écarts ont été appliqués au stock, aucun comptage possible."}
               </div>
-              {hasPermission("stock.inventaire") && (
-                <button
-                  onClick={() => countForm.produitId && compter.mutate({ sessionId: selectedSession, produitId: countForm.produitId, uniteId: countForm.uniteId || undefined, quantiteReelle: countForm.quantiteReelle, commentaire: countForm.commentaire })}
-                  disabled={!countForm.produitId || compter.isPending}
-                  className="mt-2 w-full rounded-lg bg-primary py-1.5 text-xs font-semibold text-foreground hover:bg-primary/80 disabled:opacity-50 transition-colors"
-                >
-                  {compter.isPending ? "..." : "Enregistrer le comptage"}
-                </button>
-              )}
-            </div>
+            )}
 
             <div className="space-y-1 max-h-96 overflow-y-auto">
               {sessionDetail?.comptages?.map((c: any) => {

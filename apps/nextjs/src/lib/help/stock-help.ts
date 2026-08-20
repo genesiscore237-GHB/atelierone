@@ -246,6 +246,33 @@ export const STOCK_HELP_FICHES: HelpFiche[] = [
     ],
   },
   {
+    id: "stock-inventaire-statuts",
+    titre: "Cycle de vie d'une session d'inventaire",
+    courte: "Brouillon → En cours → Validé → Clôturé : le comptage n'est possible qu'en « En cours », la clôture archive la session.",
+    priorite: "P1",
+    route: "/dashboard/stock/inventaire",
+    prerequis: ["Permission stock.inventaire (magasinier / chef d'atelier)"],
+    fonctionnalites: [
+      "Création en BROUILLON : la session est préparée, aucun comptage possible",
+      "Démarrage → EN COURS : le comptage devient possible",
+      "Validation → VALIDÉ : les écarts sont appliqués au stock (mouvements + pertes si négatif)",
+      "Clôture → CLÔTURÉ : session archivée, tout est bloqué",
+      "Transitions strictes : brouillon→en_cours→valide→cloture, refus de tout autre passage",
+    ],
+    etapes: [
+      { titre: "Créer la session", detail: "« Nouvelle session » : elle apparaît en BROUILLON." },
+      { titre: "Démarrer", detail: "Bouton « Démarrer » : la session passe en EN COURS et le comptage s'active." },
+      { titre: "Valider puis clôturer", detail: "« Valider » applique les écarts au stock (session VALIDÉE) ; « Clôturer » archive définitivement (CLÔTURÉE)." },
+    ],
+    regles: [
+      { titre: "Annexe Statuts (specs V2)", detail: "Session Inventaire : Brouillon | En cours | Validé | Clôturé — le comptage n'est autorisé qu'en « En cours »." },
+    ],
+    faq: [
+      { q: "Le comptage est grisé, pourquoi ?", r: "La session doit être en EN COURS : démarrez-la d'abord (bouton « Démarrer »)." },
+      { q: "Une session clôturée peut-elle être modifiée ?", r: "Non : la clôture est définitive et verrouille le comptage et les transitions." },
+    ],
+  },
+  {
     id: "stock-inventaire",
     titre: "Inventaire (initial & cyclique)",
     courte: "Comptage physique, écarts théorique vs réel, ajustements automatiques.",

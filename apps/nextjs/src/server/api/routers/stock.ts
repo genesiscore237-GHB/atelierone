@@ -8,6 +8,7 @@ import { PertesService } from "~/server/lib/pertes-service";
 import { sortirStockFIFO, verifierDispoNonPerimee, listerAlertesDlc } from "~/server/lib/lot-service";
 import { creerEchangeCore, retournerCoquille, listerCores } from "~/server/lib/core-service";
 import { sortirKit } from "~/server/lib/kit-service";
+import { comptageAutorise, transitionAutorisee, demarrerSessionInventaire, cloturerSessionInventaire } from "~/server/lib/inventaire-service";
 import { ordresReparation, vehicules, produits as produitsTable } from "@atelierone/db";
 
 export const stockRouter = createTRPCRouter({
@@ -455,11 +456,11 @@ export const stockRouter = createTRPCRouter({
       const [session] = await db.insert(inventairesSessions).values({
         agenceId: ctx.user.agenceId,
         libelle: input.libelle || `Inventaire du ${new Date().toLocaleDateString("fr-FR")}`,
-        statut: "en_cours",
+        statut: "brouillon",
         effectuePar: Number(ctx.user.id),
         notes: input.notes || null,
       }).returning() as any;
-      return { id: String(session.id) };
+      return { id: String(session.id), statut: "brouillon" };
     }) as any,
 
   listSessionsInventaire: protectedProcedure.query(async ({ ctx }) => {
@@ -544,7 +545,7 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(inventairesSessions.id, Number(input.sessionId)), eq(inventairesSessions.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "Session introuvable" });
-        if (session.statut !== "en_cours") throw new TRPCError({ code: "BAD_REQUEST", message: "Session dÃ©jÃ  terminÃ©e" });
+        if (!comptageAutorise(session.statut)) throw new TRPCError({ code: "BAD_REQUEST", message: `Le comptage n'est possible qu'en statut « en cours » (actuel : ${session.statut}).` });
 
         const [stockRow] = await tx.select()
           .from(stocks)
@@ -590,7 +591,7 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(inventairesSessions.id, Number(input.id)), eq(inventairesSessions.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!session) throw new TRPCError({ code: "NOT_FOUND", message: "Session introuvable" });
-        if (session.statut !== "en_cours") throw new TRPCError({ code: "BAD_REQUEST", message: "Session dÃ©jÃ  terminÃ©e" });
+        if (!transitionAutorisee(session.statut, "valide")) throw new TRPCError({ code: "BAD_REQUEST", message: `Seule une session « en cours » peut être validée (actuel : ${session.statut}).` });
 
         const comptages = await tx.select()
           .from(inventaires)
@@ -664,6 +665,18 @@ export const stockRouter = createTRPCRouter({
           validePar: ctx.user.id,
         }).where(eq(inventairesSessions.id, session.id)) as any;
       }) as any;
+    }),
+
+  demarrerSessionInventaire: requirePermissionProcedure("stock.inventaire")
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      return demarrerSessionInventaire({ id: Number(input.id), agenceId: ctx.user.agenceId }) as any;
+    }),
+
+  cloturerSessionInventaire: requirePermissionProcedure("stock.inventaire")
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      return cloturerSessionInventaire({ id: Number(input.id), agenceId: ctx.user.agenceId, cloturePar: Number(ctx.user.id) }) as any;
     }),
 
   ajusterStock: requirePermissionProcedure("stock.modifier")
