@@ -108,6 +108,7 @@ Pour chaque pièce : **Articles / Catalogue → + Nouveau** :
 - **Emplacement principal** (optionnel)
 - **Reconditionnable** : cocher pour les huiles en fût
 - **Origine / Qualité** (specs V2) : Constructeur (Genuine), OEM équivalent, Aftermarket ou Autre — reflète la qualité de la pièce
+- **DLC** (specs V2) : délai d'alerte avant péremption en jours (fluides, colles…) — le tableau de bord alerte avant péremption et **la sortie est bloquée si le stock est périmé** (specs V2 §05 règle 8)
 - **Équivalences / Supersession** : dans la fiche article, ajouter la pièce remplaçante (SUPERSESSION) ou interchangeables (même pièce sous une autre référence)
 
 ### 4.3 Créer les unités de conversion

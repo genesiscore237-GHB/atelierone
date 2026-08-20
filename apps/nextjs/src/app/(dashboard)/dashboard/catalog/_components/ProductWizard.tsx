@@ -220,6 +220,7 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
       refAftermarket: formValues.ref_aftermarket || undefined,
       emplacementPrincipalId: formValues.emplacement_principal_id ?? undefined,
       origineQualite: formValues.origine_qualite || "AUTRE",
+      dlcJours: formValues.dlc_jours || undefined,
       estReconditionnable: !!formValues.est_reconditionnable,
       notes: formValues.notes || undefined,
       editeur: formValues.editeur || undefined,
@@ -509,6 +510,11 @@ export function ProductWizard({ onSave, isPending, defaultValues }: ProductWizar
               </SelectContent>
             </Select>
             <p className="mt-1 text-xs text-muted-foreground">Distinction de la qualité/origine de la pièce.</p>
+          </div>
+          <div>
+            <Label>DLC — délai d'alerte (jours)</Label>
+            <Input type="number" min={1} value={formValues.dlc_jours ?? ""} onChange={(e) => updateFormValue("dlc_jours", e.target.value ? Number(e.target.value) : null)} placeholder="ex. 30 (fluides, colles…)" />
+            <p className="mt-1 text-xs text-muted-foreground">Alerte avant péremption (specs V2 §05 règle 8).</p>
           </div>
           <div className="sm:col-span-2">
             <Label>Emplacement principal</Label>

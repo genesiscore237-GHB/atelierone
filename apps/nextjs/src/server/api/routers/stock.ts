@@ -5,7 +5,7 @@ import { eq, and, desc, sql, lt, lte, gte, isNotNull, isNull, count, sum, avg, a
 import { TRPCError } from "@trpc/server";
 import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSortieUnite, mouvementEntreeUnite, TYPES_MOUVEMENT, sortirPourOR, retourAtelier, reserverStock, libererStock } from "~/server/lib/stock-engine";
 import { PertesService } from "~/server/lib/pertes-service";
-import { sortirStockFIFO } from "~/server/lib/lot-service";
+import { sortirStockFIFO, verifierDispoNonPerimee, listerAlertesDlc } from "~/server/lib/lot-service";
 import { ordresReparation, vehicules, produits as produitsTable } from "@atelierone/db";
 
 export const stockRouter = createTRPCRouter({
@@ -1443,6 +1443,13 @@ export const stockRouter = createTRPCRouter({
           .limit(1);
         if (!prod) throw new TRPCError({ code: "BAD_REQUEST", message: "Produit introuvable." });
 
+        // Specs V2 §05 règle 8 : blocage si stock périmé (produits suivis par lots)
+        await verifierDispoNonPerimee(tx as any, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+        });
+
         const res = await sortirPourOR(tx as any, {
           produitId: input.produitId,
           agenceId: ctx.user.agenceId,
@@ -1542,6 +1549,12 @@ export const stockRouter = createTRPCRouter({
         if (or.statut === "annule" || or.statut === "termine" || or.statut === "facture") {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de réserver des pièces sur un OR ${or.statut}.` });
         }
+        // Specs V2 §05 règle 8 : on ne réserve pas de stock périmé
+        await verifierDispoNonPerimee(tx as any, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+        });
         return await reserverStock(tx as any, {
           produitId: input.produitId,
           agenceId: ctx.user.agenceId,
@@ -1588,6 +1601,13 @@ export const stockRouter = createTRPCRouter({
           effectuePar: Number(ctx.user.id),
         });
       }) as any;
+    }),
+
+  // ─── Alertes DLC / péremption (specs V2 §05 règle 8, §07 couleurs) ───
+  dlcAlertes: requirePermissionProcedure("stock.consulter")
+    .input(z.object({ seuilJours: z.number().int().positive().default(30) }))
+    .query(async ({ ctx, input }) => {
+      return listerAlertesDlc(ctx.user.agenceId, input.seuilJours);
     }),
 });
 

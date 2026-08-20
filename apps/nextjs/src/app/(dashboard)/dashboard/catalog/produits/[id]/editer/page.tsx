@@ -72,6 +72,7 @@ function mapProductToDefaults(product: any) {
     ref_aftermarket: product.refAftermarket ?? "",
     emplacement_principal_id: product.emplacementPrincipalId ?? null,
     origine_qualite: product.origineQualite ?? "AUTRE",
+    dlc_jours: product.dlcJours ?? null,
     est_reconditionnable: product.estReconditionnable ?? false,
     notes: product.notes ?? "",
     unites,

@@ -72,6 +72,7 @@ function formatProduct(p: typeof produits.$inferSelect) {
       emplacementPrincipalId: p.emplacementPrincipalId,
       estReconditionnable: p.estReconditionnable,
       origineQualite: p.origineQualite,
+      dlcJours: p.dlcJours,
       notes: p.notes,
     marque: p.marque,
     referenceFabricant: p.referenceFabricant,
@@ -301,6 +302,8 @@ export const catalogRouter = createTRPCRouter({
       estReconditionnable: z.boolean().default(false),
       // Specs V2 §02 : origine / qualité (Constructeur / OEM / Aftermarket / Autre)
       origineQualite: z.enum(["CONSTRUCTEUR", "OEM", "AFTERMARKET", "AUTRE"]).optional(),
+      // Specs V2 §02/§05 : DLC — délai d'alerte avant péremption (jours)
+      dlcJours: z.number().int().positive().optional(),
       notes: z.string().optional(),
       fournisseurs: z.array(z.object({
         fournisseurId: z.number(),
@@ -500,6 +503,8 @@ export const catalogRouter = createTRPCRouter({
       estReconditionnable: z.boolean().optional(),
       // Specs V2 §02 : origine / qualité
       origineQualite: z.enum(["CONSTRUCTEUR", "OEM", "AFTERMARKET", "AUTRE"]).optional(),
+      // Specs V2 §02/§05 : DLC — délai d'alerte avant péremption (jours)
+      dlcJours: z.number().int().positive().optional(),
       notes: z.string().optional(),
       unites: z.array(z.object({
           unite_id: z.string().nullable(),

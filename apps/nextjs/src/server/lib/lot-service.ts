@@ -1,5 +1,6 @@
-import { db, stocksLots, lots, mouvementsStock } from "@atelierone/db";
-import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
+import { db, stocksLots, lots, mouvementsStock, produits } from "@atelierone/db";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lt, sum } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
 
 type Tx = Parameters<Parameters<(typeof db)["transaction"]>[0]>[0];
 
@@ -266,4 +267,123 @@ export async function trouverLotParReference(
     .orderBy(desc(mouvementsStock.id))
     .limit(1) as any[];
   return mvt?.lotId ?? null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Specs V2 §05 règle 8 — DLC / PÉREMPTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type DlcStatus = "perime" | "proche" | "ok" | "aucune";
+
+/** Statut de péremption d'une date (aucune si non renseignée). */
+export function statutDlc(datePeremption: Date | string | null, seuilJours = 30): DlcStatus {
+  if (!datePeremption) return "aucune";
+  const d = typeof datePeremption === "string" ? new Date(`${datePeremption}T00:00:00`) : new Date(datePeremption);
+  if (Number.isNaN(d.getTime())) return "aucune";
+  const aujourdhui = new Date();
+  aujourdhui.setHours(0, 0, 0, 0);
+  if (d < aujourdhui) return "perime";
+  const seuil = new Date(aujourdhui);
+  seuil.setDate(seuil.getDate() + seuilJours);
+  if (d <= seuil) return "proche";
+  return "ok";
+}
+
+/**
+ * Vérifie qu'il reste assez de stock NON PÉRIMÉ pour une sortie/réservation.
+ * Les articles suivis par lots (au moins un lot en stock) sont contrôlés :
+ * si tout le stock restant est périmé, la sortie est bloquée (specs §05 règle 8).
+ * Les articles sans lot (pas de suivi DLC) ne sont pas bloqués.
+ */
+export async function verifierDispoNonPerimee(
+  tx: Tx,
+  params: { produitId: number; agenceId: number; quantite: number; seuilJours?: number },
+): Promise<void> {
+  const [row] = await tx
+    .select({ total: sum(stocksLots.quantite) })
+    .from(stocksLots)
+    .where(and(
+      eq(stocksLots.produitId, params.produitId),
+      eq(stocksLots.agenceId, params.agenceId),
+    )) as any[];
+  const totalLot = Number(row?.total ?? 0);
+  if (totalLot <= 0) return; // produit non suivi par lot → pas de contrôle DLC
+
+  const auj = new Date();
+  auj.setHours(0, 0, 0, 0);
+  const aujStr = auj.toISOString().slice(0, 10);
+  const [ok] = await tx
+    .select({ dispo: sum(stocksLots.quantite) })
+    .from(stocksLots)
+    .innerJoin(lots, eq(lots.id, stocksLots.lotId))
+    .where(and(
+      eq(stocksLots.produitId, params.produitId),
+      eq(stocksLots.agenceId, params.agenceId),
+      gte(lots.datePeremption, aujStr),
+    )) as any[];
+  const dispoNonPerimee = Number(ok?.dispo ?? 0);
+
+  if (dispoNonPerimee < params.quantite) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `Stock disponible non périmé insuffisant : ${dispoNonPerimee} < ${params.quantite} (tout ou partie du stock est périmé) — sortie bloquée (specs DLC).`,
+    });
+  }
+}
+
+/**
+ * Liste des alertes DLC pour le tableau de bord : lots périmés (rouge) ou
+ * proches de la péremption (orange), avec produit et quantité en stock.
+ */
+export async function listerAlertesDlc(
+  agenceId: number,
+  seuilJours = 30,
+): Promise<Array<{
+  lotId: number;
+  numeroLot: string;
+  produitId: number;
+  titre: string;
+  codeBarre: string | null;
+  datePeremption: string | null;
+  quantite: number;
+  statut: DlcStatus;
+}>> {
+  const auj = new Date();
+  auj.setHours(0, 0, 0, 0);
+  const seuil = new Date(auj);
+  seuil.setDate(seuil.getDate() + seuilJours);
+  const seuilStr = seuil.toISOString().slice(0, 10);
+
+  const rows = await db
+    .select({
+      lotId: lots.id,
+      numeroLot: lots.numeroLot,
+      produitId: stocksLots.produitId,
+      titre: produits.titre,
+      codeBarre: produits.codeBarre,
+      datePeremption: lots.datePeremption,
+      quantite: stocksLots.quantite,
+    })
+    .from(stocksLots)
+    .innerJoin(lots, eq(lots.id, stocksLots.lotId))
+    .innerJoin(produits, eq(produits.id, stocksLots.produitId))
+    .where(and(
+      eq(stocksLots.agenceId, agenceId),
+      isNotNull(lots.datePeremption),
+      lt(lots.datePeremption, seuilStr),
+    ))
+    .orderBy(asc(lots.datePeremption)) as any[];
+
+  return rows
+    .map((r) => ({
+      lotId: r.lotId,
+      numeroLot: r.numeroLot,
+      produitId: r.produitId,
+      titre: r.titre,
+      codeBarre: r.codeBarre,
+      datePeremption: r.datePeremption,
+      quantite: Number(r.quantite ?? 0),
+      statut: statutDlc(r.datePeremption, seuilJours),
+    }))
+    .filter((a) => a.statut === "perime" || a.statut === "proche");
 }

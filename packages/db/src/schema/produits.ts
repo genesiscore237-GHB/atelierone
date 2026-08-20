@@ -48,6 +48,8 @@ export const produits = pgTable("produits", {
   // Specs V2 §02 : origine / qualité de la pièce
   // CONSTRUCTEUR (Genuine) | OEM (équivalent) | AFTERMARKET | AUTRE
   origineQualite: varchar("origine_qualite", { length: 20 }).default("AUTRE"),
+  // Specs V2 §02/§05 : DLC — délai d'alerte avant péremption (jours) pour fluides, colles…
+  dlcJours: integer("dlc_jours"),
   // Fiche technique pièce / service
   marque: varchar("marque", { length: 255 }),
   referenceFabricant: varchar("reference_fabricant", { length: 255 }),

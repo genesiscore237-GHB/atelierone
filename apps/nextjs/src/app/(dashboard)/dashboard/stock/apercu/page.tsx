@@ -3,7 +3,7 @@
 import { api } from "~/trpc/react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { Package, AlertTriangle, Activity, TrendingUp, ArrowRight, Repeat, ClipboardList, ListOrdered, RefreshCw, ShieldAlert, Snowflake, Store } from "lucide-react";
+import { Package, AlertTriangle, Activity, TrendingUp, ArrowRight, Repeat, ClipboardList, ListOrdered, RefreshCw, ShieldAlert, Snowflake, Store, CalendarClock } from "lucide-react";
 
 const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } };
 const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
@@ -13,6 +13,7 @@ export default function StockDashboardPage() {
   const { data: alertes } = api.stock.getAlertes.useQuery();
   const { data: alertesAntiVol } = api.stock.getAlertesAntiVol.useQuery();
   const { data: dormants } = api.stock.getStocksDormants.useQuery({ jours: 90, limit: 10 });
+  const { data: dlcAlertes } = api.stock.dlcAlertes.useQuery({ seuilJours: 30 });
 
   const summaryCards = [
     { label: "Produits en stock", value: dashboard?.totalProduits ?? 0, icon: Package, color: "text-success-foreground", bg: "bg-success/10" },
@@ -174,6 +175,35 @@ export default function StockDashboardPage() {
               )}
             </div>
           </div>
+
+          {dlcAlertes && dlcAlertes.length > 0 && (
+            <div className="rounded-xl border border-destructive/20 dark:border-destructive/50 bg-background dark:bg-card p-4">
+              <h2 className="text-sm font-bold text-destructive uppercase tracking-wider mb-3 flex items-center gap-2">
+                <CalendarClock size={16} /> Alertes DLC / Péremption
+                <span className="ml-auto text-xs font-normal text-muted-foreground">{dlcAlertes.length} lot(s)</span>
+              </h2>
+              <div className="space-y-2">
+                {dlcAlertes.slice(0, 6).map((a: any) => (
+                  <div key={a.lotId} className={`flex items-center justify-between rounded-lg px-3 py-2 ${a.statut === "perime" ? "bg-destructive/10" : "bg-warning/10"}`}>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">{a.titre}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {a.numeroLot} · {a.quantite} en stock
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className={`text-xs font-bold uppercase ${a.statut === "perime" ? "text-destructive" : "text-warning-foreground"}`}>
+                        {a.statut === "perime" ? "Périmé" : "Bientôt périmé"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {a.datePeremption ? new Date(a.datePeremption + "T00:00:00").toLocaleDateString("fr-FR") : "—"}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {dormants && dormants.items.length > 0 && (
             <div className="rounded-xl border border-info/20 dark:border-info/50 bg-background dark:bg-card p-4">

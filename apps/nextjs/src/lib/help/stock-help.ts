@@ -21,6 +21,7 @@ export const STOCK_HELP_FICHES: HelpFiche[] = [
     ],
     fonctionnalites: [
       "6 indicateurs : produits en stock, valeur du stock (PMP), ruptures, stocks bas, surstock, mouvements du jour",
+      "Panneau Alertes DLC / Péremption : lots périmés (rouge) et proches de la péremption (orange, spec V2 §07 couleurs)",
       "Liste des alertes (rupture = rouge, critique, faible)",
       "Articles à achalander (stock sans emplacement / pas en rayon)",
       "Alertes anti-vol (ajustements suspects sur 7 jours)",
@@ -59,6 +60,7 @@ export const STOCK_HELP_FICHES: HelpFiche[] = [
       "Seuils : seuil d'alerte, seuil critique, stock maximum",
       "Emplacement principal, article reconditionnable",
       "Origine / qualité : Constructeur (Genuine), OEM équivalent, Aftermarket, Autre",
+      "DLC : délai d'alerte avant péremption (jours) pour fluides, colles… — sortie bloquée si stock périmé",
       "Équivalences / supersession : pièce remplaçante (nouvelle référence) ou interchangeables",
       "Cycle de vie : BROUILLON → ACTIF → SUSPENDU / DISCONTINUE → ARCHIVE",
       "Recherche par code, désignation, référence",
@@ -68,6 +70,7 @@ export const STOCK_HELP_FICHES: HelpFiche[] = [
       { titre: "Créer un article", detail: "Articles / Catalogue → + Nouveau → remplir code, désignation, catégorie, prix, seuils, unités → Enregistrer." },
       { titre: "Configurer les unités", detail: "Définissez l'unité de base (facteur 1) et les unités dérivées (ex. fût = 200 L)." },
       { titre: "Préciser l'origine", detail: "Sélectionnez l'origine/qualité de la pièce : Constructeur (Genuine), OEM, Aftermarket ou Autre." },
+      { titre: "Configurer la DLC", detail: "Renseignez le délai d'alerte (jours) pour les fluides/colles : le tableau de bord alertera avant péremption et les sorties seront bloquées si le stock est périmé." },
       { titre: "Définir les seuils", detail: "Seuil d'alerte (stock bas), seuil critique, stock maximum (surstock)." },
       { titre: "Gérer les équivalences", detail: "Dans la fiche article → Équivalences / Supersession → ajouter la pièce remplaçante (SUPERSESSION) ou interchangeable." },
       { titre: "Marquer reconditionnable", detail: "Cochez « reconditionnable » pour les huiles en fût → disponible dans le module Reconditionnement." },
