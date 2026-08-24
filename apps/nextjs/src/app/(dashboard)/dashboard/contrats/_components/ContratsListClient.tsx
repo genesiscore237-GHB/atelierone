@@ -50,6 +50,13 @@ const EMPTY_FORM = {
   statutInitial: "ACTIF" as "BROUILLON" | "ACTIF",
 };
 
+const EMPTY_GRP = {
+  contratId: 0,
+  dateDebut: new Date().toISOString().slice(0, 10),
+  dateFin: new Date().toISOString().slice(0, 10),
+  modePaiement: "credit",
+};
+
 export function ContratsListClient() {
   const { hasPermission } = usePermissions();
   const utils = api.useUtils();
@@ -59,6 +66,8 @@ export function ContratsListClient() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [resilierMotif, setResilierMotif] = useState("");
   const [confirmResilier, setConfirmResilier] = useState<any>(null);
+  const [showGroupe, setShowGroupe] = useState(false);
+  const [grp, setGrp] = useState(EMPTY_GRP);
 
   const { data, isLoading } = api.contrats.list.useQuery({ search: search || undefined, statut: statutFilter || undefined, limit: 100 });
   const { data: clientsData } = api.clients.list.useQuery({ typeClient: "ENTR", statut: "ACTIF", limit: 100 });
@@ -88,6 +97,13 @@ export function ContratsListClient() {
   });
   const renouveler = api.contrats.renouveler.useMutation({
     onSuccess: (r) => { toast.success(`Contrat renouvelé — fin ${r.nouvelleFin}`); utils.contrats.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const facturerPeriode = api.contrats.facturerPeriode.useMutation({
+    onSuccess: (r: any) => {
+      toast.success(`Facture groupée ${r.reference} — ${r.orsFactures} OR (${r.montantTotal.toLocaleString("fr-FR")} F${r.echeance ? `, échéance ${r.echeance}` : ""})`);
+      utils.contrats.list.invalidate();
+    },
     onError: (e) => toast.error(e.message),
   });
 
@@ -125,9 +141,14 @@ export function ContratsListClient() {
           </p>
         </div>
         {canModifier && (
-          <Button onClick={() => setShowForm(true)} className="gap-2">
-            <Plus size={16} /> Nouveau contrat
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setShowGroupe((v) => !v)} className="gap-2" title="Facturer les OR terminés non facturés d'un contrat sur une période">
+              <FileSignature size={16} /> Facturation groupée
+            </Button>
+            <Button onClick={() => setShowForm(true)} className="gap-2">
+              <Plus size={16} /> Nouveau contrat
+            </Button>
+          </div>
         )}
       </div>
 
@@ -141,6 +162,42 @@ export function ContratsListClient() {
           {["ACTIF", "BROUILLON", "SUSPENDU", "RESILIE", "EXPIRE", "RENOUVELLE"].map((s) => <option key={s} value={s} className="bg-background">{s}</option>)}
         </select>
       </div>
+
+      {showGroupe && (
+        <div className="rounded-xl border border-primary/30 bg-card p-4">
+          <div className="mb-2 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+            <FileSignature size={14} className="text-primary" /> Facturation groupée par contrat
+          </div>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Regroupe en UNE facture tous les OR terminés non facturés des véhicules couverts, clôturés sur la période. Crédit = créance avec échéance du contrat.
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+            <select value={grp.contratId} onChange={(e) => setGrp({ ...grp, contratId: Number(e.target.value) })} className="h-10 rounded-lg border border-border bg-background px-3 text-sm">
+              <option value={0}>Contrat (actif)…</option>
+              {(contrats ?? []).filter((c: any) => (c.statutEffectif ?? c.statut) === "ACTIF").map((c: any) => (
+                <option key={c.id} value={c.id}>{c.numeroContrat} — {c.libelle}</option>
+              ))}
+            </select>
+            <Input type="date" value={grp.dateDebut} onChange={(e) => setGrp({ ...grp, dateDebut: e.target.value })} />
+            <Input type="date" value={grp.dateFin} onChange={(e) => setGrp({ ...grp, dateFin: e.target.value })} />
+            <select value={grp.modePaiement} onChange={(e) => setGrp({ ...grp, modePaiement: e.target.value })} className="h-10 rounded-lg border border-border bg-background px-3 text-sm">
+              <option value="credit">Crédit (créance)</option>
+              <option value="virement">Virement</option>
+              <option value="om">Orange Money</option>
+              <option value="momo">MTN MoMo</option>
+              <option value="especes">Espèces</option>
+            </select>
+          </div>
+          <Button
+            className="mt-3 gap-2"
+            disabled={!grp.contratId || facturerPeriode.isPending}
+            onClick={() => facturerPeriode.mutate({ contratId: grp.contratId, dateDebut: grp.dateDebut, dateFin: grp.dateFin, modePaiement: grp.modePaiement as any })}
+          >
+            {facturerPeriode.isPending ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 size={15} />}
+            Générer la facture groupée
+          </Button>
+        </div>
+      )}
 
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
         <table className="w-full">

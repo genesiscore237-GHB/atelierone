@@ -13,6 +13,9 @@ import {
   Undo2,
   Wrench,
   RefreshCw,
+  Receipt,
+  Loader2,
+  Check,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -179,6 +182,13 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const [coreForm, setCoreForm] = useState({ produitId: 0, quantite: 1, valeurCore: 0, motif: "" });
   const [kitForm, setKitForm] = useState({ kitId: 0, quantite: 1, motif: "" });
   const [pcForm, setPcForm] = useState({ produitId: 0, libelle: "", quantite: 1, motif: "" });
+  const [showFacture, setShowFacture] = useState(false);
+  const [factureForm, setFactureForm] = useState({ modePaiement: "especes", remisePourcent: "", notes: "" });
+
+  const facturer = api.or.facturer.useMutation({
+    onSuccess: (r: any) => { toast.success(`OR facturé — ${r.reference} (${r.montantTotal.toLocaleString("fr-FR")} F)`); utils.or.getById.invalidate(); utils.or.list.invalidate(); setShowFacture(false); setFactureForm({ modePaiement: "especes", remisePourcent: "", notes: "" }); },
+    onError: (e) => toast.error(e.message),
+  });
 
   const addLigne = api.or.addLigne.useMutation({
     onSuccess: () => { toast.success("Ligne ajoutée"); utils.or.getById.invalidate(); },
@@ -265,6 +275,16 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
+            {or.statut === "termine" && !or.venteId && (
+              <Button onClick={() => setShowFacture(true)} className="gap-1.5 text-xs">
+                <Receipt size={14} /> Facturer
+              </Button>
+            )}
+            {or.venteId && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-1 text-[10px] font-bold uppercase text-success-foreground">
+                <Check size={11} /> Facturé
+              </span>
+            )}
           </div>
         </div>
         <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
@@ -519,6 +539,59 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
           )}
         </div>
       </div>
+
+      {showFacture && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowFacture(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
+              <Receipt size={16} className="text-primary" /> Facturer l'OR {or.numero}
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">Total TTC : <b className="text-foreground">{Number(or.totalTTC).toLocaleString("fr-FR")} F</b></p>
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Mode de paiement</label>
+                <select value={factureForm.modePaiement} onChange={(e) => setFactureForm({ ...factureForm, modePaiement: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                  <option value="especes">Espèces</option>
+                  <option value="om">Orange Money</option>
+                  <option value="momo">MTN MoMo</option>
+                  <option value="carte">Carte</option>
+                  <option value="virement">Virement</option>
+                  <option value="credit">Crédit (créance)</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Remise (%) — défaut : contrat ou client</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.5"
+                  value={factureForm.remisePourcent}
+                  onChange={(e) => setFactureForm({ ...factureForm, remisePourcent: e.target.value })}
+                  placeholder="0"
+                  className="mt-1 w-full rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Notes</label>
+                <input
+                  value={factureForm.notes}
+                  onChange={(e) => setFactureForm({ ...factureForm, notes: e.target.value })}
+                  placeholder="Optionnel"
+                  className="mt-1 w-full rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
+                />
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowFacture(false)}>Annuler</Button>
+              <Button onClick={() => facturer.mutate({ id: Number(id), modePaiement: factureForm.modePaiement as any, remisePourcent: factureForm.remisePourcent ? Number(factureForm.remisePourcent) : undefined, notes: factureForm.notes || undefined })} disabled={facturer.isPending} className="gap-2">
+                {facturer.isPending ? <Loader2 className="size-4 animate-spin" /> : <Receipt size={14} />}
+                Facturer
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

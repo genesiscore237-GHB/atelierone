@@ -8,10 +8,16 @@ import {
   clients,
   produits,
   employes,
+  ventes,
+  ventesLignes,
+  dettesClients,
+  contratsMaintenance,
+  contratsMaintenanceVehicules,
 } from "@atelierone/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
+import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererReferenceFacture, MODES_PAIEMENT, montantLigne } from "~/server/lib/facturation-service";
 
 /**
  * MODULE ORDRE DE RÉPARATION (OR) — specs GPJ / Architecture §3.2.
@@ -161,6 +167,8 @@ export const orRouter = createTRPCRouter({
           numero: ordresReparation.numero,
           vehiculeId: ordresReparation.vehiculeId,
           clientId: ordresReparation.clientId,
+          contratId: ordresReparation.contratId,
+          venteId: ordresReparation.venteId,
           statut: ordresReparation.statut,
           plainte: ordresReparation.plainte,
           diagnostic: ordresReparation.diagnostic,
@@ -241,6 +249,18 @@ export const orRouter = createTRPCRouter({
         }
       }
 
+      // Règle métier (module Contrats) : un OR ouvert sur un véhicule couvert est rattaché au contrat actif
+      const [contratCouvert] = await db
+        .select({ id: contratsMaintenance.id })
+        .from(contratsMaintenance)
+        .innerJoin(contratsMaintenanceVehicules, and(
+          eq(contratsMaintenanceVehicules.contratId, contratsMaintenance.id),
+          eq(contratsMaintenanceVehicules.vehiculeId, input.vehiculeId),
+          eq(contratsMaintenanceVehicules.actif, true),
+        ))
+        .where(and(eq(contratsMaintenance.statut, "ACTIF"), lte(contratsMaintenance.dateDebut, new Date().toISOString().slice(0, 10))))
+        .limit(1);
+
       const numero = await genNumero(ctx.user.agenceId);
       const [row] = await db
         .insert(ordresReparation)
@@ -249,6 +269,7 @@ export const orRouter = createTRPCRouter({
           numero,
           vehiculeId: input.vehiculeId,
           clientId,
+          contratId: contratCouvert?.id ?? null,
           plainte: input.plainte ?? null,
           diagnostic: input.diagnostic ?? null,
           dateFinPrevue: input.dateFinPrevue ?? null,
@@ -405,6 +426,123 @@ export const orRouter = createTRPCRouter({
     .input(z.object({ orId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       return listerPiecesClientService(input.orId, ctx.user.agenceId);
+    }),
+
+  // ─── Facturation du cycle : OR → Facture (vente liée + dette si crédit) ───
+  facturer: requirePermissionProcedure("or.facturer")
+    .input(z.object({
+      id: z.number().int(),
+      modePaiement: z.enum(MODES_PAIEMENT).default("especes"),
+      montantPaye: z.number().min(0).optional(),
+      remisePourcent: z.number().min(0).max(100).optional(),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [or] = await tx
+          .select()
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.id), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "Ordre de réparation introuvable." });
+        if (or.venteId) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet OR est déjà facturé." });
+        if (or.statut !== "termine") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Seul un OR TERMINÉ peut être facturé (statut actuel : ${or.statut}).` });
+        }
+
+        const lignes = await tx
+          .select()
+          .from(lignesOrdreReparation)
+          .where(eq(lignesOrdreReparation.ordreId, input.id));
+        if (lignes.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Aucune ligne à facturer sur cet OR." });
+
+        // Remise : contrat couvrant → remise du contrat ; sinon remise par défaut du client
+        let remisePourcent = input.remisePourcent ?? 0;
+        let delaiJours = 0;
+        const [client] = or.clientId ? await tx.select({ remiseDefautPct: clients.remiseDefautPct, delaiPaiementJours: clients.delaiPaiementJours, plafondCredit: clients.plafondCredit }).from(clients).where(eq(clients.id, or.clientId)).limit(1) : [];
+        if (or.contratId) {
+          const [contrat] = await tx
+            .select({ remisePourcent: contratsMaintenance.remisePourcent, delaiPaiementJours: contratsMaintenance.delaiPaiementJours })
+            .from(contratsMaintenance)
+            .where(eq(contratsMaintenance.id, or.contratId))
+            .limit(1);
+          if (contrat && remisePourcent === 0) remisePourcent = Number(contrat.remisePourcent ?? 0);
+          if (contrat) delaiJours = Number(contrat.delaiPaiementJours ?? 0);
+        } else if (client) {
+          if (remisePourcent === 0) remisePourcent = Number(client.remiseDefautPct ?? 0);
+          delaiJours = Number(client.delaiPaiementJours ?? 0);
+        }
+
+        const total = calculerTotalFacture(lignes as any[], remisePourcent);
+        if (total <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Le montant de la facture est nul." });
+
+        // Crédit : vérification du plafond
+        if (input.modePaiement === "credit" && client) {
+          const [encoursRow] = await tx
+            .select({ n: sql<number>`COALESCE(SUM(${dettesClients.montantRestant}), 0)::int` })
+            .from(dettesClients)
+            .where(eq(dettesClients.clientId, or.clientId));
+          if (!respectePlafondCredit(Number(encoursRow?.n ?? 0), total, client.plafondCredit ? Number(client.plafondCredit) : null)) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Plafond de crédit dépassé pour ce client." });
+          }
+        }
+
+        const [last] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(ventes)
+          .where(sql`${ventes.reference} LIKE ${`FAC-${new Date().getFullYear()}-%`}`);
+        const reference = genererReferenceFacture((last?.n ?? 0) + 1);
+        const montantPaye = input.modePaiement === "credit" ? (input.montantPaye ?? 0) : (input.montantPaye ?? total);
+
+        const [vente] = await tx
+          .insert(ventes)
+          .values({
+            agenceId: ctx.user.agenceId,
+            reference,
+            operateurId: Number(ctx.user.id),
+            clientId: or.clientId ?? null,
+            sessionCaisseId: null,
+            modePaiement: input.modePaiement,
+            remise: String(remisePourcent > 0 ? Math.round((calculerTotalFacture(lignes as any[], 0) * remisePourcent) / 100) : 0),
+            montantTotal: String(total),
+            montantPaye: String(montantPaye),
+            statut: "termine",
+            notes: input.notes ?? `Facturation OR ${or.numero}`,
+          } as any)
+          .returning();
+
+        for (const ligne of lignes) {
+          await tx.insert(ventesLignes).values({
+            venteId: vente.id,
+            produitId: ligne.produitId ?? null,
+            libelle: ligne.libelle,
+            quantite: Number(ligne.quantite),
+            prixUnitaire: String(Number(ligne.prixUnitaire) * (1 + Number(ligne.tva ?? 0) / 100)),
+            totalLigne: String(montantLigne(ligne)),
+          } as any);
+        }
+
+        await tx
+          .update(ordresReparation)
+          .set({ venteId: vente.id, statut: "facture", dateCloture: new Date(), updatedAt: new Date() } as any)
+          .where(eq(ordresReparation.id, input.id));
+
+        // Crédit → dette client (encaissable via Finance → Créances)
+        if (input.modePaiement === "credit" && montantPaye < total) {
+          await tx.insert(dettesClients).values({
+            venteId: vente.id,
+            clientId: or.clientId ?? null,
+            agenceId: ctx.user.agenceId,
+            montantTotal: String(total),
+            montantPaye: String(montantPaye),
+            montantRestant: String(total - montantPaye),
+            statut: montantPaye > 0 ? "partiel" : "impaye",
+            echeanceLe: new Date(`${calculerEcheance(delaiJours)}T00:00:00`),
+          } as any);
+        }
+
+        return { venteId: vente.id, reference, montantTotal: total, statut: "facture" };
+      }) as any;
     }),
 });
 

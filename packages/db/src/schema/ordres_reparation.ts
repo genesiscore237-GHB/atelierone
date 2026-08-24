@@ -27,6 +27,7 @@ export const ordresReparation = pgTable("ordres_reparation", {
   totalMainOeuvre: numeric("total_main_oeuvre", { precision: 12, scale: 2 }).default("0"),
   totalTTC: numeric("total_ttc", { precision: 12, scale: 2 }).default("0"),
   venteId: integer("vente_id"),
+  contratId: integer("contrat_id"), // contrat de maintenance couvrant le véhicule (facturation groupée)
   creePar: integer("cree_par").references(() => utilisateurs.id),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),

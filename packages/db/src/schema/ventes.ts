@@ -27,7 +27,8 @@ export const ventes = pgTable("ventes", {
 export const ventesLignes = pgTable("ventes_lignes", {
   id: serial("id").primaryKey(),
   venteId: integer("vente_id").notNull().references(() => ventes.id),
-  produitId: integer("produit_id").notNull().references(() => produits.id),
+  produitId: integer("produit_id").references(() => produits.id), // nullable : lignes de main-d'œuvre (OR)
+  libelle: varchar("libelle", { length: 255 }), // libellé libre (main-d'œuvre, pièce fournie…)
   quantite: integer("quantite").notNull(),
   uniteId: uuid("unite_id").references(() => unitesMesure.id),
   facteurConversion: integer("facteur_conversion").notNull().default(1),

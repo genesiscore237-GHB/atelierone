@@ -6,8 +6,13 @@ import {
   contratsMaintenanceVehicules,
   clients,
   vehicules,
+  ordresReparation,
+  lignesOrdreReparation,
+  ventes,
+  ventesLignes,
+  dettesClients,
 } from "@atelierone/db";
-import { eq, and, desc, sql, or, ilike } from "drizzle-orm";
+import { eq, and, desc, sql, or, ilike, gte, lte, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import {
   genererNumeroContrat,
@@ -15,6 +20,13 @@ import {
   verifierContratActif,
   statutContratEffectif,
 } from "~/server/lib/client-service";
+import {
+  calculerTotalFacture,
+  calculerEcheance,
+  genererReferenceFacture,
+  montantLigne,
+  MODES_PAIEMENT,
+} from "~/server/lib/facturation-service";
 
 /** MODULE CONTRATS DE MAINTENANCE — cycle de vie complet + véhicules couverts. */
 export const contratsRouter = createTRPCRouter({
@@ -333,7 +345,131 @@ export const contratsRouter = createTRPCRouter({
         .where(eq(contratsMaintenanceVehicules.id, input.id));
       return { success: true };
     }),
+
+  // ─── Facturation groupée (specs processus 4) : OR terminés non facturés du contrat sur une période ───
+  facturerPeriode: requirePermissionProcedure("contrats.modifier")
+    .input(z.object({
+      contratId: z.number().int(),
+      dateDebut: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      dateFin: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      modePaiement: z.enum(MODES_PAIEMENT).default("credit"),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [contrat] = await tx
+          .select()
+          .from(contratsMaintenance)
+          .where(and(eq(contratsMaintenance.id, input.contratId), eq(contratsMaintenance.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!contrat) throw new TRPCError({ code: "NOT_FOUND", message: "Contrat introuvable." });
+        if (contrat.statut !== "ACTIF" && contrat.statut !== "RENOUVELLE") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Seul un contrat ACTIF peut être facturé (statut : ${contrat.statut}).` });
+        }
+
+        // OR terminés non facturés sur les véhicules couverts, clôturés dans la période
+        const vehiculesCouverts = await tx
+          .select({ vehiculeId: contratsMaintenanceVehicules.vehiculeId })
+          .from(contratsMaintenanceVehicules)
+          .where(and(eq(contratsMaintenanceVehicules.contratId, input.contratId), eq(contratsMaintenanceVehicules.actif, true), sql`${contratsMaintenanceVehicules.vehiculeId} IS NOT NULL`));
+        if (vehiculesCouverts.length === 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Ce contrat ne couvre aucun véhicule identifié." });
+        }
+        const idsVehicules = vehiculesCouverts.map((v) => v.vehiculeId as number);
+
+        const ors = await tx
+          .select()
+          .from(ordresReparation)
+          .where(and(
+            inArray(ordresReparation.vehiculeId, idsVehicules),
+            eq(ordresReparation.statut, "termine"),
+            sql`${ordresReparation.venteId} IS NULL`,
+            gte(ordresReparation.dateCloture, new Date(`${input.dateDebut}T00:00:00`)),
+            lte(ordresReparation.dateCloture, new Date(`${input.dateFin}T23:59:59`)),
+          ))
+          .orderBy(ascOrdre(ordresReparation.dateCloture));
+        if (ors.length === 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Aucun OR terminé non facturé sur la période pour ce contrat." });
+        }
+
+        // Toutes les lignes des OR sélectionnés → une facture récapitulative
+        const toutesLignes: Array<{ orId: number; lignes: any[] }> = [];
+        for (const or of ors) {
+          const lignes = await tx.select().from(lignesOrdreReparation).where(eq(lignesOrdreReparation.ordreId, or.id));
+          toutesLignes.push({ orId: or.id, lignes: lignes as any[] });
+        }
+        const lignesBrutes = toutesLignes.flatMap((t) => t.lignes);
+        if (lignesBrutes.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Les OR sélectionnés n'ont aucune ligne." });
+
+        const remisePourcent = Number(contrat.remisePourcent ?? 0);
+        const total = calculerTotalFacture(lignesBrutes, remisePourcent);
+        const delaiJours = Number(contrat.delaiPaiementJours ?? 0);
+        const montantPaye = input.modePaiement === "credit" ? 0 : total;
+
+        const [last] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(ventes)
+          .where(sql`${ventes.reference} LIKE ${`FAC-${new Date().getFullYear()}-%`}`);
+        const reference = genererReferenceFacture((last?.n ?? 0) + 1);
+
+        const [vente] = await tx
+          .insert(ventes)
+          .values({
+            agenceId: ctx.user.agenceId,
+            reference,
+            operateurId: Number(ctx.user.id),
+            clientId: contrat.clientId,
+            sessionCaisseId: null,
+            modePaiement: input.modePaiement,
+            remise: String(remisePourcent > 0 ? Math.round((calculerTotalFacture(lignesBrutes, 0) * remisePourcent) / 100) : 0),
+            montantTotal: String(total),
+            montantPaye: String(montantPaye),
+            statut: "termine",
+            notes: input.notes ?? `Facturation groupée ${contrat.numeroContrat} (${input.dateDebut} → ${input.dateFin})`,
+          } as any)
+          .returning();
+
+        for (const ligne of lignesBrutes) {
+          await tx.insert(ventesLignes).values({
+            venteId: vente.id,
+            produitId: ligne.produitId ?? null,
+            libelle: ligne.libelle,
+            quantite: Number(ligne.quantite),
+            prixUnitaire: String(Number(ligne.prixUnitaire) * (1 + Number(ligne.tva ?? 0) / 100)),
+            totalLigne: String(montantLigne(ligne)),
+          } as any);
+        }
+
+        // Marquer chaque OR facturé
+        for (const t of toutesLignes) {
+          await tx
+            .update(ordresReparation)
+            .set({ venteId: vente.id, statut: "facture", updatedAt: new Date() } as any)
+            .where(eq(ordresReparation.id, t.orId));
+        }
+
+        // Facture à crédit → dette client avec échéance du contrat
+        if (input.modePaiement === "credit") {
+          await tx.insert(dettesClients).values({
+            venteId: vente.id,
+            clientId: contrat.clientId,
+            agenceId: ctx.user.agenceId,
+            montantTotal: String(total),
+            montantPaye: "0",
+            montantRestant: String(total),
+            statut: "impaye",
+            echeanceLe: new Date(`${calculerEcheance(delaiJours)}T00:00:00`),
+          } as any);
+        }
+
+        return { venteId: vente.id, reference, montantTotal: total, orsFactures: ors.length, modePaiement: input.modePaiement, echeance: calculerEcheance(delaiJours) };
+      }) as any;
+    }),
 });
+
+function ascOrdre(col: any) {
+  return sql`${col} ASC`;
+}
 
 async function changerStatutContrat(agenceId: number, id: number, vers: string, motif?: string) {
   const [contrat] = await db
