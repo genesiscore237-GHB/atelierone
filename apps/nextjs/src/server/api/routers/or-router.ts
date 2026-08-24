@@ -222,6 +222,20 @@ export const orRouter = createTRPCRouter({
         .where(and(eq(vehicules.id, input.vehiculeId), eq(vehicules.agenceId, ctx.user.agenceId)))
         .limit(1);
       if (!vehicule) throw new TRPCError({ code: "BAD_REQUEST", message: "Véhicule introuvable." });
+
+      // Règle métier (module Clients & Contrats) : un client BLOQUÉ ne peut plus avoir de nouvel OR
+      const clientId = input.clientId ?? vehicule.clientId ?? null;
+      if (clientId) {
+        const [client] = await db
+          .select({ statut: clients.statut })
+          .from(clients)
+          .where(eq(clients.id, clientId))
+          .limit(1);
+        if (client && client.statut === "BLOQUE") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Ce client est BLOQUÉ (impayés / litige) : ouverture d'ordre de réparation refusée. Débloquez le client depuis sa fiche." });
+        }
+      }
+
       const numero = await genNumero(ctx.user.agenceId);
       const [row] = await db
         .insert(ordresReparation)
@@ -229,7 +243,7 @@ export const orRouter = createTRPCRouter({
           agenceId: ctx.user.agenceId,
           numero,
           vehiculeId: input.vehiculeId,
-          clientId: input.clientId ?? vehicule.clientId ?? null,
+          clientId,
           plainte: input.plainte ?? null,
           diagnostic: input.diagnostic ?? null,
           dateFinPrevue: input.dateFinPrevue ?? null,

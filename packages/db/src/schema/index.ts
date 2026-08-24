@@ -16,6 +16,8 @@ export { produitsFournisseurs } from "./produits_fournisseurs";
 export { achats, achatsLignes } from "./achats";
 export { ventes, ventesLignes } from "./ventes";
 export { clients } from "./clients";
+export { clientContacts, clientAdresses, clientInteractions, clientStatutHistorique } from "./client_relations";
+export { contratsMaintenance, contratsMaintenanceVehicules } from "./contrats_maintenance";
 export { caisses, mouvementsCaisse } from "./caisses";
 export { caisseOperateurs } from "./caisse_operateurs";
 export { depenses } from "./depenses";
