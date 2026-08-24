@@ -83,4 +83,36 @@ export const CLIENTS_HELP_FICHES: HelpFiche[] = [
       { q: "Un véhicule peut-il être sur le contrat avant sa création ?", r: "Oui : saisissez son immatriculation en temporaire ; il sera rattaché au véhicule lors de sa création." },
     ],
   },
+  {
+    id: "vehicules-parc",
+    titre: "Véhicules & Atelier : parc et cycle d'immobilisation",
+    courte: "Chaque véhicule appartient à un client ; statuts suivis de la réception à la sortie ; un OR s'ouvre sur un véhicule.",
+    priorite: "P1",
+    route: "/dashboard/vehicules",
+    prerequis: ["Permissions vehicules.consulter / vehicules.creer / vehicules.modifier", "Clients créés (module Clients & Contrats)"],
+    fonctionnalites: [
+      "Parc : recherche par immatriculation, marque, modèle ou propriétaire + filtre par statut",
+      "Fiche véhicule : châssis, kilométrage, carburant, type, propriétaire, historique des OR, contrats couvrants",
+      "Cycle d'immobilisation (11 statuts) : réception → diagnostic → réparation → attente pièce / validation → terminée → sorti",
+      "Transitions contrôlées : seules les étapes du workflow sont autorisées",
+      "Ouverture d'un OR : le véhicule passe automatiquement EN RÉPARATION",
+      "Liaison à un contrat de maintenance actif (ou retrait)",
+      "Changement de propriétaire (transfert à un autre client)",
+    ],
+    etapes: [
+      { titre: "Enregistrer un véhicule", detail: "Parc → Nouveau véhicule → immatriculation (unique), propriétaire, marque/modèle, type, carburant, kilométrage → le véhicule entre EN RÉCEPTION." },
+      { titre: "Suivre l'immobilisation", detail: "Fiche véhicule → « Changer de statut… » : seules les transitions autorisées sont proposées." },
+      { titre: "Ouvrir un OR", detail: "Ordres de Réparation → le véhicule passe EN RÉPARATION automatiquement. Un véhicule SORTI doit être ré-entré (réception) avant un nouvel OR." },
+      { titre: "Sortir le véhicule", detail: "Terminée → attente paiement → Sorti : le cycle est clos (ré-entrée possible ensuite)." },
+    ],
+    regles: [
+      { titre: "Véhicule SORTI", detail: "Aucun nouvel OR possible tant que le véhicule n'est pas ré-entré (statut réception)." },
+      { titre: "Immatriculation unique", detail: "Une immatriculation ne peut exister qu'une seule fois par agence." },
+      { titre: "Contrat couvrant", detail: "Seul un contrat ACTIF peut couvrir un véhicule ; la liaison est retirée à la résiliation." },
+    ],
+    faq: [
+      { q: "Pourquoi je ne peux pas passer un véhicule en diagnostic depuis « terminée » ?", r: "Le workflow est linéaire : chaque statut n'accepte que les étapes suivantes (retour en réparation possible pour retouches)." },
+      { q: "Où voir l'historique d'un véhicule ?", r: "Fiche véhicule → panneau « Ordres de réparation » : tous les OR du véhicule avec leurs statuts." },
+    ],
+  },
 ];

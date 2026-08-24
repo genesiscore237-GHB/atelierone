@@ -21,6 +21,7 @@ export const vehicules = pgTable("vehicules", {
   numeroChassis: varchar("numero_chassis", { length: 100 }),
   kilometrage: integer("kilometrage"),
   carburant: varchar("carburant", { length: 30 }),
+  typeVehicule: varchar("type_vehicule", { length: 30 }).default("voiture"), // voiture|utilitaire|poids_lourd|moto|autocar|autre
   statutImmobilisation: varchar("statut_immobilisation", { length: 50 }).default("en_reception"),
   siteId: integer("site_id").references(() => agences.id),
   emplacementId: integer("emplacement_id"),

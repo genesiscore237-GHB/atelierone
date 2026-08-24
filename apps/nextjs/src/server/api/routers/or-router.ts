@@ -217,11 +217,16 @@ export const orRouter = createTRPCRouter({
     }))
     .mutation(async ({ ctx, input }) => {
       const [vehicule] = await db
-        .select({ id: vehicules.id, clientId: vehicules.clientId })
+        .select({ id: vehicules.id, clientId: vehicules.clientId, statutImmobilisation: vehicules.statutImmobilisation })
         .from(vehicules)
         .where(and(eq(vehicules.id, input.vehiculeId), eq(vehicules.agenceId, ctx.user.agenceId)))
         .limit(1);
       if (!vehicule) throw new TRPCError({ code: "BAD_REQUEST", message: "Véhicule introuvable." });
+
+      // Règle métier (module Véhicules & Atelier) : un véhicule SORTI ne peut pas ouvrir d'OR
+      if (vehicule.statutImmobilisation === "sorti") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Ce véhicule est SORTI de l'atelier : ré-entrez-le (statut « En réception ») avant d'ouvrir un OR." });
+      }
 
       // Règle métier (module Clients & Contrats) : un client BLOQUÉ ne peut plus avoir de nouvel OR
       const clientId = input.clientId ?? vehicule.clientId ?? null;
@@ -252,6 +257,14 @@ export const orRouter = createTRPCRouter({
           statut: "ouvert",
         } as any)
         .returning();
+
+      // Le véhicule entre en réparation
+      if (vehicule.statutImmobilisation !== "en_reparation") {
+        await db
+          .update(vehicules)
+          .set({ statutImmobilisation: "en_reparation", updatedAt: new Date() } as any)
+          .where(eq(vehicules.id, input.vehiculeId));
+      }
       return row;
     }),
 
