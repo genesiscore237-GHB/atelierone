@@ -71,6 +71,10 @@ function PeriodesSection() {
   const [endDate, setEndDate] = useState(now.toISOString().split("T")[0]);
   const [periodId, setPeriodId] = useState<number | null>(null);
   const { data: periods } = api.rhPayroll.listPeriods.useQuery();
+  const { data: apercu } = api.rhPayroll.listEntries.useQuery(
+    { periodId: periodId ?? undefined },
+    { enabled: !!periodId }
+  );
 
   const open = api.rhPayroll.openPeriod.useMutation({
     onSuccess: (p) => {
@@ -96,6 +100,19 @@ function PeriodesSection() {
   });
 
   const list = (periods ?? []) as unknown as Array<{ id: number; startDate: string; endDate: string; status: string }>;
+  const apercuList = (apercu ?? []) as unknown as Array<{
+    id: number; employePrenom: string; employeNom: string; matricule: string;
+    baseSalary: string; normalHours: string; overtimeHours: string; otherEarnings: string;
+    totalEarnings: string; daysPresent: number; status: string;
+  }>;
+  const synth = apercuList.reduce(
+    (s, x) => ({
+      brut: s.brut + Number(x.totalEarnings ?? 0),
+      hs: s.hs + Number(x.overtimeHours ?? 0),
+      primes: s.primes + Number(x.otherEarnings ?? 0),
+    }),
+    { brut: 0, hs: 0, primes: 0 }
+  );
 
   return (
     <div className="space-y-4">
@@ -123,7 +140,12 @@ function PeriodesSection() {
           <div className="divide-y divide-border/60">
             {list.map((p) => (
               <div key={p.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                <div className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => setPeriodId(periodId === p.id ? null : p.id)}
+                  className={`min-w-0 flex-1 text-left ${periodId === p.id ? "text-primary" : ""}`}
+                  title="Afficher l'aperçu de la période"
+                >
                   <p className="text-sm font-semibold text-foreground">
                     {p.startDate} → {p.endDate}
                     <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
@@ -132,7 +154,7 @@ function PeriodesSection() {
                       {p.status === "open" ? "Ouverte" : "Clôturée"}
                     </span>
                   </p>
-                </div>
+                </button>
                 {p.status === "open" && (
                   <div className="flex gap-1.5">
                     <Button size="sm" onClick={() => prepare.mutate({ periodId: p.id })} disabled={prepare.isPending}>
@@ -148,6 +170,61 @@ function PeriodesSection() {
           </div>
         )}
       </div>
+
+      {periodId && (
+        <div className="space-y-3">
+          <div className="sticky top-0 z-10 flex flex-wrap gap-2 rounded-xl border border-border bg-background/95 p-3 shadow-sm backdrop-blur">
+            <span className="rounded-full bg-success/10 px-3 py-1 text-xs font-semibold text-success-foreground">Brut total : {fmtFCFA(synth.brut)} F</span>
+            <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">Σ HS : {synth.hs.toFixed(2)} h</span>
+            <span className="rounded-full bg-warning/10 px-3 py-1 text-xs font-semibold text-warning-foreground">Σ Primes de tâche : {fmtFCFA(synth.primes)} F</span>
+            <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">{apercuList.length} bulletin(s)</span>
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-border bg-card">
+            <table className="w-full">
+              <thead className="bg-muted/40 text-left text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2.5">Employé</th>
+                  <th className="px-4 py-2.5 text-right">Salaire base</th>
+                  <th className="px-4 py-2.5 text-right">HN</th>
+                  <th className="px-4 py-2.5 text-right">HS</th>
+                  <th className="px-4 py-2.5 text-right">Primes tâche</th>
+                  <th className="px-4 py-2.5 text-right">Brut estimé</th>
+                  <th className="px-4 py-2.5 text-right">Écart vs base</th>
+                  <th className="px-4 py-2.5 text-right">Jours</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/60">
+                {apercuList.map((e) => {
+                  const base = Number(e.baseSalary ?? 0);
+                  const brut = Number(e.totalEarnings ?? 0);
+                  const ecart = base > 0 ? ((brut - base) / base) * 100 : 0;
+                  return (
+                    <tr key={e.id} className="text-sm text-foreground">
+                      <td className="px-4 py-2">{e.employePrenom} {e.employeNom} <span className="ml-1 font-mono text-[10px] text-muted-foreground">{e.matricule}</span></td>
+                      <td className="px-4 py-2 text-right font-mono text-xs">{fmtFCFA(base)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs">{e.normalHours}h</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-primary">{Number(e.overtimeHours) > 0 ? `${e.overtimeHours}h` : "-"}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-warning-foreground">{Number(e.otherEarnings) > 0 ? `${fmtFCFA(e.otherEarnings)} F` : "-"}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs font-bold">{fmtFCFA(brut)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs">
+                        {ecart !== 0 && (
+                          <span className={Math.abs(ecart) > 15 ? "text-destructive" : ecart > 0 ? "text-success-foreground" : "text-warning-foreground"}>
+                            {ecart > 0 ? "▲" : "▼"} {Math.abs(ecart).toFixed(0)} %
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right">{e.daysPresent}</td>
+                    </tr>
+                  );
+                })}
+                {apercuList.length === 0 && (
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">Aucun bulletin pour cette période — cliquez « Calculer la paie ».</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -184,7 +261,7 @@ function BulletinsSection() {
   const periodsList = (periods ?? []) as unknown as Array<{ id: number; startDate: string; endDate: string }>;
   const list = (entries ?? []) as unknown as Array<{
     id: number; employeNom: string; employePrenom: string; matricule: string;
-    baseSalary: string; normalHours: string; overtimeHours: string;
+    baseSalary: string; normalHours: string; overtimeHours: string; otherEarnings: string;
     totalEarnings: string; deductions: string; netPay: string; paymentMethod: string; status: string;
   }>;
 
@@ -202,9 +279,9 @@ function BulletinsSection() {
           <thead className="bg-muted/40 text-left text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
             <tr>
               <th className="px-4 py-2.5">Employé</th>
-              <th className="px-4 py-2.5 text-right">Base</th>
-              <th className="px-4 py-2.5 text-right">Heures</th>
-              <th className="px-4 py-2.5 text-right">Gains</th>
+              <th className="px-4 py-2.5 text-right">Heures (HN/HS)</th>
+              <th className="px-4 py-2.5 text-right">Primes tâche</th>
+              <th className="px-4 py-2.5 text-right">Brut estimé</th>
               <th className="px-4 py-2.5 text-right">Retenues</th>
               <th className="px-4 py-2.5 text-right">Net</th>
               <th className="px-4 py-2.5">Statut</th>
@@ -215,9 +292,9 @@ function BulletinsSection() {
             {list.map((e) => (
               <tr key={e.id} className="text-sm text-foreground">
                 <td className="px-4 py-2">{e.employePrenom} {e.employeNom} <span className="ml-1 font-mono text-[10px] text-muted-foreground">{e.matricule}</span></td>
-                <td className="px-4 py-2 text-right font-mono text-xs">{fmtFCFA(e.baseSalary)}</td>
                 <td className="px-4 py-2 text-right font-mono text-xs">{e.normalHours}h{Number(e.overtimeHours) > 0 ? ` +${e.overtimeHours}h HS` : ""}</td>
-                <td className="px-4 py-2 text-right font-mono text-xs">{fmtFCFA(e.totalEarnings)}</td>
+                <td className="px-4 py-2 text-right font-mono text-xs text-warning-foreground">{Number(e.otherEarnings) > 0 ? `${fmtFCFA(e.otherEarnings)} F` : "-"}</td>
+                <td className="px-4 py-2 text-right font-mono text-xs font-semibold">{fmtFCFA(e.totalEarnings)}</td>
                 <td className="px-4 py-2 text-right font-mono text-xs text-destructive">-{fmtFCFA(e.deductions)}</td>
                 <td className="px-4 py-2 text-right font-mono text-xs font-bold">{fmtFCFA(e.netPay)}</td>
                 <td className="px-4 py-2">

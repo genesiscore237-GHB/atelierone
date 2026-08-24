@@ -63,6 +63,10 @@ const emptyForm = {
   pieceExpireLe: "",
   diplome: "",
   notes: "",
+  langues: "",
+  logiciels: "",
+  pointsFort: "",
+  axesAmelioration: "",
 };
 
 type FormData = typeof emptyForm;
@@ -181,6 +185,10 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
           pieceExpireLe: existing.pieceExpireLe ?? "",
           diplome: existing.diplome ?? "",
           notes: existing.notes ?? "",
+          langues: existing.langues ?? "",
+          logiciels: existing.logiciels ?? "",
+          pointsFort: existing.pointsFort ?? "",
+          axesAmelioration: existing.axesAmelioration ?? "",
         });
       } else if (!isEdit) {
         setForm(emptyForm);
@@ -237,6 +245,8 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
           typePieceIdentite: form.typePieceIdentite || null, numPieceIdentite: form.numPieceIdentite || null,
           pieceExpireLe: form.pieceExpireLe || null, diplome: form.diplome || null,
           notes: form.notes || null,
+          langues: form.langues || null, logiciels: form.logiciels || null,
+          pointsFort: form.pointsFort || null, axesAmelioration: form.axesAmelioration || null,
           departmentId: numOrNull(form.departmentId),
           positionId: numOrNull(form.positionId),
           workCycleId: numOrNull(form.workCycleId),
@@ -266,6 +276,8 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
           typePieceIdentite: form.typePieceIdentite || undefined, numPieceIdentite: form.numPieceIdentite || undefined,
           pieceExpireLe: form.pieceExpireLe || undefined, diplome: form.diplome || undefined,
           notes: form.notes || undefined,
+          langues: form.langues || undefined, logiciels: form.logiciels || undefined,
+          pointsFort: form.pointsFort || undefined, axesAmelioration: form.axesAmelioration || undefined,
           departmentId: numOrUndef(form.departmentId),
           positionId: numOrUndef(form.positionId),
           workCycleId: numOrUndef(form.workCycleId),
@@ -392,6 +404,21 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
               <input placeholder="Banque" value={form.banque} onChange={(e) => set("banque", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
             </div>
+          </section>
+
+          {/* Profil compétences (specs MVP 06_Competences) */}
+          <section>
+            <h3 className="mb-3 text-[10px] font-bold tracking-widest text-primary uppercase">Profil compétences</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <input placeholder="Langues (ex. Français, Anglais)" value={form.langues} onChange={(e) => set("langues", e.target.value)}
+                className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
+              <input placeholder="Logiciels maîtrisés" value={form.logiciels} onChange={(e) => set("logiciels", e.target.value)}
+                className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
+            </div>
+            <textarea placeholder="Points forts" value={form.pointsFort} onChange={(e) => set("pointsFort", e.target.value)}
+              className="mt-3 w-full rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" rows={2} />
+            <textarea placeholder="Axes d'amélioration" value={form.axesAmelioration} onChange={(e) => set("axesAmelioration", e.target.value)}
+              className="mt-3 w-full rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" rows={2} />
           </section>
 
           {/* Notes */}

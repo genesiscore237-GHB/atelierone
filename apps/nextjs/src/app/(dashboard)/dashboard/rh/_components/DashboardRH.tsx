@@ -8,10 +8,10 @@ import {
   BarChart3,
   CalendarClock,
   Download,
+  FileCheck2,
   FileText,
   GraduationCap,
   Timer,
-  UserCheck,
   Users,
   Wallet,
 } from "lucide-react";
@@ -84,10 +84,10 @@ function KpisSection() {
 
   const cards = [
     { label: "Effectif total", value: k.effectif, sub: `${k.actifs} actifs · ${k.inactifs} inactifs`, icon: Users, cls: "text-primary bg-primary/10" },
+    { label: "CDI", value: k.effectifCDI, sub: "contrats à durée indéterminée", icon: FileCheck2, cls: "text-success-foreground bg-success/10" },
+    { label: "Apprentissage", value: k.effectifApprentissage, sub: "apprentis en formation", icon: GraduationCap, cls: "text-info-foreground bg-info/10" },
     { label: "Taux de présence", value: `${k.presence} %`, sub: `${k.presenceDays} j présents / ${k.workingDays} j ouvrés`, icon: Timer, cls: "text-success-foreground bg-success/10" },
-    { label: "Masse salariale", value: `${fmtFCFA(k.masseSalariale)} F`, sub: "salaires de base", icon: Wallet, cls: "text-info-foreground bg-info/10" },
-    { label: "Évaluations en retard", value: k.evaluationsEnRetard, sub: "employés actifs non évalués (année)", icon: UserCheck, cls: "text-warning-foreground bg-warning/10" },
-    { label: "Formations", value: `${k.formationsRealisees} réalisée(s)`, sub: `${k.formationsPlanifiees} planifiée(s)`, icon: GraduationCap, cls: "text-primary bg-primary/10" },
+    { label: "Masse salariale (base)", value: `${fmtFCFA(k.masseSalariale)} F`, sub: "somme des salaires de base", icon: Wallet, cls: "text-info-foreground bg-info/10" },
     { label: "Absences du mois", value: k.absentTotal, sub: "jours absents", icon: CalendarClock, cls: "text-destructive bg-destructive/10" },
   ];
 
@@ -135,27 +135,51 @@ function KpisSection() {
           </div>
         </div>
 
-        {/* Répartition par département */}
+        {/* Répartition par département + type de contrat */}
         <div className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-3 text-sm font-bold uppercase tracking-wider text-foreground">Effectifs par département</div>
-          {data!.repartitions.byDepartment.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">Aucun employé</p>
-          ) : (
-            <div className="space-y-2">
-              {data!.repartitions.byDepartment.map((d: any) => {
-                const pct = k.effectif ? Math.round((d.count / k.effectif) * 100) : 0;
-                return (
-                  <div key={d.label} className="flex items-center gap-3">
-                    <span className="w-40 truncate text-sm text-foreground/80">{d.label}</span>
-                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-                      <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+          <div className="mb-3 text-sm font-bold uppercase tracking-wider text-foreground">Répartitions</div>
+          <div className="mb-3">
+            <div className="mb-1 text-xs font-semibold text-muted-foreground">Par département</div>
+            {data!.repartitions.byDepartment.length === 0 ? (
+              <p className="py-2 text-center text-sm text-muted-foreground">Aucun employé</p>
+            ) : (
+              <div className="space-y-2">
+                {data!.repartitions.byDepartment.map((d: any) => {
+                  const pct = k.effectif ? Math.round((d.count / k.effectif) * 100) : 0;
+                  return (
+                    <div key={d.label} className="flex items-center gap-3">
+                      <span className="w-40 truncate text-sm text-foreground/80">{d.label}</span>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="w-8 text-right text-xs font-bold text-muted-foreground">{d.count}</span>
                     </div>
-                    <span className="w-8 text-right text-xs font-bold text-muted-foreground">{d.count}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-semibold text-muted-foreground">Par type de contrat</div>
+            {data!.repartitions.byContractType.length === 0 ? (
+              <p className="py-2 text-center text-sm text-muted-foreground">Aucun employé</p>
+            ) : (
+              <div className="space-y-2">
+                {data!.repartitions.byContractType.map((d: any) => {
+                  const pct = k.effectif ? Math.round((d.count / k.effectif) * 100) : 0;
+                  return (
+                    <div key={d.label} className="flex items-center gap-3">
+                      <span className="w-40 truncate text-sm text-foreground/80">{d.label}</span>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full rounded-full bg-success" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="w-8 text-right text-xs font-bold text-muted-foreground">{d.count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

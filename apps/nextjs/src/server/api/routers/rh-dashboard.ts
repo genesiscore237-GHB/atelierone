@@ -22,7 +22,7 @@ import {
   hrPublicHolidays,
   leaveBalances,
 } from "@atelierone/db";
-import { eq, and, inArray, desc, gte, lte } from "drizzle-orm";
+import { eq, and, inArray, desc, gte, lte, ne } from "drizzle-orm";
 import {
   presenceRate,
   repartition,
@@ -49,13 +49,27 @@ export const rhDashboardRouter = createTRPCRouter({
           salaireBase: employes.salaireBase,
           departmentId: employes.departmentId,
           positionId: employes.positionId,
+          typeEmploye: employes.typeEmploye,
         })
         .from(employes)
-        .where(eq(employes.agenceId, ctx.user.agenceId));
+        .where(and(eq(employes.agenceId, ctx.user.agenceId), ne(employes.statut, "archive")));
 
       const effectif = employees.length;
       const actifs = employees.filter((e) => e.statut === "actif").length;
       const inactifs = effectif - actifs;
+
+      // specs MVP — répartition par type de contrat (CDI / CDD / Apprentissage…)
+      const CONTRAT_LABELS: Record<string, string> = {
+        permanent: "CDI",
+        contractuel: "CDD",
+        apprenti: "Apprentissage",
+        stagiaire: "Stage",
+        temporaire: "Journalier",
+        prestataire: "Prestataire",
+      };
+      const byContractType = repartition(employees.map((e) => ({ key: e.typeEmploye, label: CONTRAT_LABELS[e.typeEmploye] ?? e.typeEmploye })));
+      const effectifCDI = employees.filter((e) => e.typeEmploye === "permanent").length;
+      const effectifApprentissage = employees.filter((e) => e.typeEmploye === "apprenti").length;
 
       // Répartitions
       const deptIds = [...new Set(employees.map((e) => e.departmentId).filter(Boolean))];
@@ -72,20 +86,8 @@ export const rhDashboardRouter = createTRPCRouter({
       const byPosition = repartition(employees.map((e) => ({ key: String(e.positionId), label: e.positionId ? posName.get(e.positionId) ?? null : null })));
       const byStatus = repartition(employees.map((e) => ({ key: e.statut, label: e.statut })));
 
-      // Masse salariale (bulletins du mois si présents, sinon salaires de base)
-      const entries = await db
-        .select({ netPay: payrollEntries.netPay })
-        .from(payrollEntries)
-        .where(eq(payrollEntries.generatedAt, payrollEntries.generatedAt))
-        .limit(1);
-      const hasEntries = entries.length > 0;
-      const masseSalariale = hasEntries
-        ? payrollMass((await db
-            .select({ netPay: payrollEntries.netPay })
-            .from(payrollEntries)
-            .where(lte(payrollEntries.generatedAt, new Date(year, month, 0, 23, 59, 59))))
-            .map((e) => e.netPay))
-        : payrollMass(employees.map((e) => e.salaireBase));
+      // Masse salariale (specs MVP) = Σ des salaires de base des employés
+      const masseSalariale = payrollMass(employees.map((e) => e.salaireBase));
 
       // Présences du mois (résumés RH-02)
       const summaries = await db
@@ -146,6 +148,9 @@ export const rhDashboardRouter = createTRPCRouter({
           effectif,
           actifs,
           inactifs,
+          // specs MVP — compteurs par type de contrat
+          effectifCDI,
+          effectifApprentissage,
           presence: presence.rate,
           presenceDays: presence.presentDays,
           workingDays: workingDays,
@@ -155,7 +160,7 @@ export const rhDashboardRouter = createTRPCRouter({
           formationsRealisees,
           formationsPlanifiees,
         },
-        repartitions: { byDepartment, byPosition, byStatus },
+        repartitions: { byDepartment, byPosition, byStatus, byContractType },
         alertes: {
           contratsExpirants,
           docsExpires,

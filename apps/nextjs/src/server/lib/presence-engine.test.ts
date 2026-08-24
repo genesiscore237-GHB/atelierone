@@ -1,23 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { calculateAttendance, type CalcInput } from "./presence-engine";
+import { calculateAttendance, dayThreshold, type CalcInput } from "./presence-engine";
 
-// Paramètres RH-00 du garage (seed) : cycle Atelier Standard,
-// tolérance 5 min, pause 13h-14h déduite, plafond 8h30.
+// Cycle « Atelier Standard » (specs MVP) : Lun–Ven 7h30–18h (pause 13h–14h),
+// seuil HS 9,5h ; Samedi 7h30–12h seuil 4,5h.
 const schedule = {
   startTime: "07:30",
   endTime: "18:00",
   breakStart: "13:00",
   breakEnd: "14:00",
   expectedHours: "9.5",
+  overtimeThreshold: "9.5",
   isWorkingDay: true,
 };
 
 const settings = {
   lateToleranceMinutes: 5,
-  roundToMinutes: 5,
+  roundToMinutes: 0,
   autoDeductBreak: true,
   countEarlyArrival: false,
-  maxNormalHoursPerDay: "8.5",
+  countLateDeparture: false,
+  autoDeductLate: true,
+  autoDeductEarlyDeparture: true,
+  maxNormalHoursPerDay: "9.5",
 };
 
 function input(partial: Partial<CalcInput>): CalcInput {
@@ -31,101 +35,128 @@ function input(partial: Partial<CalcInput>): CalcInput {
   };
 }
 
-describe("RH-02 — moteur de calcul des présences", () => {
-  it("CAS 1 : journée standard 07:30-18:00 → 8h30 normales, 0 HS", () => {
+describe("RH-02 — moteur de pointage (specs MVP 02_Pointage)", () => {
+  it("seuil HS du jour : cycle > plafond > attendu > défaut 9,5", () => {
+    expect(dayThreshold(schedule, settings)).toBe(570);
+    expect(dayThreshold({ ...schedule, overtimeThreshold: "4.5" }, settings)).toBe(270);
+    expect(dayThreshold({ ...schedule, overtimeThreshold: null }, { ...settings, maxNormalHoursPerDay: "8.5" })).toBe(510);
+    expect(dayThreshold({ ...schedule, overtimeThreshold: null, expectedHours: null }, { ...settings, maxNormalHoursPerDay: null })).toBe(570);
+  });
+
+  it("journée standard 7h30–18h → 9,5h normales, 0 HS, code P", () => {
     const r = calculateAttendance(input({}));
     expect(r.isAbsent).toBe(false);
-    expect(r.workedMinutes).toBe(570); // 9h30 de présence
-    expect(r.normalMinutes).toBe(510); // 8h30 (plafond)
+    expect(r.rawMinutes).toBe(630); // 10,5h de présence brute
+    expect(r.workedMinutes).toBe(570); // − 1h de pause
+    expect(r.normalMinutes).toBe(570);
     expect(r.overtimeMinutes).toBe(0);
     expect(r.lateMinutes).toBe(0);
+    expect(r.codePresence).toBe("P");
   });
 
-  it("CAS 2 : arrivée 08:00 → 25 min de retard", () => {
+  it("retard 30 min (tolérance 5) → 25 min indiquées, heures déduites, code R", () => {
     const r = calculateAttendance(input({ timeIn: "08:00" }));
     expect(r.lateMinutes).toBe(25);
-    expect(r.isAbsent).toBe(false);
+    expect(r.workedMinutes).toBe(540);
+    expect(r.normalMinutes).toBe(540);
+    expect(r.codePresence).toBe("R");
   });
 
-  it("CAS 3 : départ 19:00 sans autorisation → 8h30, 0 HS", () => {
-    const r = calculateAttendance(input({ timeOut: "19:00" }));
-    expect(r.overtimeMinutes).toBe(0);
-    expect(r.normalMinutes).toBe(510);
-  });
-
-  it("CAS 4 : départ 19:00 avec autorisation 2h approuvée → 8h30 + 1h HS", () => {
-    const r = calculateAttendance(
-      input({
-        timeOut: "19:00",
-        overtimeAuth: { maxHours: "2", status: "approuvee" },
-      })
-    );
-    expect(r.overtimeMinutes).toBe(60);
-    expect(r.normalMinutes).toBe(510);
-  });
-
-  it("CAS 4b : autorisation refusée → HS ignorées", () => {
-    const r = calculateAttendance(
-      input({
-        timeOut: "19:00",
-        overtimeAuth: { maxHours: "2", status: "refusee" },
-      })
-    );
-    expect(r.overtimeMinutes).toBe(0);
-    expect(r.normalMinutes).toBe(510);
-  });
-
-  it("CAS 5 : horaires modifiés dans RH-00 → le calcul utilise les nouvelles valeurs", () => {
-    const r = calculateAttendance(
-      input({
-        schedule: { ...schedule, startTime: "08:00", endTime: "17:00" },
-        timeIn: "08:00",
-        timeOut: "17:00",
-      })
-    );
+  it("arrivée anticipée NON validée → plafonnée à 7h30 (règle 1)", () => {
+    const r = calculateAttendance(input({ timeIn: "07:00" }));
+    expect(r.rawMinutes).toBe(630); // calculé depuis 07:30
     expect(r.lateMinutes).toBe(0);
-    expect(r.rawMinutes).toBe(540);
-    expect(r.workedMinutes).toBe(480); // 8h (pause déduite)
   });
 
-  it("CAS 6 : jour férié paramétré → traité comme non ouvré (pas d'absence)", () => {
+  it("arrivée anticipée validée (ligne) → l'extra compte", () => {
+    const r = calculateAttendance(input({ timeIn: "07:00", validateEarlyArrival: true }));
+    expect(r.rawMinutes).toBe(660);
+    expect(r.workedMinutes).toBe(600);
+  });
+
+  it("arrivée anticipée validée (global) → l'extra compte", () => {
+    const r = calculateAttendance(input({ timeIn: "07:00", settings: { ...settings, countEarlyArrival: true } }));
+    expect(r.rawMinutes).toBe(660);
+  });
+
+  it("départ tardif NON validé → plafonné à 18h, pas de HS (règle 2)", () => {
+    const r = calculateAttendance(input({ timeOut: "19:00" }));
+    expect(r.rawMinutes).toBe(630);
+    expect(r.overtimeMinutes).toBe(0);
+  });
+
+  it("départ tardif validé + seuil 9,5h dépassé → 1h HS auto, code HS", () => {
+    const r = calculateAttendance(input({ timeOut: "19:00", validateLateDeparture: true }));
+    expect(r.rawMinutes).toBe(690); // 7h30–19h
+    expect(r.workedMinutes).toBe(630); // 10,5h
+    expect(r.normalMinutes).toBe(570); // min(10,5 ; 9,5)
+    expect(r.overtimeMinutes).toBe(60); // 1h HS
+    expect(r.codePresence).toBe("HS");
+  });
+
+  it("départ tardif validé (global) → HS comptées", () => {
+    const r = calculateAttendance(input({ timeOut: "19:00", settings: { ...settings, countLateDeparture: true } }));
+    expect(r.overtimeMinutes).toBe(60);
+  });
+
+  it("autorisation HS approuvée → plafonne les HS (supplément)", () => {
     const r = calculateAttendance(
-      input({ timeIn: null, timeOut: null, isPublicHoliday: true })
+      input({ timeOut: "20:00", validateLateDeparture: true, overtimeAuth: { maxHours: "1", status: "approuvee" } })
     );
-    expect(r.isAbsent).toBe(false);
-    expect(r.details.reason).toBe("jour non ouvre");
+    expect(r.overtimeMinutes).toBe(60); // plafonné à 1h alors que 2h auto
+    expect(r.normalMinutes).toBe(570);
   });
 
-  it("dimanche (cycle) → non ouvré, pas d'absence", () => {
+  it("autorisation HS refusée → 0 HS (supplément)", () => {
     const r = calculateAttendance(
-      input({ schedule: { ...schedule, isWorkingDay: false }, timeIn: null, timeOut: null })
+      input({ timeOut: "19:00", validateLateDeparture: true, overtimeAuth: { maxHours: "2", status: "refusee" } })
     );
-    expect(r.isAbsent).toBe(false);
+    expect(r.overtimeMinutes).toBe(0);
   });
 
-  it("pointage incomplet sur journée ouvrée → absent", () => {
-    const r = calculateAttendance(input({ timeIn: null, timeOut: null }));
-    expect(r.isAbsent).toBe(true);
+  it("samedi (seuil 4,5h) : départ validé → 5h travaillées, 4,5h normales + 0,5h HS", () => {
+    const samedi = { ...schedule, startTime: "07:30", endTime: "12:00", breakStart: null, breakEnd: null, overtimeThreshold: "4.5" };
+    const r = calculateAttendance(input({ schedule: samedi, timeIn: "07:30", timeOut: "12:30", validateLateDeparture: true }));
+    expect(r.workedMinutes).toBe(300);
+    expect(r.normalMinutes).toBe(270);
+    expect(r.overtimeMinutes).toBe(30);
+    expect(r.codePresence).toBe("HS");
   });
 
-  it("départ anticipé : départ 16:00 → 120 min", () => {
+  it("samedi sans validation → départ plafonné à 12h, pas de HS", () => {
+    const samedi = { ...schedule, startTime: "07:30", endTime: "12:00", breakStart: null, breakEnd: null, overtimeThreshold: "4.5" };
+    const r = calculateAttendance(input({ schedule: samedi, timeIn: "07:30", timeOut: "12:30" }));
+    expect(r.workedMinutes).toBe(270);
+    expect(r.overtimeMinutes).toBe(0);
+  });
+
+  it("pause déduite seulement si la présence couvre la plage (règle 6)", () => {
+    const r = calculateAttendance(input({ timeIn: "14:30", timeOut: "18:00" }));
+    expect(r.breakMinutes).toBe(0);
+    expect(r.workedMinutes).toBe(210); // 14:30–18:00 sans pause
+  });
+
+  it("départ anticipé → minutes manquantes déduites + indicateur", () => {
     const r = calculateAttendance(input({ timeOut: "16:00" }));
     expect(r.earlyDepartureMinutes).toBe(120);
+    expect(r.workedMinutes).toBe(450);
+    expect(r.codePresence).toBe("P");
   });
 
-  it("arrivée anticipée non comptée (countEarlyArrival=false)", () => {
-    const r = calculateAttendance(input({ timeIn: "07:00", timeOut: "18:00" }));
-    expect(r.rawMinutes).toBe(630); // calculé depuis 07:30, pas 07:00
+  it("pointage incomplet sur journée ouvrée → absent, code A", () => {
+    const r = calculateAttendance(input({ timeIn: null, timeOut: null }));
+    expect(r.isAbsent).toBe(true);
+    expect(r.codePresence).toBe("A");
   });
 
-  it("arrivée anticipée comptée (countEarlyArrival=true)", () => {
-    const r = calculateAttendance(
-      input({
-        timeIn: "07:00",
-        timeOut: "18:00",
-        settings: { ...settings, countEarlyArrival: true },
-      })
-    );
-    expect(r.rawMinutes).toBe(660);
+  it("dimanche (cycle non ouvré) → pas d'absence", () => {
+    const r = calculateAttendance(input({ schedule: { ...schedule, isWorkingDay: false }, timeIn: null, timeOut: null }));
+    expect(r.isAbsent).toBe(false);
+    expect(r.codePresence).toBe("P");
+  });
+
+  it("jour férié → pas d'absence", () => {
+    const r = calculateAttendance(input({ timeIn: null, timeOut: null, isPublicHoliday: true }));
+    expect(r.isAbsent).toBe(false);
   });
 });

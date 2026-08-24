@@ -1,22 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, Fragment } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import {
   CalendarCheck,
   Check,
+  ChevronDown,
   ClipboardList,
   Clock,
   FileBarChart,
   Loader2,
   Plus,
   Save,
+  Sparkles,
   X,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { calculateAttendance, type DaySchedule } from "~/server/lib/presence-engine";
 
 const TABS = [
   { id: "saisie", label: "Saisie du jour", icon: CalendarCheck },
@@ -33,6 +36,13 @@ function fmt(min: number | null | undefined): string {
   return `${h}h${String(m).padStart(2, "0")}`;
 }
 
+const CODE_STYLE: Record<string, string> = {
+  A: "bg-destructive/10 text-destructive",
+  HS: "bg-primary/10 text-primary",
+  R: "bg-warning/10 text-warning-foreground",
+  P: "bg-success/10 text-success-foreground",
+};
+
 export default function PresencesRH() {
   const [tab, setTab] = useState<TabId>("saisie");
   return (
@@ -40,7 +50,7 @@ export default function PresencesRH() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Présences</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Saisie des heures brutes — le système calcule tout selon les paramètres RH.
+          Saisie des heures brutes — le système calcule heures normales, HS, retards et primes selon les paramètres RH.
         </p>
       </div>
 
@@ -72,25 +82,44 @@ export default function PresencesRH() {
   );
 }
 
-// ─── 1. Saisie quotidienne ───
+// ─── 1. Saisie quotidienne (specs MVP : saisie brute, calcul intelligent en direct) ───
+interface RowState {
+  timeIn: string;
+  timeOut: string;
+  status: string;
+  taskBonus: string;
+  validateEarlyArrival: boolean;
+  validateLateDeparture: boolean;
+  notes: string;
+  expanded: boolean;
+}
+
+const EMPTY_ROW: RowState = { timeIn: "", timeOut: "", status: "present", taskBonus: "", validateEarlyArrival: false, validateLateDeparture: false, notes: "", expanded: false };
+
 function SaisieSection() {
   const today = new Date().toISOString().split("T")[0];
   const [date, setDate] = useState(today);
   const { data: employees, isLoading } = api.rh.list.useQuery({ limit: 100, statut: "actif" });
+  const { data: settingsBundle } = api.rhSettings.getAll.useQuery();
   const { data: existing, refetch } = api.rhPresence.listEntries.useQuery(
     { from: date, to: date, limit: 200 },
     { enabled: !!date }
   );
 
-  const [rows, setRows] = useState<Record<number, { timeIn: string; timeOut: string; status: string }>>({});
+  const [rows, setRows] = useState<Record<number, RowState>>({});
 
   useEffect(() => {
-    const next: Record<number, { timeIn: string; timeOut: string; status: string }> = {};
+    const next: Record<number, RowState> = {};
     (existing ?? []).forEach((e) => {
       next[e.employeeId] = {
+        ...EMPTY_ROW,
         timeIn: (e.timeIn ?? "").slice(0, 5),
         timeOut: (e.timeOut ?? "").slice(0, 5),
         status: e.status ?? "present",
+        taskBonus: e.taskBonus ? String(Number(e.taskBonus)) : "",
+        validateEarlyArrival: !!e.validateEarlyArrival,
+        validateLateDeparture: !!e.validateLateDeparture,
+        notes: e.notes ?? "",
       };
     });
     setRows(next);
@@ -112,14 +141,54 @@ function SaisieSection() {
     id: number; nom: string; prenom: string; fonction: string; workCycleId: number | null;
   }>;
 
+  // Horaires du jour (cycle de l'employé) pour le calcul en direct
+  const dayOfWeek = useMemo(() => new Date(`${date}T12:00:00`).getDay(), [date]);
+  const cycles = (settingsBundle?.cycles ?? []) as unknown as Array<{
+    id: number; schedules: Array<{ dayOfWeek: number; startTime: string; endTime: string; breakStart: string | null; breakEnd: string | null; expectedHours: string | null; overtimeThreshold: string | null; isWorkingDay: boolean }>;
+  }>;
+  const presence = (settingsBundle?.attendance ?? null) as unknown as {
+    lateToleranceMinutes?: number; roundToMinutes?: number; autoDeductBreak?: boolean;
+    countEarlyArrival?: boolean; countLateDeparture?: boolean; autoDeductLate?: boolean;
+    autoDeductEarlyDeparture?: boolean; maxNormalHoursPerDay?: string;
+  } | null;
+
+  const scheduleFor = (workCycleId: number | null): DaySchedule | null => {
+    const cycle = cycles.find((c) => c.id === workCycleId);
+    const s = cycle?.schedules?.find((x) => x.dayOfWeek === dayOfWeek);
+    if (!s) return null;
+    return {
+      startTime: s.startTime,
+      endTime: s.endTime,
+      breakStart: s.breakStart,
+      breakEnd: s.breakEnd,
+      expectedHours: s.expectedHours,
+      overtimeThreshold: s.overtimeThreshold,
+      isWorkingDay: s.isWorkingDay,
+    };
+  };
+
+  const settings = {
+    lateToleranceMinutes: presence?.lateToleranceMinutes ?? 0,
+    roundToMinutes: presence?.roundToMinutes ?? 0,
+    autoDeductBreak: presence?.autoDeductBreak ?? true,
+    countEarlyArrival: presence?.countEarlyArrival ?? false,
+    countLateDeparture: presence?.countLateDeparture ?? false,
+    autoDeductLate: presence?.autoDeductLate ?? true,
+    autoDeductEarlyDeparture: presence?.autoDeductEarlyDeparture ?? true,
+    maxNormalHoursPerDay: presence?.maxNormalHoursPerDay ?? null,
+  };
+
   const save = () => {
     const list = emps
-      .filter((e) => rows[e.id] && (rows[e.id].timeIn || rows[e.id].timeOut || rows[e.id].status !== "present"))
+      .filter((e) => rows[e.id] && (rows[e.id].timeIn || rows[e.id].timeOut || rows[e.id].status !== "present" || rows[e.id].taskBonus))
       .map((e) => ({
         employeeId: e.id,
         timeIn: rows[e.id]?.timeIn || null,
         timeOut: rows[e.id]?.timeOut || null,
         status: (rows[e.id]?.status ?? "present") as "present",
+        validateEarlyArrival: rows[e.id]?.validateEarlyArrival ?? false,
+        validateLateDeparture: rows[e.id]?.validateLateDeparture ?? false,
+        taskBonus: rows[e.id]?.taskBonus ? Number(rows[e.id].taskBonus) : 0,
       }));
     if (list.length === 0) {
       toast.error("Renseignez au moins une présence");
@@ -128,10 +197,11 @@ function SaisieSection() {
     batch.mutate({ date, rows: list });
   };
 
-  const setRow = (id: number, patch: Partial<{ timeIn: string; timeOut: string; status: string }>) =>
-    setRows((prev) => ({ ...prev, [id]: { timeIn: "", timeOut: "", status: "present", ...prev[id], ...patch } }));
+  const setRow = (id: number, patch: Partial<RowState>) =>
+    setRows((prev) => ({ ...prev, [id]: { ...EMPTY_ROW, ...prev[id], ...patch } }));
 
   const inputCls = "rounded-lg border border-border bg-accent/30 px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary/50";
+  const isNonWorkingDay = dayOfWeek === 0;
 
   return (
     <div className="space-y-4">
@@ -140,18 +210,37 @@ function SaisieSection() {
           <Label htmlFor="p-date">Date</Label>
           <Input id="p-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-44" />
         </div>
-        <Button onClick={save} disabled={batch.isPending}>
+        <Button
+          onClick={() => setRows(Object.fromEntries(emps.map((e) => [e.id, { ...EMPTY_ROW, ...(rows[e.id] ?? {}) } as RowState])))}
+          variant="outline"
+          disabled={isLoading}
+          title="Marque tous les employés présents (sans écraser les heures)"
+        >
+          <Sparkles size={15} /> Tout présent
+        </Button>
+        <Button onClick={save} disabled={batch.isPending} className="ml-auto">
           {batch.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save size={15} />}
           Enregistrer la journée
         </Button>
       </div>
 
+      {isNonWorkingDay && (
+        <div className="rounded-lg bg-warning/10 px-4 py-2.5 text-sm text-warning-foreground">
+          Dimanche : jour non ouvré — la saisie est conservée mais aucune heure n'est calculée.
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-xl border border-border bg-card">
-        <div className="grid grid-cols-[1fr_110px_110px_130px] gap-2 border-b border-border/60 bg-muted/40 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        <div className="grid grid-cols-[1fr_100px_100px_120px] gap-2 border-b border-border/60 bg-muted/40 px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground md:grid-cols-[1fr_100px_100px_120px_90px_70px_70px_70px_52px]">
           <span>Employé</span>
           <span>Arrivée</span>
           <span>Départ</span>
           <span>Statut</span>
+          <span className="hidden md:block">Prime (FCFA)</span>
+          <span className="hidden text-right md:block">Travail.</span>
+          <span className="hidden text-right md:block">HN</span>
+          <span className="hidden text-right md:block">HS</span>
+          <span className="hidden text-center md:block">Code</span>
         </div>
         {isLoading ? (
           <div className="space-y-2 p-4">
@@ -159,29 +248,95 @@ function SaisieSection() {
           </div>
         ) : (
           <div className="divide-y divide-border/60">
-            {emps.map((e) => (
-              <div key={e.id} className="grid grid-cols-[1fr_110px_110px_130px] items-center gap-2 px-4 py-2">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-foreground">{e.prenom} {e.nom}</p>
-                  <p className="truncate text-xs text-muted-foreground">{e.fonction}</p>
+            {emps.map((e) => {
+              const r = rows[e.id];
+              const calc = calculateAttendance({
+                timeIn: r?.timeIn ? `${r.timeIn}:00` : null,
+                timeOut: r?.timeOut ? `${r.timeOut}:00` : null,
+                schedule: scheduleFor(e.workCycleId),
+                settings,
+                overtimeAuth: null,
+                validateEarlyArrival: r?.validateEarlyArrival ?? false,
+                validateLateDeparture: r?.validateLateDeparture ?? false,
+              });
+              const filled = r && (r.timeIn || r.timeOut || r.status !== "present");
+              return (
+                <div key={e.id} className={filled ? "" : "bg-warning/5"}>
+                  <div className="grid grid-cols-[1fr_100px_100px_120px] items-center gap-2 px-4 py-2 md:grid-cols-[1fr_100px_100px_120px_90px_70px_70px_70px_52px]">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRow(e.id, { expanded: !(r?.expanded ?? false) })}
+                        className="shrink-0 text-muted-foreground hover:text-foreground"
+                        title="Détails : validations admin, notes"
+                      >
+                        <ChevronDown size={14} className={`transition-transform ${r?.expanded ? "rotate-180" : ""}`} />
+                      </button>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-foreground">{e.prenom} {e.nom}</p>
+                        <p className="truncate text-xs text-muted-foreground">{e.fonction}</p>
+                      </div>
+                      {!filled && <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[9px] font-bold uppercase text-warning-foreground">En attente</span>}
+                    </div>
+                    <input type="time" className={inputCls} value={r?.timeIn ?? ""} onChange={(ev) => setRow(e.id, { timeIn: ev.target.value })} />
+                    <input type="time" className={inputCls} value={r?.timeOut ?? ""} onChange={(ev) => setRow(e.id, { timeOut: ev.target.value })} />
+                    <select className={inputCls} value={r?.status ?? "present"} onChange={(ev) => setRow(e.id, { status: ev.target.value })}>
+                      <option value="present" className="bg-background">Présent</option>
+                      <option value="absent" className="bg-background">Absent</option>
+                      <option value="conge" className="bg-background">Congé</option>
+                      <option value="maladie" className="bg-background">Maladie</option>
+                      <option value="mission" className="bg-background">Mission</option>
+                    </select>
+                    <input
+                      type="number"
+                      min={0}
+                      className={`${inputCls} hidden md:block`}
+                      placeholder="0"
+                      value={r?.taskBonus ?? ""}
+                      onChange={(ev) => setRow(e.id, { taskBonus: ev.target.value })}
+                    />
+                    <span className="hidden text-right font-mono text-xs md:block">{filled ? fmt(calc.workedMinutes) : "-"}</span>
+                    <span className="hidden text-right font-mono text-xs text-success-foreground md:block">{filled ? fmt(calc.normalMinutes) : "-"}</span>
+                    <span className="hidden text-right font-mono text-xs text-primary md:block">{filled && calc.overtimeMinutes > 0 ? fmt(calc.overtimeMinutes) : "-"}</span>
+                    <span className="hidden md:block">
+                      {filled ? (
+                        <span className={`inline-flex w-7 justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${CODE_STYLE[calc.codePresence] ?? CODE_STYLE.P}`}>{calc.codePresence}</span>
+                      ) : (
+                        <span className="text-center text-xs text-muted-foreground">-</span>
+                      )}
+                    </span>
+                  </div>
+                  {r?.expanded && (
+                    <div className="grid grid-cols-2 gap-2 border-t border-border/40 bg-muted/20 px-4 py-2 sm:grid-cols-4">
+                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <input type="checkbox" className="size-3.5 accent-primary" checked={r.validateEarlyArrival} onChange={(ev) => setRow(e.id, { validateEarlyArrival: ev.target.checked })} />
+                        Valider arrivée anticipée
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <input type="checkbox" className="size-3.5 accent-primary" checked={r.validateLateDeparture} onChange={(ev) => setRow(e.id, { validateLateDeparture: ev.target.checked })} />
+                        Valider départ tardif
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground sm:col-span-2">
+                        Prime de tâche (FCFA)
+                        <Input type="number" min={0} className="h-7 w-24" value={r.taskBonus ?? ""} onChange={(ev) => setRow(e.id, { taskBonus: ev.target.value })} />
+                      </label>
+                      <Input className="h-7 sm:col-span-4" placeholder="Notes / motif (ex. arrivé 15 min avant — non compté)" value={r.notes ?? ""} onChange={(ev) => setRow(e.id, { notes: ev.target.value })} />
+                      {calc.lateMinutes > 0 && <span className="text-xs text-destructive">Retard : {fmt(calc.lateMinutes)}</span>}
+                      {calc.earlyDepartureMinutes > 0 && <span className="text-xs text-destructive">Départ anticipé : {fmt(calc.earlyDepartureMinutes)}</span>}
+                    </div>
+                  )}
                 </div>
-                <input type="time" className={inputCls} value={rows[e.id]?.timeIn ?? ""} onChange={(ev) => setRow(e.id, { timeIn: ev.target.value })} />
-                <input type="time" className={inputCls} value={rows[e.id]?.timeOut ?? ""} onChange={(ev) => setRow(e.id, { timeOut: ev.target.value })} />
-                <select className={inputCls} value={rows[e.id]?.status ?? "present"} onChange={(ev) => setRow(e.id, { status: ev.target.value })}>
-                  <option value="present" className="bg-background">Présent</option>
-                  <option value="absent" className="bg-background">Absent</option>
-                  <option value="conge" className="bg-background">Congé</option>
-                  <option value="maladie" className="bg-background">Maladie</option>
-                  <option value="mission" className="bg-background">Mission</option>
-                </select>
-              </div>
-            ))}
+              );
+            })}
             {emps.length === 0 && (
               <p className="py-8 text-center text-sm text-muted-foreground">Aucun employé actif.</p>
             )}
           </div>
         )}
       </div>
+      <p className="text-[11px] text-muted-foreground">
+        Arrivée avant l&apos;heure de début et départ après l&apos;heure de fin ne sont pas comptés, sauf validation Admin (colonne détail). Les retards et départs anticipés sont déduits automatiquement. Prime de tâche = bonus FCFA saisi jour par jour (repris en paie).
+      </p>
     </div>
   );
 }
@@ -224,6 +379,9 @@ function OvertimeSection() {
     <div className="space-y-4">
       <div className="rounded-xl border border-border bg-card p-4">
         <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Nouvelle demande</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Optionnel : les HS au-delà du seuil journalier sont comptées automatiquement ; une autorisation approuvée les plafonne, une refusée les bloque.
+        </p>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-5">
           <select
             value={employeeId}
@@ -291,11 +449,12 @@ function OvertimeSection() {
   );
 }
 
-// ─── 3. Historique ───
+// ─── 3. Historique (specs MVP : codes présences, primes, détails à la demande) ───
 function HistoriqueSection() {
   const [employeeId, setEmployeeId] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [expanded, setExpanded] = useState<number | null>(null);
   const { data: employees } = api.rh.list.useQuery({ limit: 100 });
   const { data: entries } = api.rhPresence.listEntries.useQuery({
     employeeId: employeeId ? Number(employeeId) : undefined,
@@ -308,8 +467,20 @@ function HistoriqueSection() {
   const list = (entries ?? []) as unknown as Array<{
     id: number; employeNom: string; employePrenom: string; date: string;
     timeIn: string | null; timeOut: string | null; status: string;
-    calculation: { normalMinutes: number; overtimeMinutes: number; lateMinutes: number; isAbsent: boolean } | null;
+    validateEarlyArrival: boolean; validateLateDeparture: boolean; taskBonus: string | null;
+    calculation: { normalMinutes: number; overtimeMinutes: number; lateMinutes: number; earlyDepartureMinutes: number; codePresence: string; isAbsent: boolean } | null;
   }>;
+
+  const totals = useMemo(() => {
+    let hn = 0, hs = 0, bonus = 0, present = 0;
+    list.forEach((e) => {
+      hn += e.calculation?.normalMinutes ?? 0;
+      hs += e.calculation?.overtimeMinutes ?? 0;
+      bonus += Number(e.taskBonus ?? 0);
+      if (e.calculation && !e.calculation.isAbsent) present++;
+    });
+    return { hn, hs, bonus, present };
+  }, [list]);
 
   return (
     <div className="space-y-4">
@@ -328,6 +499,15 @@ function HistoriqueSection() {
         <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" placeholder="Au" />
       </div>
 
+      {list.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-full bg-success/10 px-3 py-1 text-xs font-semibold text-success-foreground">Σ HN : {fmt(totals.hn)}</span>
+          <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">Σ HS : {fmt(totals.hs)}</span>
+          <span className="rounded-full bg-warning/10 px-3 py-1 text-xs font-semibold text-warning-foreground">Σ Primes : {totals.bonus.toLocaleString("fr-FR")} F</span>
+          <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">Jours présents : {totals.present}</span>
+        </div>
+      )}
+
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
         <table className="w-full">
           <thead className="bg-muted/40 text-left text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
@@ -337,32 +517,58 @@ function HistoriqueSection() {
               <th className="px-4 py-2.5">Arrivée</th>
               <th className="px-4 py-2.5">Départ</th>
               <th className="px-4 py-2.5">Statut</th>
+              <th className="px-4 py-2.5 text-center">Code</th>
               <th className="px-4 py-2.5 text-right">Normal</th>
               <th className="px-4 py-2.5 text-right">HS</th>
-              <th className="px-4 py-2.5 text-right">Retard</th>
+              <th className="px-4 py-2.5 text-right">Prime</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/60">
             {list.map((e) => (
-              <tr key={e.id} className="text-sm text-foreground">
-                <td className="px-4 py-2">{e.date}</td>
-                <td className="px-4 py-2">{e.employePrenom} {e.employeNom}</td>
-                <td className="px-4 py-2 font-mono text-xs">{e.timeIn?.slice(0, 5) ?? "-"}</td>
-                <td className="px-4 py-2 font-mono text-xs">{e.timeOut?.slice(0, 5) ?? "-"}</td>
-                <td className="px-4 py-2">
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                    e.status === "present" ? "bg-success/10 text-success-foreground"
-                    : e.status === "absent" ? "bg-destructive/10 text-destructive"
-                    : "bg-muted text-muted-foreground"
-                  }`}>{e.status}</span>
-                </td>
-                <td className="px-4 py-2 text-right font-mono text-xs">{e.calculation ? fmt(e.calculation.normalMinutes) : "-"}</td>
-                <td className="px-4 py-2 text-right font-mono text-xs text-warning-foreground">{e.calculation ? fmt(e.calculation.overtimeMinutes) : "-"}</td>
-                <td className="px-4 py-2 text-right font-mono text-xs text-destructive">{e.calculation ? fmt(e.calculation.lateMinutes) : "-"}</td>
-              </tr>
+              <Fragment key={e.id}>
+                <tr
+                  className="cursor-pointer text-sm text-foreground hover:bg-accent/30"
+                  onClick={() => setExpanded(expanded === e.id ? null : e.id)}
+                >
+                  <td className="px-4 py-2">{e.date}</td>
+                  <td className="px-4 py-2">{e.employePrenom} {e.employeNom}</td>
+                  <td className="px-4 py-2 font-mono text-xs">{e.timeIn?.slice(0, 5) ?? "-"}</td>
+                  <td className="px-4 py-2 font-mono text-xs">{e.timeOut?.slice(0, 5) ?? "-"}</td>
+                  <td className="px-4 py-2">
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                      e.status === "present" ? "bg-success/10 text-success-foreground"
+                      : e.status === "absent" ? "bg-destructive/10 text-destructive"
+                      : "bg-muted text-muted-foreground"
+                    }`}>{e.status}</span>
+                  </td>
+                  <td className="px-4 py-2 text-center">
+                    {e.calculation && (
+                      <span className={`inline-flex w-7 justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${CODE_STYLE[e.calculation.codePresence] ?? CODE_STYLE.P}`}>
+                        {e.calculation.codePresence}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono text-xs">{e.calculation ? fmt(e.calculation.normalMinutes) : "-"}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs text-primary">{e.calculation && e.calculation.overtimeMinutes > 0 ? fmt(e.calculation.overtimeMinutes) : "-"}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs text-warning-foreground">{Number(e.taskBonus ?? 0) > 0 ? `${Number(e.taskBonus).toLocaleString("fr-FR")} F` : "-"}</td>
+                </tr>
+                {expanded === e.id && (
+                  <tr className="bg-muted/20 text-xs text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-2">
+                      <div className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-4">
+                        <span>Retard : <b className={e.calculation?.lateMinutes ? "text-destructive" : ""}>{e.calculation ? fmt(e.calculation.lateMinutes) : "-"}</b></span>
+                        <span>Départ anticipé : <b className={e.calculation?.earlyDepartureMinutes ? "text-destructive" : ""}>{e.calculation ? fmt(e.calculation.earlyDepartureMinutes) : "-"}</b></span>
+                        <span>Arrivée anticipée validée : {e.validateEarlyArrival ? "Oui" : "Non"}</span>
+                        <span>Départ tardif validé : {e.validateLateDeparture ? "Oui" : "Non"}</span>
+                        {e.taskBonus && Number(e.taskBonus) > 0 && <span>Prime de tâche : {Number(e.taskBonus).toLocaleString("fr-FR")} F</span>}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
             {list.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">Aucune présence.</td></tr>
+              <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">Aucune présence sur cette période.</td></tr>
             )}
           </tbody>
         </table>
@@ -371,7 +577,7 @@ function HistoriqueSection() {
   );
 }
 
-// ─── 4. Mensuel & clôture ───
+// ─── 4. Mensuel & clôture (specs MVP : primes de tâche agrégées) ───
 function MensuelSection() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -389,9 +595,11 @@ function MensuelSection() {
 
   const list = (summaries ?? []) as unknown as Array<{
     id: number; employeNom: string; employePrenom: string; matricule: string;
-    totalNormalMinutes: number; totalOvertimeMinutes: number; totalLateMinutes: number;
+    totalNormalMinutes: number; totalOvertimeMinutes: number; totalLateMinutes: number; totalTaskBonus: string;
     daysPresent: number; daysAbsent: number; locked: boolean;
   }>;
+
+  const totalBonus = list.reduce((s, x) => s + Number(x.totalTaskBonus ?? 0), 0);
 
   return (
     <div className="space-y-4">
@@ -412,6 +620,9 @@ function MensuelSection() {
           {close.isPending ? <Loader2 className="size-4 animate-spin" /> : <Check size={15} />}
           Clôturer le mois
         </Button>
+        {totalBonus > 0 && (
+          <span className="rounded-full bg-warning/10 px-3 py-1 text-xs font-semibold text-warning-foreground">Σ Primes de tâche : {totalBonus.toLocaleString("fr-FR")} F</span>
+        )}
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
@@ -421,6 +632,7 @@ function MensuelSection() {
               <th className="px-4 py-2.5">Employé</th>
               <th className="px-4 py-2.5 text-right">Heures normales</th>
               <th className="px-4 py-2.5 text-right">HS</th>
+              <th className="px-4 py-2.5 text-right">Primes de tâche</th>
               <th className="px-4 py-2.5 text-right">Retards</th>
               <th className="px-4 py-2.5 text-right">Jours présents</th>
               <th className="px-4 py-2.5 text-right">Absences</th>
@@ -432,7 +644,8 @@ function MensuelSection() {
               <tr key={s.id} className="text-sm text-foreground">
                 <td className="px-4 py-2">{s.employePrenom} {s.employeNom} <span className="ml-1 font-mono text-[10px] text-muted-foreground">{s.matricule}</span></td>
                 <td className="px-4 py-2 text-right font-mono text-xs">{fmt(s.totalNormalMinutes)}</td>
-                <td className="px-4 py-2 text-right font-mono text-xs text-warning-foreground">{fmt(s.totalOvertimeMinutes)}</td>
+                <td className="px-4 py-2 text-right font-mono text-xs text-primary">{s.totalOvertimeMinutes > 0 ? fmt(s.totalOvertimeMinutes) : "-"}</td>
+                <td className="px-4 py-2 text-right font-mono text-xs text-warning-foreground">{Number(s.totalTaskBonus ?? 0) > 0 ? `${Number(s.totalTaskBonus).toLocaleString("fr-FR")} F` : "-"}</td>
                 <td className="px-4 py-2 text-right font-mono text-xs text-destructive">{fmt(s.totalLateMinutes)}</td>
                 <td className="px-4 py-2 text-right">{s.daysPresent}</td>
                 <td className="px-4 py-2 text-right">{s.daysAbsent}</td>
@@ -446,7 +659,7 @@ function MensuelSection() {
               </tr>
             ))}
             {list.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">Aucun résumé pour cette période.</td></tr>
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">Aucun résumé pour cette période.</td></tr>
             )}
           </tbody>
         </table>

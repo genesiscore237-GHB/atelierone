@@ -48,6 +48,9 @@ export const contrats = pgTable("contrats", {
   dateDebut: date("date_debut").notNull(),
   dateFin: date("date_fin"),
   dureeMois: integer("duree_mois"),
+  finPeriodeEssai: date("fin_periode_essai"), // specs MVP 05_Contrats
+  avantages: text("avantages"), // specs MVP 05_Contrats
+  renouvellement: boolean("renouvellement").default(false), // specs MVP 05_Contrats
   salaireBase: numeric("salaire_base", { precision: 12, scale: 2 }),
   poste: varchar("poste", { length: 255 }),
   statut: varchar("statut", { length: 50 }).default("actif"),

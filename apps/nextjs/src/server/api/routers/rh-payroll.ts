@@ -10,6 +10,7 @@ import {
   attendanceMonthlySummaries,
   attendanceCalculations,
   attendanceEntries,
+  hrGeneralSettings,
 } from "@atelierone/db";
 import { eq, and, desc, gte, lte, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -104,8 +105,17 @@ export const rhPayrollRouter = createTRPCRouter({
         .where(and(eq(payrollItemsConfig.agenceId, ctx.user.agenceId), eq(payrollItemsConfig.active, true)))
         .orderBy(payrollItemsConfig.sortOrder)) as unknown as PayrollConfigItem[];
 
+      // specs MVP : heures standard mensuelles (225,3) + majoration HS (1,5)
+      const [general] = await db
+        .select({ standardMonthlyHours: hrGeneralSettings.standardMonthlyHours, overtimeMultiplier: hrGeneralSettings.overtimeMultiplier })
+        .from(hrGeneralSettings)
+        .where(eq(hrGeneralSettings.agenceId, ctx.user.agenceId))
+        .limit(1);
+      const standardMonthlyHours = Number(general?.standardMonthlyHours ?? 225.3) || 225.3;
+      const overtimeMultiplier = Number(general?.overtimeMultiplier ?? 1.5) || 1.5;
+
       const employees = await db
-        .select({ id: employes.id, salaireBase: employes.salaireBase })
+        .select({ id: employes.id, salaireBase: employes.salaireBase, modePaie: employes.modePaie })
         .from(employes)
         .where(eq(employes.agenceId, ctx.user.agenceId));
 
@@ -115,6 +125,7 @@ export const rhPayrollRouter = createTRPCRouter({
           employeeId: attendanceEntries.employeeId,
           normalMinutes: sql<number>`COALESCE(SUM(${attendanceCalculations.normalMinutes}), 0)`,
           overtimeMinutes: sql<number>`COALESCE(SUM(${attendanceCalculations.overtimeMinutes}), 0)`,
+          taskBonus: sql<number>`COALESCE(SUM(${attendanceEntries.taskBonus}), 0)`,
           daysPresent: sql<number>`COUNT(*) FILTER (WHERE ${attendanceCalculations.isAbsent} = false)`,
           daysAbsent: sql<number>`COUNT(*) FILTER (WHERE ${attendanceCalculations.isAbsent} = true)`,
         })
@@ -136,8 +147,13 @@ export const rhPayrollRouter = createTRPCRouter({
         const agg = aggregates.find((a) => a.employeeId === emp.id);
         const normalHours = Math.round(((agg?.normalMinutes ?? 0) / 60) * 100) / 100;
         const overtimeHours = Math.round(((agg?.overtimeMinutes ?? 0) / 60) * 100) / 100;
+        const taskBonus = Math.round(Number(agg?.taskBonus ?? 0) * 100) / 100;
         const daysPresent = Number(agg?.daysPresent ?? 0);
         const daysAbsent = Number(agg?.daysAbsent ?? 0);
+
+        // specs MVP : paie sur heures réelles (HN × taux + HS × taux majoré + primes de tâche),
+        // sauf override « mensuel » (salaire fixe indépendant des heures)
+        const payOnHours = (emp.modePaie ?? "horaire") !== "mensuel";
 
         const result = calculatePayroll({
           baseSalary: base,
@@ -148,6 +164,11 @@ export const rhPayrollRouter = createTRPCRouter({
           performanceBonus: 0,
           manualAdjustments: [],
           items,
+          normalHours,
+          taskBonus,
+          standardMonthlyHours,
+          overtimeMultiplier,
+          payOnHours,
         });
 
         // Upsert du bulletin
@@ -172,7 +193,7 @@ export const rhPayrollRouter = createTRPCRouter({
           daysAbsent,
           presenceBonus: String(result.lines.find((l) => l.itemCode === "PRIME_PRESENCE")?.amount ?? 0),
           performanceBonus: String(result.lines.find((l) => l.itemCode === "PRIME_PERFORMANCE")?.amount ?? 0),
-          otherEarnings: "0",
+          otherEarnings: String(result.lines.find((l) => l.itemCode === "PRIME_TACHE")?.amount ?? 0), // primes de tâche (specs MVP)
           totalEarnings: String(result.totalEarnings),
           deductions: String(result.totalDeductions),
           cnpsEmployee: String(result.cnpsEmployee),
@@ -236,6 +257,7 @@ export const rhPayrollRouter = createTRPCRouter({
           overtimeHours: payrollEntries.overtimeHours,
           daysPresent: payrollEntries.daysPresent,
           daysAbsent: payrollEntries.daysAbsent,
+          otherEarnings: payrollEntries.otherEarnings, // primes de tâche (specs MVP)
           totalEarnings: payrollEntries.totalEarnings,
           deductions: payrollEntries.deductions,
           cnpsEmployee: payrollEntries.cnpsEmployee,
@@ -299,6 +321,17 @@ export const rhPayrollRouter = createTRPCRouter({
         .where(and(eq(payrollItemsConfig.agenceId, ctx.user.agenceId), eq(payrollItemsConfig.active, true)))
         .orderBy(payrollItemsConfig.sortOrder)) as unknown as PayrollConfigItem[];
 
+      const [general] = await db
+        .select({ standardMonthlyHours: hrGeneralSettings.standardMonthlyHours, overtimeMultiplier: hrGeneralSettings.overtimeMultiplier })
+        .from(hrGeneralSettings)
+        .where(eq(hrGeneralSettings.agenceId, ctx.user.agenceId))
+        .limit(1);
+      const [emp] = await db
+        .select({ modePaie: employes.modePaie })
+        .from(employes)
+        .where(eq(employes.id, entry.employeeId))
+        .limit(1);
+
       const result = calculatePayroll({
         baseSalary: Number(entry.baseSalary),
         overtimeHours: Number(entry.overtimeHours ?? 0),
@@ -308,6 +341,11 @@ export const rhPayrollRouter = createTRPCRouter({
         performanceBonus: input.performanceBonus ?? 0,
         manualAdjustments: (input.manualAdjustments ?? []) as { code: string; amount: number }[],
         items,
+        normalHours: Number(entry.normalHours ?? 0),
+        taskBonus: Number(entry.otherEarnings ?? 0),
+        standardMonthlyHours: Number(general?.standardMonthlyHours ?? 225.3) || 225.3,
+        overtimeMultiplier: Number(general?.overtimeMultiplier ?? 1.5) || 1.5,
+        payOnHours: (emp?.modePaie ?? "horaire") !== "mensuel",
       });
 
       await db

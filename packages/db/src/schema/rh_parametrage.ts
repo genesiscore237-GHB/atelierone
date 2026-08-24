@@ -36,6 +36,7 @@ export const hrWorkSchedules = pgTable("hr_work_schedules", {
   breakStart: time("break_start"),
   breakEnd: time("break_end"),
   expectedHours: numeric("expected_hours", { precision: 4, scale: 2 }),
+  overtimeThreshold: numeric("overtime_threshold", { precision: 4, scale: 2 }), // seuil HS journalier (9,5 semaine / 4,5 samedi — specs MVP)
   isWorkingDay: boolean("is_working_day").default(true),
 });
 
@@ -46,7 +47,10 @@ export const hrAttendanceSettings = pgTable("hr_attendance_settings", {
   lateToleranceMinutes: integer("late_tolerance_minutes").default(0),
   roundToMinutes: integer("round_to_minutes").default(0), // 0 = aucune, 5, 15…
   autoDeductBreak: boolean("auto_deduct_break").default(true),
-  countEarlyArrival: boolean("count_early_arrival").default(false),
+  countEarlyArrival: boolean("count_early_arrival").default(false), // Oui = extra payé / Non = plafonné à l'heure de début
+  countLateDeparture: boolean("count_late_departure").default(false), // Oui = extra payé / Non = plafonné à l'heure de fin
+  autoDeductLate: boolean("auto_deduct_late").default(true), // retards déduits automatiquement (specs MVP)
+  autoDeductEarlyDeparture: boolean("auto_deduct_early_departure").default(true), // départs anticipés déduits (specs MVP)
   maxNormalHoursPerDay: numeric("max_normal_hours_per_day", { precision: 4, scale: 2 }).default("8"),
   updatedAt: timestamp("updated_at").defaultNow(),
   updatedBy: integer("updated_by").references(() => utilisateurs.id),
@@ -99,6 +103,9 @@ export const hrGeneralSettings = pgTable("hr_general_settings", {
   evaluationFrequency: varchar("evaluation_frequency", { length: 20 }).default("trimestrielle"),
   annualLeaveDays: numeric("annual_leave_days", { precision: 5, scale: 1 }).default("30"), // acquisition annuelle de congés (RH-03)
   disciplinaryWindowMonths: integer("disciplinary_window_months").default(12), // période glissante compteur avertissements (RH-07)
+  standardMonthlyHours: numeric("standard_monthly_hours", { precision: 6, scale: 2 }).default("225.3"), // heures standard/mois → taux horaire (specs MVP)
+  overtimeMultiplier: numeric("overtime_multiplier", { precision: 4, scale: 2 }).default("1.5"), // majoration HS (specs MVP)
+  defaultOvertimeThreshold: numeric("default_overtime_threshold", { precision: 4, scale: 2 }).default("9.5"), // seuil HS journalier par défaut (specs MVP)
   updatedAt: timestamp("updated_at").defaultNow(),
   updatedBy: integer("updated_by").references(() => utilisateurs.id),
 });

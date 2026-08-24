@@ -38,6 +38,10 @@ export const employes = pgTable("employes", {
   numPieceIdentite: varchar("num_piece_identite", { length: 50 }),
   pieceExpireLe: date("piece_expire_le"),
   diplome: varchar("diplome", { length: 255 }),
+  langues: varchar("langues", { length: 255 }), // specs MVP 06_Competences (langues maîtrisées)
+  logiciels: varchar("logiciels", { length: 255 }), // specs MVP 06_Competences (logiciels maîtrisés)
+  pointsFort: text("points_fort"), // specs MVP 06_Competences
+  axesAmelioration: text("axes_amelioration"), // specs MVP 06_Competences
   notes: text("notes"),
   statut: varchar("statut", { length: 20 }).default("actif"),
   photoUrl: text("photo_url"),

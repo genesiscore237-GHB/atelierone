@@ -85,6 +85,7 @@ export {
   attendanceCalculations,
   attendanceMonthlySummaries,
 } from "./rh_presences";
+export { planningAffectations } from "./rh_planning";
 export {
   leaveBalances,
   leaveRequests,

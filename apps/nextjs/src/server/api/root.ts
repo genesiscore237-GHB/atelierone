@@ -27,6 +27,7 @@ import { rhCompetencesRouter } from "~/server/api/routers/rh-competences";
 import { rhDisciplineRouter } from "~/server/api/routers/rh-discipline";
 import { rhDocumentsRouter } from "~/server/api/routers/rh-documents";
 import { rhDashboardRouter } from "~/server/api/routers/rh-dashboard";
+import { rhPlanningRouter } from "~/server/api/routers/rh-planning";
 import { partnerRouter } from "~/server/api/routers/partner";
 import { stockRouter } from "~/server/api/routers/stock";
 import { orRouter } from "~/server/api/routers/or-router";
@@ -68,6 +69,7 @@ export const appRouter = createTRPCRouter({
   rhDiscipline: rhDisciplineRouter,
   rhDocuments: rhDocumentsRouter,
   rhDashboard: rhDashboardRouter,
+  rhPlanning: rhPlanningRouter,
   stock: stockRouter,
   or: orRouter,
   partner: partnerRouter,

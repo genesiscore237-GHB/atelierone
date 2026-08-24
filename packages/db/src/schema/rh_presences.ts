@@ -26,6 +26,10 @@ export const attendanceEntries = pgTable("attendance_entries", {
   source: varchar("source", { length: 20 }).default("manual"), // manual | biometric | import
   status: varchar("status", { length: 20 }).default("present"), // present | absent | conge | maladie | mission
   notes: text("notes"),
+  // specs MVP — validation admin par ligne : l'extra n'est compté que si validé
+  validateEarlyArrival: boolean("validate_early_arrival").default(false), // Oui = l'arrivée anticipée compte
+  validateLateDeparture: boolean("validate_late_departure").default(false), // Oui = le départ tardif compte
+  taskBonus: numeric("task_bonus", { precision: 12, scale: 2 }).default("0"), // prime de tâche (FCFA)
   validated: boolean("validated").default(false),
   validatedBy: integer("validated_by").references(() => utilisateurs.id),
   validatedAt: timestamp("validated_at"),
@@ -61,6 +65,7 @@ export const attendanceCalculations = pgTable("attendance_calculations", {
   lateMinutes: integer("late_minutes").default(0),
   earlyDepartureMinutes: integer("early_departure_minutes").default(0),
   isAbsent: boolean("is_absent").default(false),
+  codePresence: varchar("code_presence", { length: 2 }).default("P"), // A | HS | R | P (specs MVP)
   calculationDetails: jsonb("calculation_details"),
   calculatedAt: timestamp("calculated_at").defaultNow(),
 });
@@ -74,6 +79,7 @@ export const attendanceMonthlySummaries = pgTable("attendance_monthly_summaries"
   totalNormalMinutes: integer("total_normal_minutes").default(0),
   totalOvertimeMinutes: integer("total_overtime_minutes").default(0),
   totalLateMinutes: integer("total_late_minutes").default(0),
+  totalTaskBonus: numeric("total_task_bonus", { precision: 12, scale: 2 }).default("0"), // Σ primes de tâche (specs MVP 02/03)
   daysPresent: integer("days_present").default(0),
   daysAbsent: integer("days_absent").default(0),
   daysOnLeave: integer("days_on_leave").default(0),

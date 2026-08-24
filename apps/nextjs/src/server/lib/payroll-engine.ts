@@ -22,6 +22,12 @@ export interface PayrollInput {
   performanceBonus: number; // saisie manuelle
   manualAdjustments: Array<{ code: string; amount: number }>; // ex. avance (négatif = retenue)
   items: PayrollConfigItem[];
+  // specs MVP — calcul sur heures réelles (Gestion_Personnel_GPJ.xlsx 03_Paie) :
+  normalHours?: number; // heures normales de la période
+  taskBonus?: number; // Σ primes de tâche de la période (FCFA)
+  standardMonthlyHours?: number; // heures standard / mois → taux horaire (défaut 225,3)
+  overtimeMultiplier?: number; // majoration HS (défaut 1,5)
+  payOnHours?: boolean; // true = brut = HN × taux + HS × taux majoré + primes de tâche
 }
 
 export interface PayrollLine {
@@ -79,10 +85,17 @@ export function calculatePayroll(input: PayrollInput): PayrollResult {
     performanceBonus,
     manualAdjustments,
     items,
+    normalHours = 0,
+    taskBonus = 0,
+    standardMonthlyHours,
+    overtimeMultiplier,
+    payOnHours = false,
   } = input;
 
   const lines: PayrollLine[] = [];
-  const hourlyRate = expectedWorkingDays > 0 ? baseSalary / (expectedWorkingDays * 8) : 0;
+  // Taux horaire : salaire ÷ heures standard mensuelles (specs MVP : 225,3 h)
+  const stdHours = standardMonthlyHours && standardMonthlyHours > 0 ? standardMonthlyHours : expectedWorkingDays * 8;
+  const hourlyRate = stdHours > 0 ? baseSalary / stdHours : 0;
   const attendancePct = expectedWorkingDays > 0 ? (daysPresent / expectedWorkingDays) * 100 : 0;
 
   const push = (itemCode: string, label: string, amount: number, direction: "gain" | "retenue") => {
@@ -90,7 +103,12 @@ export function calculatePayroll(input: PayrollInput): PayrollResult {
     lines.push({ itemCode, label, amount: round2(amount), direction });
   };
 
-  push("BASE", "Salaire de base", baseSalary, "gain");
+  // specs MVP : la base devient « heures normales × taux horaire »
+  if (payOnHours) {
+    push("HN", `Heures normales (${round2(normalHours)} h × ${round2(hourlyRate)} F)`, normalHours * hourlyRate, "gain");
+  } else {
+    push("BASE", "Salaire de base", baseSalary, "gain");
+  }
 
   let absentDeduction = 0;
   let manualDeduction = 0;
@@ -116,7 +134,9 @@ export function calculatePayroll(input: PayrollInput): PayrollResult {
       }
       case "hours_x_rate": {
         if (overtimeHours > 0) {
-          const rate = num(item.params?.rate, 1.25);
+          const rate = overtimeMultiplier && overtimeMultiplier > 0
+            ? overtimeMultiplier
+            : num(item.params?.rate, 1.5);
           push(item.code, item.name, overtimeHours * hourlyRate * rate, "gain");
         }
         break;
@@ -152,7 +172,12 @@ export function calculatePayroll(input: PayrollInput): PayrollResult {
     push("PRIME_PERFORMANCE", "Prime de performance", performanceBonus, "gain");
   }
 
-  // Brut imposable = base + toutes les primes/HS (hors absences)
+  // specs MVP — primes de tâche (saisies jour par jour dans le pointage)
+  if (taskBonus > 0) {
+    push("PRIME_TACHE", "Primes de tâche", taskBonus, "gain");
+  }
+
+  // Brut imposable = base/HN + toutes les primes/HS (hors absences)
   const grossPay = round2(lines.filter((l) => l.direction === "gain").reduce((s, l) => s + l.amount, 0));
 
   // Cotisations CNPS sur le brut (part salariale déductible + part patronale hors net)

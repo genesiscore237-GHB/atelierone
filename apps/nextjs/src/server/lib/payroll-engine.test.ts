@@ -98,3 +98,57 @@ describe("RH-04 — moteur de calcul de paie (modèle camerounais)", () => {
     expect(r.netPay).toBe(r.netImposable - r.irpp - 20000);
   });
 });
+
+describe("RH-04 — paie sur heures réelles (specs MVP 03_Paie)", () => {
+  it("taux horaire = salaire ÷ 225,3 h (standard mensuel du fichier)", () => {
+    const r = calculatePayroll(input({ payOnHours: true, standardMonthlyHours: 225.3, normalHours: 0, daysPresent: 20 }));
+    const hnLine = r.lines.find((l) => l.itemCode === "HN");
+    expect(hnLine?.amount ?? 0).toBeCloseTo(0, 1); // aucune heure → aucun montant
+    // 1h normale = 150000 / 225,3
+    const r2 = calculatePayroll(input({ payOnHours: true, standardMonthlyHours: 225.3, normalHours: 1, daysPresent: 20 }));
+    expect(r2.lines.find((l) => l.itemCode === "HN")?.amount).toBeCloseTo(150000 / 225.3, 1);
+  });
+
+  it("brut = HN × taux + HS × taux × 1,5 + primes de tâche (logique du fichier)", () => {
+    const r = calculatePayroll(
+      input({
+        payOnHours: true,
+        standardMonthlyHours: 225.3,
+        overtimeMultiplier: 1.5,
+        normalHours: 160,
+        overtimeHours: 2,
+        taskBonus: 5000,
+        daysPresent: 20, // < 95 % → prime de présence non déclenchée
+      })
+    );
+    const hourly = 150000 / 225.3;
+    const hn = r.lines.find((l) => l.itemCode === "HN")?.amount ?? 0;
+    const hs = r.lines.find((l) => l.itemCode === "HS")?.amount ?? 0;
+    const pt = r.lines.find((l) => l.itemCode === "PRIME_TACHE")?.amount ?? 0;
+    expect(hn).toBeCloseTo(hourly * 160, 1);
+    expect(hs).toBeCloseTo(hourly * 2 * 1.5, 1);
+    expect(pt).toBe(5000);
+    expect(r.grossPay).toBeCloseTo(hn + hs + pt, 1);
+    expect(r.lines.some((l) => l.itemCode === "BASE")).toBe(false);
+  });
+
+  it("majoration HS paramétrable (overtimeMultiplier) prime sur la config", () => {
+    const r = calculatePayroll(
+      input({ payOnHours: true, standardMonthlyHours: 225.3, overtimeMultiplier: 1.5, normalHours: 160, overtimeHours: 1, daysPresent: 20 })
+    );
+    const hs = r.lines.find((l) => l.itemCode === "HS")?.amount ?? 0;
+    expect(hs).toBeCloseTo((150000 / 225.3) * 1.5, 1);
+  });
+
+  it("mode mensuel (payOnHours=false) : base mensuelle conservée, taux horaire recalé sur 225,3", () => {
+    const r = calculatePayroll(input({ standardMonthlyHours: 225.3, overtimeMultiplier: 1.5, overtimeHours: 1 }));
+    expect(r.lines.some((l) => l.itemCode === "BASE" && l.amount === 150000)).toBe(true);
+    const hs = r.lines.find((l) => l.itemCode === "HS")?.amount ?? 0;
+    expect(hs).toBeCloseTo((150000 / 225.3) * 1.5, 1);
+  });
+
+  it("aucune heure pointée en mode heures réelles → brut = primes uniquement", () => {
+    const r = calculatePayroll(input({ payOnHours: true, standardMonthlyHours: 225.3, normalHours: 0, taskBonus: 10000, daysPresent: 0 }));
+    expect(r.grossPay).toBeCloseTo(10000, 1);
+  });
+});

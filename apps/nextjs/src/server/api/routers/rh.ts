@@ -45,9 +45,12 @@ export const rhRouter = createTRPCRouter({
           salaireBase: employes.salaireBase,
           photoUrl: employes.photoUrl,
           userId: employes.userId,
+          departmentId: employes.departmentId,
+          departmentName: departments.name,
           createdAt: employes.createdAt,
         })
         .from(employes)
+        .leftJoin(departments, eq(employes.departmentId, departments.id))
         .where(and(...conditions))
         .orderBy(desc(employes.createdAt))
         .limit(input.limit)
@@ -73,6 +76,8 @@ export const rhRouter = createTRPCRouter({
           salaireBase: r.salaireBase,
           photoUrl: r.photoUrl,
           userId: r.userId,
+          departmentId: r.departmentId,
+          departmentName: r.departmentName,
           hasAccount: r.userId !== null,
           createdAt: r.createdAt?.toISOString() ?? "",
         })),
@@ -286,6 +291,11 @@ export const rhRouter = createTRPCRouter({
         numPieceIdentite: z.string().optional().nullable(),
         pieceExpireLe: z.string().optional().nullable(),
         diplome: z.string().optional().nullable(),
+        // specs MVP 06_Competences — profil libre
+        langues: z.string().optional().nullable(),
+        logiciels: z.string().optional().nullable(),
+        pointsFort: z.string().optional().nullable(),
+        axesAmelioration: z.string().optional().nullable(),
         notes: z.string().optional().nullable(),
       }),
     )
@@ -316,7 +326,8 @@ export const rhRouter = createTRPCRouter({
         "typeEmploye", "fonction", "departmentId", "positionId", "workCycleId", "managerId",
         "dateEmbauche", "dateFinContrat", "periodeEssaiFin", "salaireBase", "modePaie", "statut",
         "numCnss", "niu", "numCompteBancaire", "banque",
-        "typePieceIdentite", "numPieceIdentite", "pieceExpireLe", "diplome", "notes",
+        "typePieceIdentite", "numPieceIdentite", "pieceExpireLe", "diplome",
+        "langues", "logiciels", "pointsFort", "axesAmelioration", "notes",
       ];
 
       for (const field of fields) {
@@ -753,6 +764,10 @@ export const rhRouter = createTRPCRouter({
       dateDebut: z.string(),
       dateFin: z.string().optional(),
       dureeMois: z.number().optional(),
+      // specs MVP 05_Contrats
+      finPeriodeEssai: z.string().optional(),
+      avantages: z.string().optional(),
+      renouvellement: z.boolean().optional(),
       salaireBase: z.string().optional(),
       poste: z.string().optional(),
       notes: z.string().optional(),
@@ -764,11 +779,34 @@ export const rhRouter = createTRPCRouter({
         dateDebut: input.dateDebut,
         dateFin: input.dateFin || null,
         dureeMois: input.dureeMois || null,
+        finPeriodeEssai: input.finPeriodeEssai || null,
+        avantages: input.avantages || null,
+        renouvellement: input.renouvellement ?? false,
         salaireBase: input.salaireBase || null,
         poste: input.poste || null,
         notes: input.notes || null,
       } as any).returning() as any;
       return { id: String(contrat.id) };
+    }) as any,
+
+  /** specs MVP 05_Contrats — renouvellement en un clic : prolonge la fin de la même durée. */
+  renouvelerContrat: requirePermissionProcedure("rh.utilisateur.modifier")
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const [contrat] = await db
+        .select()
+        .from(contrats)
+        .where(eq(contrats.id, input.id))
+        .limit(1);
+      if (!contrat) throw new TRPCError({ code: "NOT_FOUND", message: "Contrat introuvable." });
+      const duree = contrat.dureeMois ?? 12;
+      const base = new Date(`${contrat.dateFin ?? contrat.dateDebut}T00:00:00`);
+      const nouvelleFin = new Date(base.getFullYear(), base.getMonth() + duree, base.getDate()).toISOString().slice(0, 10);
+      await db
+        .update(contrats)
+        .set({ dateFin: nouvelleFin, renouvellement: true, statut: "actif", updatedAt: new Date() } as any)
+        .where(eq(contrats.id, input.id));
+      return { success: true, nouvelleFin };
     }) as any,
 
   // ─── Documents employés ───

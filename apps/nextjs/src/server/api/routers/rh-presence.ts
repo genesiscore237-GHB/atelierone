@@ -12,7 +12,7 @@ import {
   hrAttendanceSettings,
   hrPublicHolidays,
 } from "@atelierone/db";
-import { eq, and, desc, gte, lte } from "drizzle-orm";
+import { eq, and, desc, gte, lte, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { calculateAttendance } from "~/server/lib/presence-engine";
 
@@ -22,7 +22,7 @@ const OT_STATUS = ["en_attente", "approuvee", "refusee"] as const;
 /** RH-02 — Présences & temps de travail */
 export const rhPresenceRouter = createTRPCRouter({
   // ─── Saisie quotidienne (simple ou en lot) ───
-  saveEntry: requirePermissionProcedure("rh.utilisateur.modifier")
+saveEntry: requirePermissionProcedure("rh.utilisateur.modifier")
     .input(
       z.object({
         employeeId: z.number().int(),
@@ -31,6 +31,10 @@ export const rhPresenceRouter = createTRPCRouter({
         timeOut: z.string().nullable().optional(),
         status: z.enum(ENTRY_STATUS).default("present"),
         notes: z.string().optional(),
+        // specs MVP — validation admin par ligne + prime de tâche
+        validateEarlyArrival: z.boolean().optional(),
+        validateLateDeparture: z.boolean().optional(),
+        taskBonus: z.number().min(0).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -61,6 +65,9 @@ export const rhPresenceRouter = createTRPCRouter({
             timeOut: input.timeOut ?? null,
             status: input.status,
             notes: input.notes ?? null,
+            validateEarlyArrival: input.validateEarlyArrival ?? false,
+            validateLateDeparture: input.validateLateDeparture ?? false,
+            taskBonus: input.taskBonus != null ? String(input.taskBonus) : undefined,
             updatedAt: new Date(),
           } as any)
           .where(eq(attendanceEntries.id, existing.id));
@@ -75,6 +82,9 @@ export const rhPresenceRouter = createTRPCRouter({
             timeOut: input.timeOut ?? null,
             status: input.status,
             notes: input.notes ?? null,
+            validateEarlyArrival: input.validateEarlyArrival ?? false,
+            validateLateDeparture: input.validateLateDeparture ?? false,
+            taskBonus: input.taskBonus != null ? String(input.taskBonus) : "0",
             createdBy: Number(ctx.user.id),
           } as any)
           .returning();
@@ -96,6 +106,9 @@ export const rhPresenceRouter = createTRPCRouter({
             timeIn: z.string().nullable().optional(),
             timeOut: z.string().nullable().optional(),
             status: z.enum(ENTRY_STATUS).default("present"),
+            validateEarlyArrival: z.boolean().optional(),
+            validateLateDeparture: z.boolean().optional(),
+            taskBonus: z.number().min(0).optional(),
           })
         ),
       })
@@ -132,7 +145,7 @@ export const rhPresenceRouter = createTRPCRouter({
       if (safe.from) conditions.push(gte(attendanceEntries.date, safe.from));
       if (safe.to) conditions.push(lte(attendanceEntries.date, safe.to));
 
-      const rows = await db
+const rows = await db
         .select({
           id: attendanceEntries.id,
           employeeId: attendanceEntries.employeeId,
@@ -144,6 +157,9 @@ export const rhPresenceRouter = createTRPCRouter({
           timeOut: attendanceEntries.timeOut,
           status: attendanceEntries.status,
           notes: attendanceEntries.notes,
+          validateEarlyArrival: attendanceEntries.validateEarlyArrival,
+          validateLateDeparture: attendanceEntries.validateLateDeparture,
+          taskBonus: attendanceEntries.taskBonus,
           validated: attendanceEntries.validated,
         })
         .from(attendanceEntries)
@@ -152,12 +168,12 @@ export const rhPresenceRouter = createTRPCRouter({
         .orderBy(desc(attendanceEntries.date))
         .limit((input ?? {}).limit ?? 50);
 
-      const ids = rows.map((r) => r.id);
+const ids = rows.map((r) => r.id);
       const calcs = ids.length
         ? await db
             .select()
             .from(attendanceCalculations)
-            .where(ids.length === 1 ? eq(attendanceCalculations.attendanceEntryId, ids[0]) : undefined)
+            .where(inArray(attendanceCalculations.attendanceEntryId, ids))
         : [];
 
       return rows.map((r) => ({
@@ -242,6 +258,7 @@ export const rhPresenceRouter = createTRPCRouter({
           normalMinutes: attendanceCalculations.normalMinutes,
           overtimeMinutes: attendanceCalculations.overtimeMinutes,
           lateMinutes: attendanceCalculations.lateMinutes,
+          taskBonus: attendanceEntries.taskBonus,
         })
         .from(attendanceCalculations)
         .innerJoin(attendanceEntries, eq(attendanceCalculations.attendanceEntryId, attendanceEntries.id))
@@ -283,6 +300,7 @@ export const rhPresenceRouter = createTRPCRouter({
           totalNormalMinutes: list.reduce((s, c) => s + (c.normalMinutes ?? 0), 0),
           totalOvertimeMinutes: list.reduce((s, c) => s + (c.overtimeMinutes ?? 0), 0),
           totalLateMinutes: list.reduce((s, c) => s + (c.lateMinutes ?? 0), 0),
+          totalTaskBonus: String(list.reduce((s, c) => s + Number(c.taskBonus ?? 0), 0)),
           daysPresent,
           daysAbsent,
           locked: true,
@@ -324,9 +342,10 @@ export const rhPresenceRouter = createTRPCRouter({
           matricule: employes.matricule,
           year: attendanceMonthlySummaries.year,
           month: attendanceMonthlySummaries.month,
-          totalNormalMinutes: attendanceMonthlySummaries.totalNormalMinutes,
+totalNormalMinutes: attendanceMonthlySummaries.totalNormalMinutes,
           totalOvertimeMinutes: attendanceMonthlySummaries.totalOvertimeMinutes,
           totalLateMinutes: attendanceMonthlySummaries.totalLateMinutes,
+          totalTaskBonus: attendanceMonthlySummaries.totalTaskBonus,
           daysPresent: attendanceMonthlySummaries.daysPresent,
           daysAbsent: attendanceMonthlySummaries.daysAbsent,
           daysOnLeave: attendanceMonthlySummaries.daysOnLeave,
@@ -387,7 +406,7 @@ async function runCalculation(entryId: number, employeeId: number, date: string)
     )
     .limit(1);
 
-  const result = calculateAttendance({
+const result = calculateAttendance({
     timeIn: entry.timeIn,
     timeOut: entry.timeOut,
     schedule: schedule ?? null,
@@ -396,10 +415,16 @@ async function runCalculation(entryId: number, employeeId: number, date: string)
       roundToMinutes: settingsRow?.roundToMinutes ?? 0,
       autoDeductBreak: settingsRow?.autoDeductBreak ?? true,
       countEarlyArrival: settingsRow?.countEarlyArrival ?? false,
+      countLateDeparture: settingsRow?.countLateDeparture ?? false,
+      autoDeductLate: settingsRow?.autoDeductLate ?? true,
+      autoDeductEarlyDeparture: settingsRow?.autoDeductEarlyDeparture ?? true,
       maxNormalHoursPerDay: settingsRow?.maxNormalHoursPerDay ?? null,
     },
     overtimeAuth: ot ? { maxHours: ot.maxHours, status: ot.status } : null,
     isPublicHoliday: !!holiday,
+    // specs MVP — validation admin par ligne (clamps levés si validés)
+    validateEarlyArrival: entry.validateEarlyArrival ?? false,
+    validateLateDeparture: entry.validateLateDeparture ?? false,
   });
 
   const [existingCalc] = await db
@@ -408,7 +433,7 @@ async function runCalculation(entryId: number, employeeId: number, date: string)
     .where(eq(attendanceCalculations.attendanceEntryId, entryId))
     .limit(1);
 
-  const values = {
+const values = {
     employeeId,
     date,
     rawMinutes: result.rawMinutes,
@@ -419,6 +444,7 @@ async function runCalculation(entryId: number, employeeId: number, date: string)
     lateMinutes: result.lateMinutes,
     earlyDepartureMinutes: result.earlyDepartureMinutes,
     isAbsent: result.isAbsent,
+    codePresence: result.codePresence,
     calculationDetails: result.details,
     calculatedAt: new Date(),
   };
@@ -436,7 +462,7 @@ async function runCalculation(entryId: number, employeeId: number, date: string)
 }
 
 // Réutilisé par saveBatch
-async function saveSingle(user: { agenceId: number; id: string }, date: string, row: { employeeId: number; timeIn?: string | null; timeOut?: string | null; status?: string }) {
+async function saveSingle(user: { agenceId: number; id: string }, date: string, row: { employeeId: number; timeIn?: string | null; timeOut?: string | null; status?: string; validateEarlyArrival?: boolean; validateLateDeparture?: boolean; taskBonus?: number }) {
   const [emp] = await db
     .select({ id: employes.id, workCycleId: employes.workCycleId })
     .from(employes)
@@ -455,13 +481,31 @@ async function saveSingle(user: { agenceId: number; id: string }, date: string, 
   if (existing) {
     await db
       .update(attendanceEntries)
-      .set({ timeIn: row.timeIn ?? null, timeOut: row.timeOut ?? null, status: row.status ?? "present", updatedAt: new Date() } as any)
+      .set({
+        timeIn: row.timeIn ?? null,
+        timeOut: row.timeOut ?? null,
+        status: row.status ?? "present",
+        validateEarlyArrival: row.validateEarlyArrival ?? false,
+        validateLateDeparture: row.validateLateDeparture ?? false,
+        taskBonus: row.taskBonus != null ? String(row.taskBonus) : undefined,
+        updatedAt: new Date(),
+      } as any)
       .where(eq(attendanceEntries.id, existing.id));
     entryId = existing.id;
   } else {
     const [created] = await db
       .insert(attendanceEntries)
-      .values({ employeeId: row.employeeId, date, timeIn: row.timeIn ?? null, timeOut: row.timeOut ?? null, status: row.status ?? "present", createdBy: Number(user.id) } as any)
+      .values({
+        employeeId: row.employeeId,
+        date,
+        timeIn: row.timeIn ?? null,
+        timeOut: row.timeOut ?? null,
+        status: row.status ?? "present",
+        validateEarlyArrival: row.validateEarlyArrival ?? false,
+        validateLateDeparture: row.validateLateDeparture ?? false,
+        taskBonus: row.taskBonus != null ? String(row.taskBonus) : "0",
+        createdBy: Number(user.id),
+      } as any)
       .returning();
     entryId = created.id;
   }

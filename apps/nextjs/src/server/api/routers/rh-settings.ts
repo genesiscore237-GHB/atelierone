@@ -432,7 +432,7 @@ export const rhSettingsRouter = createTRPCRouter({
     return row ?? null;
   }),
 
-  updateGeneralSettings: requirePermissionProcedure("rh.utilisateur.modifier")
+updateGeneralSettings: requirePermissionProcedure("rh.utilisateur.modifier")
     .input(
       z.object({
         employeeCodePrefix: z.string().min(1).max(10),
@@ -441,6 +441,10 @@ export const rhSettingsRouter = createTRPCRouter({
         currency: z.string().min(3).max(3),
         evaluationEnabled: z.boolean(),
         evaluationFrequency: z.string(),
+        // specs MVP — calcul paie sur heures réelles
+        standardMonthlyHours: z.number().min(1).max(1000).optional(),
+        overtimeMultiplier: z.number().min(1).max(3).optional(),
+        defaultOvertimeThreshold: z.number().min(1).max(24).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {

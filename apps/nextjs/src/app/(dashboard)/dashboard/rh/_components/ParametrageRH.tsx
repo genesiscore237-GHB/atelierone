@@ -122,6 +122,10 @@ interface RhSettingsUI {
     currency: string | null;
     evaluationEnabled: boolean | null;
     evaluationFrequency: string | null;
+    // specs MVP — calcul paie sur heures réelles
+    standardMonthlyHours: string | null;
+    overtimeMultiplier: string | null;
+    defaultOvertimeThreshold: string | null;
   } | null;
 }
 
@@ -856,7 +860,7 @@ function GeneralSection({
   data: RhSettingsUI;
   invalidate: () => void;
 }) {
-  const g = data.general;
+const g = data.general;
   const [form, setForm] = useState({
     employeeCodePrefix: g?.employeeCodePrefix ?? "GPJ",
     employeeCodeSequence: g?.employeeCodeSequence ?? 0,
@@ -864,6 +868,9 @@ function GeneralSection({
     currency: g?.currency ?? "XAF",
     evaluationEnabled: g?.evaluationEnabled ?? true,
     evaluationFrequency: g?.evaluationFrequency ?? "trimestrielle",
+    standardMonthlyHours: Number(g?.standardMonthlyHours ?? 225.3),
+    overtimeMultiplier: Number(g?.overtimeMultiplier ?? 1.5),
+    defaultOvertimeThreshold: Number(g?.defaultOvertimeThreshold ?? 9.5),
   });
 
   useEffect(() => {
@@ -875,6 +882,9 @@ function GeneralSection({
       currency: g.currency ?? "XAF",
       evaluationEnabled: g.evaluationEnabled ?? true,
       evaluationFrequency: g.evaluationFrequency ?? "trimestrielle",
+      standardMonthlyHours: Number(g.standardMonthlyHours ?? 225.3),
+      overtimeMultiplier: Number(g.overtimeMultiplier ?? 1.5),
+      defaultOvertimeThreshold: Number(g.defaultOvertimeThreshold ?? 9.5),
     });
   }, [g]);
 
@@ -920,10 +930,37 @@ function GeneralSection({
           </select>
         </div>
       </div>
-      <label className="flex items-center gap-2 text-sm text-foreground">
+<label className="flex items-center gap-2 text-sm text-foreground">
         <input type="checkbox" checked={form.evaluationEnabled} onChange={(e) => setForm({ ...form, evaluationEnabled: e.target.checked })} className="size-4 accent-[var(--primary)]" />
         Module d&apos;évaluation & performance activé
       </label>
+
+      <div className="rounded-lg border border-dashed border-border p-4">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          Calcul de la paie sur heures réelles (specs MVP)
+        </h3>
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          Taux horaire = salaire ÷ heures standard mensuelles · Taux HS = taux horaire × majoration · Seuil HS journalier : au-delà = heures supplémentaires.
+        </p>
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div>
+            <Label htmlFor="stdH">Heures standard mensuelles</Label>
+            <Input id="stdH" type="number" step="0.1" value={form.standardMonthlyHours} onChange={(e) => setForm({ ...form, standardMonthlyHours: Number(e.target.value) })} />
+            <p className="mt-0.5 text-[10px] text-muted-foreground">Défaut 225,3 h (6 j × 52 h / 4,333 sem.)</p>
+          </div>
+          <div>
+            <Label htmlFor="mult">Majoration HS (×)</Label>
+            <Input id="mult" type="number" step="0.1" value={form.overtimeMultiplier} onChange={(e) => setForm({ ...form, overtimeMultiplier: Number(e.target.value) })} />
+            <p className="mt-0.5 text-[10px] text-muted-foreground">Défaut 1,5 (+50 %)</p>
+          </div>
+          <div>
+            <Label htmlFor="seuil">Seuil HS journalier (h)</Label>
+            <Input id="seuil" type="number" step="0.5" value={form.defaultOvertimeThreshold} onChange={(e) => setForm({ ...form, defaultOvertimeThreshold: Number(e.target.value) })} />
+            <p className="mt-0.5 text-[10px] text-muted-foreground">Défaut 9,5 h (semaine) · 4,5 h (samedi)</p>
+          </div>
+        </div>
+      </div>
+
       <Button onClick={() => mutation.mutate(form)} disabled={mutation.isPending}>
         <Save size={15} /> Enregistrer
       </Button>
