@@ -8,13 +8,13 @@ import { Phone, Mail, Search, Users, Loader2 } from "lucide-react";
 export default function AnnuairePage() {
   const [search, setSearch] = useState("");
   const [dept, setDept] = useState("");
-  const { data: employees, isLoading, isError, refetch } = api.rh.list.useQuery({ limit: 300 });
+  const { data: employees, isLoading, isError, refetch } = api.rh.list.useQuery({ limit: 100 });
 
-  const emps = (employees?.employees ?? []) as unknown as Array<{
+  const emps = ((employees?.employees ?? []) as unknown as Array<{
     id: number; matricule: string; nom: string; prenom: string; fonction: string;
-    telephone: string | null; emailPersonnel: string | null;
+    telephone: string | null; emailPersonnel: string | null; statut: string | null;
     departmentId: number | null; departmentName: string | null;
-  }>;
+  }>).filter((e) => e.statut !== "archive");
 
   const depts = useMemo(() => [...new Set(emps.map((e) => e.departmentName).filter(Boolean))].sort(), [emps]);
 
