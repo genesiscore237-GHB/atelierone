@@ -1447,7 +1447,7 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Ordre de réparation introuvable." });
-        if (or.statut === "annule" || or.statut === "termine" || or.statut === "facture") {
+        if (["LIVRE", "ANNULE", "PRET_A_LIVRER", "termine", "facture", "annule"].includes(or.statut)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de sortir des pièces sur un OR ${or.statut}.` });
         }
 
@@ -1562,7 +1562,7 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Ordre de réparation introuvable." });
-        if (or.statut === "annule" || or.statut === "termine" || or.statut === "facture") {
+        if (["LIVRE", "ANNULE", "PRET_A_LIVRER", "termine", "facture", "annule"].includes(or.statut)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de réserver des pièces sur un OR ${or.statut}.` });
         }
         // Specs V2 §05 règle 8 : on ne réserve pas de stock périmé
@@ -1643,7 +1643,7 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Ordre de réparation introuvable." });
-        if (or.statut === "annule" || or.statut === "termine" || or.statut === "facture") {
+        if (["LIVRE", "ANNULE", "PRET_A_LIVRER", "termine", "facture", "annule"].includes(or.statut)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de créer un échange sur un OR ${or.statut}.` });
         }
         await verifierDispoNonPerimee(tx as any, {

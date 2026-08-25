@@ -8,7 +8,10 @@ import { utilisateurs } from "./utilisateurs";
 
 /**
  * ORDRE DE RÉPARATION — cycle complet plainte → diagnostic → devis → travaux → facture.
- * Statuts : ouvert, en_cours, attente_piece, termine, facture, annule
+ * Statuts (module Véhicules & Atelier V2) :
+ * EN_ATTENTE_DIAGNOSTIC | EN_COURS | EN_ATTENTE_PIECES | EN_ATTENTE_VALIDATION |
+ * CONTROLE_QUALITE | PRET_A_LIVRER | BLOQUE | LIVRE | ANNULE
+ * Priorités : P1 (critique) | P2 (haute) | P3 (normale) | P4 (basse/en attente)
  */
 export const ordresReparation = pgTable("ordres_reparation", {
   id: serial("id").primaryKey(),
@@ -16,13 +19,22 @@ export const ordresReparation = pgTable("ordres_reparation", {
   numero: varchar("numero", { length: 50 }).notNull().unique(),
   vehiculeId: integer("vehicule_id").notNull().references(() => vehicules.id),
   clientId: integer("client_id").references(() => clients.id),
-  statut: varchar("statut", { length: 30 }).default("ouvert"),
+  statut: varchar("statut", { length: 40 }).default("EN_ATTENTE_DIAGNOSTIC"),
+  priorite: varchar("priorite", { length: 2 }).default("P3"), // P1 | P2 | P3 | P4
   plainte: text("plainte"),
+  motEntree: varchar("mot_entree", { length: 40 }).default("AUTRE"), // PANNE|ENTRETIEN|DIAGNOSTIC|CARROSSERIE|CONTROLE|AUTRE
   diagnostic: text("diagnostic"),
   devisAccepte: boolean("devis_accepte").default(false),
   dateOuverture: timestamp("date_ouverture").defaultNow(),
+  datePromesse: date("date_promesse"), // restitution promise au client
   dateFinPrevue: date("date_fin_prevue"),
   dateCloture: timestamp("date_cloture"),
+  emplacement: varchar("emplacement", { length: 100 }).default("Réception"), // Parc A, Parc B, Pont 1, Pont 2, Carrosserie…
+  responsableTechnicienId: integer("responsable_technicien_id").references(() => employes.id),
+  raisonBlocage: text("raison_blocage"), // obligatoire si statut = BLOQUE
+  bloquePar: varchar("bloque_par", { length: 120 }), // qui bloque (pièces, client, expertise…)
+  clientAttendSurPlace: boolean("client_attend_sur_place").default(false),
+  courtoisieDemandee: boolean("courtoisie_demandee").default(false),
   totalPieces: numeric("total_pieces", { precision: 12, scale: 2 }).default("0"),
   totalMainOeuvre: numeric("total_main_oeuvre", { precision: 12, scale: 2 }).default("0"),
   totalTTC: numeric("total_ttc", { precision: 12, scale: 2 }).default("0"),

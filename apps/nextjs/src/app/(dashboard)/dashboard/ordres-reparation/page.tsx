@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import {
@@ -16,28 +17,33 @@ import {
   Receipt,
   Loader2,
   Check,
+  History,
+  UserRound,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
-
-const STATUTS_BADGE: Record<string, string> = {
-  ouvert: "bg-muted text-muted-foreground",
-  en_cours: "bg-info/10 text-info-foreground",
-  attente_piece: "bg-warning/10 text-warning-foreground",
-  termine: "bg-success/10 text-success-foreground",
-  facture: "bg-primary/10 text-primary",
-  annule: "bg-destructive/10 text-destructive",
-};
+import {
+  STATUT_BADGE,
+  STATUT_LABELS,
+  PRIORITE_META,
+  ALERTE_META,
+  transitionStatutAtelierValide,
+  STATUTS_ATELIER,
+} from "~/server/lib/atelier-service";
 
 /**
  * ORDRES DE RÉPARATION — specs GPJ / Architecture §3.2.
  * Liste + fiche détail (lignes pièces/main d'œuvre) + sortie/retour de pièces
- * liés à l'OR (stock.sortirPourOR / stock.retourAtelier).
+ * liés à l'OR (stock.sortirPourOR / stock.retourAtelier) + cycle de vie V2.
  */
 export default function OrdresReparationPage() {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const params = useSearchParams();
+  const orParam = params.get("or");
+  if (orParam && !selectedId) setSelectedId(Number(orParam));
 
   const { data, isLoading, refetch } = api.or.list.useQuery({ search: search || undefined });
   const { data: vehicules } = api.or.listVehicules.useQuery({});
@@ -150,7 +156,7 @@ export default function OrdresReparationPage() {
                     <td className="px-4 py-2.5">{or.clientPrenom} {or.clientNom}</td>
                     <td className="max-w-[220px] truncate px-4 py-2.5 text-muted-foreground">{or.plainte ?? "—"}</td>
                     <td className="px-4 py-2.5 text-center">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${STATUTS_BADGE[or.statut] ?? "bg-muted"}`}>{or.statut}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${STATUT_BADGE[or.statut] ?? "bg-muted"}`}>{STATUT_LABELS[or.statut] ?? or.statut}</span>
                     </td>
                     <td className="px-4 py-2.5 text-right font-mono">{Number(or.totalTTC).toLocaleString("fr-FR")} F</td>
                     <td className="px-4 py-2.5 text-right">
@@ -255,27 +261,36 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
       <div className="rounded-xl border border-border bg-card p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-lg font-bold text-foreground">OR {or.numero}</h2>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${STATUTS_BADGE[or.statut] ?? "bg-muted"}`}>{or.statut}</span>
+              <span className={`rounded px-2 py-0.5 text-[11px] font-black text-white ${or.priorite === "P1" ? "bg-destructive" : or.priorite === "P2" ? "bg-warning" : or.priorite === "P3" ? "bg-success" : "bg-muted text-muted-foreground"}`}>{or.priorite}</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${STATUT_BADGE[or.statut] ?? "bg-muted"}`}>{STATUT_LABELS[or.statut] ?? or.statut}</span>
+              {or.alerte && or.alerte !== "OK" && (
+                <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${ALERTE_META[or.alerte]?.badge ?? ""}`}>{ALERTE_META[or.alerte]?.libelle ?? or.alerte}</span>
+              )}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
               <Car size={12} className="inline" /> {or.immatriculation} — {or.marque} {or.modele} · Client : {or.clientPrenom} {or.clientNom}
             </p>
             {or.plainte && <p className="mt-1 text-sm">Plainte : <span className="text-foreground/80">{or.plainte}</span></p>}
             {or.diagnostic && <p className="mt-1 text-sm">Diagnostic : <span className="text-foreground/80">{or.diagnostic}</span></p>}
+            <p className="mt-1 text-xs text-muted-foreground">
+              Entrée : {or.dateOuverture ? new Date(or.dateOuverture).toLocaleDateString("fr-FR") : "—"}
+              {or.datePromesse && <> · Promesse : {new Date(or.datePromesse).toLocaleDateString("fr-FR")}</>}
+              {or.joursImmobilisation !== undefined && <> · Immobilisation : <b className="text-warning-foreground">{or.joursImmobilisation} j</b></>}
+              {or.retardJours > 0 && <> · <b className="text-destructive">Retard {or.retardJours} j</b></>}
+              {or.emplacement && <> · {or.emplacement}</>}
+            </p>
+            {or.raisonBlocage && (
+              <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-destructive">
+                <AlertTriangle size={12} /> Bloqué : {or.raisonBlocage}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
-            <select
-              className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
-              value={or.statut}
-              onChange={(e) => updateStatut.mutate({ id, statut: e.target.value as any })}
-            >
-              {["ouvert", "en_cours", "attente_piece", "termine", "facture", "annule"].map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-            {or.statut === "termine" && !or.venteId && (
+            <StatutSelector or={or} id={id} />
+            <PrioriteSelector or={or} id={id} />
+            {or.statut === "PRET_A_LIVRER" && !or.venteId && (
               <Button onClick={() => setShowFacture(true)} className="gap-1.5 text-xs">
                 <Receipt size={14} /> Facturer
               </Button>
@@ -592,6 +607,127 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
           </div>
         </div>
       )}
+
+      {/* Historique du cycle de vie */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+          <History size={14} className="text-primary" /> Historique du cycle de vie
+        </div>
+        {(or.historique ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucun changement enregistré.</p>
+        ) : (
+          <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+            {(or.historique ?? []).map((h: any) => (
+              <div key={h.id} className="flex items-start gap-2 rounded-lg bg-muted/30 px-3 py-1.5 text-xs">
+                <span className={`mt-0.5 w-20 shrink-0 rounded-full px-1.5 py-0.5 text-center text-[9px] font-black uppercase ${
+                  h.type === "STATUT" ? "bg-primary/10 text-primary" : h.type === "PRIORITE" ? "bg-warning/10 text-warning-foreground" : h.type === "RESPONSABLE" ? "bg-sky-500/10 text-sky-400" : "bg-muted text-muted-foreground"
+                }`}>{h.type}</span>
+                <div className="min-w-0 flex-1">
+                  <span className="font-medium text-foreground">
+                    {h.type === "PRIORITE"
+                      ? `${h.ancienneValeur ?? "—"} → ${h.nouvelleValeur}`
+                      : h.type === "RESPONSABLE"
+                        ? `Technicien #${h.ancienneValeur ?? "non assigné"} → #${h.nouvelleValeur ?? "non assigné"}`
+                        : `${STATUT_LABELS[h.ancienneValeur ?? ""] ?? h.ancienneValeur ?? "—"} → ${STATUT_LABELS[h.nouvelleValeur ?? ""] ?? h.nouvelleValeur}`}
+                  </span>
+                  {h.commentaire && <span className="ml-2 text-muted-foreground">· {h.commentaire}</span>}
+                </div>
+                <span className="shrink-0 text-[10px] text-muted-foreground">{new Date(h.changeLe).toLocaleString("fr-FR")}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Sélecteur de statut (transitions contrôlées + raison obligatoire) ───
+function StatutSelector({ or, id }: { or: any; id: number }) {
+  const utils = api.useUtils();
+  const [showRaison, setShowRaison] = useState<string | null>(null);
+  const [raison, setRaison] = useState("");
+  const changerStatut = api.or.changerStatut.useMutation({
+    onSuccess: () => {
+      toast.success("Statut mis à jour");
+      utils.or.getById.invalidate();
+      utils.or.list.invalidate();
+      setShowRaison(null);
+      setRaison("");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const transitions = STATUTS_ATELIER.filter((s) => s !== or.statut && transitionStatutAtelierValide(or.statut, s).ok);
+  const besoinRaison = (s: string) => s === "BLOQUE" || s === "ANNULE";
+
+  return (
+    <div className="flex items-center gap-1">
+      <select
+        className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+        value=""
+        onChange={(e) => {
+          const s = e.target.value;
+          if (!s) return;
+          if (besoinRaison(s)) { setShowRaison(s); setRaison(""); } else { changerStatut.mutate({ id, nouveauStatut: s as any, commentaire: undefined }); }
+        }}
+      >
+        <option value="">Statut : {STATUT_LABELS[or.statut] ?? or.statut}…</option>
+        {transitions.map((s) => <option key={s} value={s} className="bg-background">{STATUT_LABELS[s]}</option>)}
+      </select>
+      {showRaison && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowRaison(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
+              <AlertTriangle size={16} className="text-destructive" /> {showRaison === "BLOQUE" ? "Bloquer ce véhicule" : "Annuler cet OR"}
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">La raison est obligatoire pour {STATUT_LABELS[showRaison]}.</p>
+            <input
+              value={raison}
+              onChange={(e) => setRaison(e.target.value)}
+              placeholder={showRaison === "BLOQUE" ? "Pièces manquantes, validation client…" : "Motif de l'annulation"}
+              className="mt-3 w-full rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowRaison(null)}>Annuler</Button>
+              <Button
+                className={showRaison === "BLOQUE" ? "bg-destructive text-destructive-foreground" : ""}
+                disabled={raison.trim().length < 3 || changerStatut.isPending}
+                onClick={() => changerStatut.mutate({ id, nouveauStatut: showRaison as any, raison: raison.trim(), commentaire: raison.trim() })}
+              >
+                Confirmer
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Sélecteur de priorité (historisation obligatoire) ───
+function PrioriteSelector({ or, id }: { or: any; id: number }) {
+  const utils = api.useUtils();
+  const changerPriorite = api.or.changerPriorite.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Priorité ${r.priorite}`);
+      utils.or.getById.invalidate();
+      utils.or.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const p = or.priorite ?? "P3";
+  return (
+    <div className="flex items-center gap-1">
+      <span className={`rounded px-2 py-0.5 text-[11px] font-black text-white ${p === "P1" ? "bg-destructive" : p === "P2" ? "bg-warning" : p === "P3" ? "bg-success" : "bg-muted text-muted-foreground"}`}>{p}</span>
+      <select
+        className="h-9 rounded-lg border border-border bg-background px-2 text-xs"
+        value=""
+        onChange={(e) => e.target.value && changerPriorite.mutate({ id, priorite: e.target.value as any, motif: "Changement depuis la fiche" })}
+      >
+        <option value="">Priorité…</option>
+        {(["P1", "P2", "P3", "P4"] as const).filter((x) => x !== p).map((x) => <option key={x} value={x} className="bg-background">{x} — {PRIORITE_META[x]?.libelle}</option>)}
+      </select>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import {
   ScrollText,
   LayoutDashboard,
   SlidersHorizontal,
+  Settings2,
   UserRound,
   Fingerprint,
   CalendarOff,
@@ -296,6 +297,14 @@ export const DOMAINS: AppDomain[] = [
         moduleId: "vehicules",
       },
       {
+        id: "atelier-parc",
+        label: "Pilotage du parc",
+        href: "/dashboard/atelier/parc",
+        icon: LayoutDashboard,
+        desc: "Priorités, alertes, statuts — tableau de bord en temps réel",
+        moduleId: "or",
+      },
+      {
         id: "atelier-or",
         label: "Ordres de Réparation",
         href: "/dashboard/ordres-reparation",
@@ -306,10 +315,18 @@ export const DOMAINS: AppDomain[] = [
       {
         id: "atelier-planning",
         label: "Planning atelier",
-        href: "/dashboard/planning",
+        href: "/dashboard/atelier/planning",
         icon: CalendarClock,
-        desc: "Charge, techniciens, priorités",
+        desc: "Charge des techniciens, affectations du jour",
         moduleId: "planning",
+      },
+      {
+        id: "atelier-parametres",
+        label: "Paramètres parc",
+        href: "/dashboard/atelier/parametres",
+        icon: Settings2,
+        desc: "Seuils d'alerte, emplacements, raisons de blocage",
+        moduleId: "or",
       },
       {
         id: "atelier-interventions",

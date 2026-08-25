@@ -13,11 +13,26 @@ import {
   dettesClients,
   contratsMaintenance,
   contratsMaintenanceVehicules,
+  orHistorique,
+  orPhotos,
+  atelierParametres,
 } from "@atelierone/db";
-import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lte, asc } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
 import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererReferenceFacture, MODES_PAIEMENT, montantLigne } from "~/server/lib/facturation-service";
+import {
+  migrerStatutLegacy,
+  transitionStatutAtelierValide,
+  calculerAlertes,
+  joursImmobilisation,
+  retardJours,
+  PRIORITES,
+  STATUTS_ATELIER,
+  MOTIFS_ENTREE,
+  STATUT_LABELS,
+  STATUTS_FACTURABLES,
+} from "~/server/lib/atelier-service";
 
 /**
  * MODULE ORDRE DE RÉPARATION (OR) — specs GPJ / Architecture §3.2.
@@ -26,7 +41,7 @@ import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererR
  * (stock.sortirPourOR / stock.retourAtelier).
  */
 
-export const STATUTS_OR = ["ouvert", "en_cours", "attente_piece", "termine", "facture", "annule"] as const;
+export const STATUTS_OR = STATUTS_ATELIER;
 
 const genNumero = async (agenceId: number): Promise<string> => {
   const now = new Date();
@@ -110,33 +125,57 @@ export const orRouter = createTRPCRouter({
       limit: z.number().int().min(10).max(200).default(50),
       search: z.string().optional(),
       statut: z.string().optional(),
+      priorite: z.string().optional(),
+      responsableTechnicienId: z.number().int().optional(),
+      emplacement: z.string().optional(),
     }).optional())
     .query(async ({ ctx, input }) => {
       const safe = input ?? {};
       const conditions: any[] = [eq(ordresReparation.agenceId, ctx.user.agenceId)];
-      if (safe.statut) conditions.push(eq(ordresReparation.statut, safe.statut));
+      if (safe.statut) conditions.push(eq(ordresReparation.statut, migrerStatutLegacy(safe.statut)));
+      if (safe.priorite) conditions.push(eq(ordresReparation.priorite, safe.priorite));
+      if (safe.responsableTechnicienId) conditions.push(eq(ordresReparation.responsableTechnicienId, safe.responsableTechnicienId));
+      if (safe.emplacement) conditions.push(eq(ordresReparation.emplacement, safe.emplacement));
 
       const rows = await db
         .select({
           id: ordresReparation.id,
           numero: ordresReparation.numero,
           statut: ordresReparation.statut,
+          priorite: ordresReparation.priorite,
           plainte: ordresReparation.plainte,
+          motEntree: ordresReparation.motEntree,
           dateOuverture: ordresReparation.dateOuverture,
+          datePromesse: ordresReparation.datePromesse,
+          emplacement: ordresReparation.emplacement,
+          raisonBlocage: ordresReparation.raisonBlocage,
+          bloquePar: ordresReparation.bloquePar,
+          responsableTechnicienId: ordresReparation.responsableTechnicienId,
+          responsableNom: employes.nom,
+          responsablePrenom: employes.prenom,
+          clientAttendSurPlace: ordresReparation.clientAttendSurPlace,
           totalPieces: ordresReparation.totalPieces,
           totalMainOeuvre: ordresReparation.totalMainOeuvre,
           totalTTC: ordresReparation.totalTTC,
           immatriculation: vehicules.immatriculation,
           marque: vehicules.marque,
           modele: vehicules.modele,
+          clientId: clients.id,
           clientNom: clients.nom,
           clientPrenom: clients.prenom,
+          clientTelephone: clients.telephone,
+          clientRaisonSociale: clients.raisonSociale,
+          clientType: clients.typeClient,
         })
         .from(ordresReparation)
         .innerJoin(vehicules, eq(ordresReparation.vehiculeId, vehicules.id))
         .leftJoin(clients, eq(ordresReparation.clientId, clients.id))
+        .leftJoin(employes, eq(ordresReparation.responsableTechnicienId, employes.id))
         .where(and(...conditions))
-        .orderBy(desc(ordresReparation.dateOuverture))
+        .orderBy(
+          sql`CASE ${ordresReparation.priorite} WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END`,
+          desc(ordresReparation.dateOuverture),
+        )
         .limit(safe.limit)
         .offset((safe.page - 1) * safe.limit);
 
@@ -151,7 +190,8 @@ export const orRouter = createTRPCRouter({
             (r) =>
               r.numero.toLowerCase().includes(safe.search!.toLowerCase()) ||
               (r.immatriculation ?? "").toLowerCase().includes(safe.search!.toLowerCase()) ||
-              `${r.clientPrenom ?? ""} ${r.clientNom ?? ""}`.toLowerCase().includes(safe.search!.toLowerCase())
+              `${r.clientPrenom ?? ""} ${r.clientNom ?? ""}`.toLowerCase().includes(safe.search!.toLowerCase()) ||
+              (r.clientRaisonSociale ?? "").toLowerCase().includes(safe.search!.toLowerCase())
           )
         : rows;
 
@@ -170,12 +210,23 @@ export const orRouter = createTRPCRouter({
           contratId: ordresReparation.contratId,
           venteId: ordresReparation.venteId,
           statut: ordresReparation.statut,
+          priorite: ordresReparation.priorite,
+          motEntree: ordresReparation.motEntree,
           plainte: ordresReparation.plainte,
           diagnostic: ordresReparation.diagnostic,
           devisAccepte: ordresReparation.devisAccepte,
           dateOuverture: ordresReparation.dateOuverture,
+          datePromesse: ordresReparation.datePromesse,
           dateFinPrevue: ordresReparation.dateFinPrevue,
           dateCloture: ordresReparation.dateCloture,
+          emplacement: ordresReparation.emplacement,
+          raisonBlocage: ordresReparation.raisonBlocage,
+          bloquePar: ordresReparation.bloquePar,
+          clientAttendSurPlace: ordresReparation.clientAttendSurPlace,
+          courtoisieDemandee: ordresReparation.courtoisieDemandee,
+          responsableTechnicienId: ordresReparation.responsableTechnicienId,
+          responsableNom: employes.nom,
+          responsablePrenom: employes.prenom,
           totalPieces: ordresReparation.totalPieces,
           totalMainOeuvre: ordresReparation.totalMainOeuvre,
           totalTTC: ordresReparation.totalTTC,
@@ -185,10 +236,12 @@ export const orRouter = createTRPCRouter({
           modele: vehicules.modele,
           clientNom: clients.nom,
           clientPrenom: clients.prenom,
+          clientTelephone: clients.telephone,
         })
         .from(ordresReparation)
         .innerJoin(vehicules, eq(ordresReparation.vehiculeId, vehicules.id))
         .leftJoin(clients, eq(ordresReparation.clientId, clients.id))
+        .leftJoin(employes, eq(ordresReparation.responsableTechnicienId, employes.id))
         .where(and(eq(ordresReparation.id, input.id), eq(ordresReparation.agenceId, ctx.user.agenceId)))
         .limit(1);
       if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "Ordre de réparation introuvable." });
@@ -211,7 +264,33 @@ export const orRouter = createTRPCRouter({
         .leftJoin(produits, eq(lignesOrdreReparation.produitId, produits.id))
         .where(eq(lignesOrdreReparation.ordreId, input.id))
         .orderBy(lignesOrdreReparation.id);
-      return { ...or, lignes };
+
+      const [historique, photos, parametres] = await Promise.all([
+        db.select().from(orHistorique).where(eq(orHistorique.orId, input.id)).orderBy(asc(orHistorique.changeLe)),
+        db.select().from(orPhotos).where(eq(orPhotos.orId, input.id)).orderBy(asc(orPhotos.createdAt)),
+        db.select().from(atelierParametres).where(eq(atelierParametres.agenceId, ctx.user.agenceId)).limit(1),
+      ]);
+      const seuils = parametres?.[0]
+        ? { seuilPromesseJours: parametres[0].seuilPromesseJours ?? 1, seuilImmobilisationJours: parametres[0].seuilImmobilisationJours ?? 5, seuilBloqueJours: parametres[0].seuilBloqueJours ?? 3 }
+        : undefined;
+      const dateEntree = or.dateOuverture ?? new Date();
+      const alerte = calculerAlertes({
+        statut: or.statut,
+        priorite: or.priorite,
+        datePromesse: or.datePromesse,
+        dateEntree,
+        seuils,
+      });
+      return {
+        ...or,
+        lignes,
+        historique,
+        photos,
+        joursImmobilisation: joursImmobilisation(dateEntree),
+        retardJours: retardJours(or.datePromesse),
+        alerte: alerte.principale,
+        alertes: alerte.alertes,
+      };
     }),
 
   create: requirePermissionProcedure("or.creer")
@@ -220,7 +299,14 @@ export const orRouter = createTRPCRouter({
       clientId: z.number().int().optional(),
       plainte: z.string().optional(),
       diagnostic: z.string().optional(),
+      priorite: z.enum(PRIORITES).default("P3"),
+      motEntree: z.enum(MOTIFS_ENTREE).default("AUTRE"),
+      datePromesse: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       dateFinPrevue: z.string().optional(),
+      emplacement: z.string().optional(),
+      responsableTechnicienId: z.number().int().optional(),
+      clientAttendSurPlace: z.boolean().optional(),
+      courtoisieDemandee: z.boolean().optional(),
       notes: z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
@@ -272,12 +358,28 @@ export const orRouter = createTRPCRouter({
           contratId: contratCouvert?.id ?? null,
           plainte: input.plainte ?? null,
           diagnostic: input.diagnostic ?? null,
+          priorite: input.priorite,
+          motEntree: input.motEntree,
+          datePromesse: input.datePromesse ?? null,
           dateFinPrevue: input.dateFinPrevue ?? null,
+          emplacement: input.emplacement ?? "Réception",
+          responsableTechnicienId: input.responsableTechnicienId ?? null,
+          clientAttendSurPlace: input.clientAttendSurPlace ?? false,
+          courtoisieDemandee: input.courtoisieDemandee ?? false,
           notes: input.notes ?? null,
           creePar: Number(ctx.user.id),
-          statut: "ouvert",
+          statut: "EN_ATTENTE_DIAGNOSTIC",
         } as any)
         .returning();
+
+      // Historique de création (traçabilité complète)
+      await db.insert(orHistorique).values({
+        orId: row.id,
+        type: "CREATION",
+        nouvelleValeur: "EN_ATTENTE_DIAGNOSTIC",
+        commentaire: `Réception ${input.motEntree} — ${input.plainte ?? "sans consigne"}${input.datePromesse ? `, promesse ${input.datePromesse}` : ""}`,
+        changePar: Number(ctx.user.id),
+      } as any);
 
       // Le véhicule entre en réparation
       if (vehicule.statutImmobilisation !== "en_reparation") {
@@ -289,6 +391,129 @@ export const orRouter = createTRPCRouter({
       return row;
     }),
 
+  // ─── Cycle de vie : changement de statut (règles + historique + véhicule) ───
+  changerStatut: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      id: z.number().int(),
+      nouveauStatut: z.enum(STATUTS_ATELIER),
+      raison: z.string().optional(),
+      commentaire: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select()
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.id), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      const t = transitionStatutAtelierValide(or.statut, input.nouveauStatut, input.raison);
+      if (!t.ok) throw new TRPCError({ code: "BAD_REQUEST", message: t.raison ?? "Transition refusée." });
+
+      const updateData: Record<string, unknown> = { statut: input.nouveauStatut, updatedAt: new Date() };
+      if (input.nouveauStatut === "BLOQUE") {
+        updateData.raisonBlocage = input.raison;
+        updateData.bloquePar = input.raison ?? null;
+        updateData.dateCloture = null;
+      } else if (input.nouveauStatut === "LIVRE") {
+        updateData.dateCloture = new Date();
+      } else if (input.nouveauStatut === "ANNULE") {
+        updateData.dateCloture = new Date();
+        updateData.raisonBlocage = input.raison ?? null;
+      } else {
+        updateData.raisonBlocage = null;
+        updateData.bloquePar = null;
+      }
+      await db.update(ordresReparation).set(updateData as any).where(eq(ordresReparation.id, input.id));
+
+      await db.insert(orHistorique).values({
+        orId: input.id,
+        type: "STATUT",
+        ancienneValeur: or.statut ?? null,
+        nouvelleValeur: input.nouveauStatut,
+        commentaire: input.commentaire ?? (input.raison ?? null),
+        changePar: Number(ctx.user.id),
+      } as any);
+
+      // Cohérence véhicule
+      if (input.nouveauStatut === "LIVRE") {
+        await db.update(vehicules).set({ statutImmobilisation: "sorti", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
+      } else if (input.nouveauStatut === "EN_COURS" || input.nouveauStatut === "CONTROLE_QUALITE") {
+        await db.update(vehicules).set({ statutImmobilisation: "en_reparation", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
+      }
+
+      return { success: true, statut: input.nouveauStatut };
+    }),
+
+  // ─── Changement de priorité (historisation obligatoire) ───
+  changerPriorite: requirePermissionProcedure("or.modifier")
+    .input(z.object({ id: z.number().int(), priorite: z.enum(PRIORITES), motif: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id, priorite: ordresReparation.priorite })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.id), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      if (or.priorite === input.priorite) return { success: true, priorite: input.priorite };
+      await db.update(ordresReparation).set({ priorite: input.priorite, updatedAt: new Date() } as any).where(eq(ordresReparation.id, input.id));
+      await db.insert(orHistorique).values({
+        orId: input.id,
+        type: "PRIORITE",
+        ancienneValeur: or.priorite ?? null,
+        nouvelleValeur: input.priorite,
+        commentaire: input.motif ?? null,
+        changePar: Number(ctx.user.id),
+      } as any);
+      return { success: true, priorite: input.priorite };
+    }),
+
+  // ─── Assignation d'un responsable technique ───
+  assignerTechnicien: requirePermissionProcedure("or.modifier")
+    .input(z.object({ id: z.number().int(), technicienId: z.number().int().nullable(), commentaire: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id, responsableTechnicienId: ordresReparation.responsableTechnicienId })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.id), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      if (or.responsableTechnicienId === input.technicienId) return { success: true };
+      await db.update(ordresReparation).set({ responsableTechnicienId: input.technicienId, updatedAt: new Date() } as any).where(eq(ordresReparation.id, input.id));
+      await db.insert(orHistorique).values({
+        orId: input.id,
+        type: "RESPONSABLE",
+        ancienneValeur: or.responsableTechnicienId ? String(or.responsableTechnicienId) : null,
+        nouvelleValeur: input.technicienId ? String(input.technicienId) : null,
+        commentaire: input.commentaire ?? null,
+        changePar: Number(ctx.user.id),
+      } as any);
+      return { success: true };
+    }),
+
+  // ─── Photos / vidéos ───
+  ajouterPhoto: requirePermissionProcedure("or.modifier")
+    .input(z.object({ id: z.number().int(), url: z.string().min(1), type: z.enum(["PHOTO", "VIDEO"]).default("PHOTO") }))
+    .mutation(async ({ ctx, input }) => {
+      const [row] = await db
+        .insert(orPhotos)
+        .values({ orId: input.id, url: input.url, type: input.type, creePar: Number(ctx.user.id) } as any)
+        .returning();
+      return row;
+    }),
+
+  listerPhotos: requirePermissionProcedure("or.consulter")
+    .input(z.object({ id: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      return db.select().from(orPhotos).where(eq(orPhotos.orId, input.id)).orderBy(asc(orPhotos.createdAt));
+    }),
+
+  // ─── Historique du cycle de vie ───
+  historique: requirePermissionProcedure("or.consulter")
+    .input(z.object({ id: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      return db.select().from(orHistorique).where(eq(orHistorique.orId, input.id)).orderBy(asc(orHistorique.changeLe));
+    }),
+
   update: requirePermissionProcedure("or.modifier")
     .input(z.object({
       id: z.number().int(),
@@ -296,13 +521,20 @@ export const orRouter = createTRPCRouter({
       diagnostic: z.string().optional(),
       devisAccepte: z.boolean().optional(),
       statut: z.enum(STATUTS_OR).optional(),
+      priorite: z.enum(PRIORITES).optional(),
+      datePromesse: z.string().nullable().optional(),
       dateFinPrevue: z.string().nullable().optional(),
+      emplacement: z.string().optional(),
+      motEntree: z.enum(MOTIFS_ENTREE).optional(),
       notes: z.string().nullable().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const { id, ...rest } = input;
       const values: any = { ...rest, updatedAt: new Date() };
-      if (rest.statut === "termine") values.dateCloture = new Date();
+      if (rest.statut) values.statut = migrerStatutLegacy(rest.statut);
+      if (rest.statut === "LIVRE" || rest.statut === "PRET_A_LIVRER") values.dateCloture = new Date();
+      if (rest.datePromesse === null) values.datePromesse = null;
+      if (rest.dateFinPrevue === null) values.dateFinPrevue = null;
       await db.update(ordresReparation).set(values).where(and(eq(ordresReparation.id, id), eq(ordresReparation.agenceId, ctx.user.agenceId)));
       return { success: true };
     }),
@@ -428,6 +660,229 @@ export const orRouter = createTRPCRouter({
       return listerPiecesClientService(input.orId, ctx.user.agenceId);
     }),
 
+  // ─── Paramètres du module (seuils, listes, texte accusé) ───
+  getParametresAtelier: requirePermissionProcedure("or.consulter")
+    .query(async ({ ctx }) => {
+      const [p] = await db.select().from(atelierParametres).where(eq(atelierParametres.agenceId, ctx.user.agenceId)).limit(1);
+      if (!p) return null;
+      return {
+        seuilPromesseJours: p.seuilPromesseJours ?? 1,
+        seuilImmobilisationJours: p.seuilImmobilisationJours ?? 5,
+        seuilBloqueJours: p.seuilBloqueJours ?? 3,
+        emplacements: JSON.parse(p.emplacements ?? "[]") as string[],
+        raisonsBlocage: JSON.parse(p.raisonsBlocage ?? "[]") as string[],
+        texteAccuseReception: p.texteAccuseReception ?? "",
+      };
+    }),
+
+  updateParametresAtelier: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      seuilPromesseJours: z.number().int().min(0).max(30).optional(),
+      seuilImmobilisationJours: z.number().int().min(1).max(60).optional(),
+      seuilBloqueJours: z.number().int().min(1).max(30).optional(),
+      emplacements: z.array(z.string()).optional(),
+      raisonsBlocage: z.array(z.string()).optional(),
+      texteAccuseReception: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const values: Record<string, unknown> = { updatedAt: new Date() };
+      if (input.seuilPromesseJours !== undefined) values.seuilPromesseJours = input.seuilPromesseJours;
+      if (input.seuilImmobilisationJours !== undefined) values.seuilImmobilisationJours = input.seuilImmobilisationJours;
+      if (input.seuilBloqueJours !== undefined) values.seuilBloqueJours = input.seuilBloqueJours;
+      if (input.emplacements) values.emplacements = JSON.stringify(input.emplacements);
+      if (input.raisonsBlocage) values.raisonsBlocage = JSON.stringify(input.raisonsBlocage);
+      if (input.texteAccuseReception !== undefined) values.texteAccuseReception = input.texteAccuseReception;
+      const [existing] = await db.select({ id: atelierParametres.id }).from(atelierParametres).where(eq(atelierParametres.agenceId, ctx.user.agenceId)).limit(1);
+      if (existing) {
+        await db.update(atelierParametres).set(values as any).where(eq(atelierParametres.id, existing.id));
+      } else {
+        await db.insert(atelierParametres).values({ agenceId: ctx.user.agenceId, ...values } as any);
+      }
+      return { success: true };
+    }),
+
+  // ─── Dashboard de pilotage du parc (KPIs + répartitions + alertes) ───
+  getDashboard: requirePermissionProcedure("or.consulter")
+    .query(async ({ ctx }) => {
+      const [params] = await db.select().from(atelierParametres).where(eq(atelierParametres.agenceId, ctx.user.agenceId)).limit(1);
+      const seuils = {
+        seuilPromesseJours: params?.seuilPromesseJours ?? 1,
+        seuilImmobilisationJours: params?.seuilImmobilisationJours ?? 5,
+        seuilBloqueJours: params?.seuilBloqueJours ?? 3,
+      };
+
+      const rows = await db
+        .select({
+          id: ordresReparation.id,
+          numero: ordresReparation.numero,
+          statut: ordresReparation.statut,
+          priorite: ordresReparation.priorite,
+          plainte: ordresReparation.plainte,
+          dateOuverture: ordresReparation.dateOuverture,
+          datePromesse: ordresReparation.datePromesse,
+          emplacement: ordresReparation.emplacement,
+          raisonBlocage: ordresReparation.raisonBlocage,
+          bloquePar: ordresReparation.bloquePar,
+          responsableTechnicienId: ordresReparation.responsableTechnicienId,
+          responsableNom: employes.nom,
+          responsablePrenom: employes.prenom,
+          venteId: ordresReparation.venteId,
+          immatriculation: vehicules.immatriculation,
+          marque: vehicules.marque,
+          modele: vehicules.modele,
+          clientId: clients.id,
+          clientNom: clients.nom,
+          clientPrenom: clients.prenom,
+          clientTelephone: clients.telephone,
+          clientRaisonSociale: clients.raisonSociale,
+          clientType: clients.typeClient,
+          updatedAt: ordresReparation.updatedAt,
+        })
+        .from(ordresReparation)
+        .innerJoin(vehicules, eq(ordresReparation.vehiculeId, vehicules.id))
+        .leftJoin(clients, eq(ordresReparation.clientId, clients.id))
+        .leftJoin(employes, eq(ordresReparation.responsableTechnicienId, employes.id))
+        .where(eq(ordresReparation.agenceId, ctx.user.agenceId))
+        .orderBy(desc(ordresReparation.dateOuverture));
+
+      const parc = rows
+        .filter((r) => r.statut !== "LIVRE" && r.statut !== "ANNULE")
+        .map((r) => {
+          const alerte = calculerAlertes({
+            statut: r.statut,
+            priorite: r.priorite,
+            datePromesse: r.datePromesse,
+            dateEntree: r.dateOuverture ?? new Date(),
+            seuils,
+          });
+          return {
+            ...r,
+            joursImmobilisation: joursImmobilisation(r.dateOuverture ?? new Date()),
+            retardJours: retardJours(r.datePromesse),
+            alerte: alerte.principale,
+            alertes: alerte.alertes,
+            clientDisplay: r.clientRaisonSociale ?? `${r.clientPrenom ?? ""} ${r.clientNom ?? ""}`.trim(),
+          };
+        });
+
+      const kpis = {
+        totalParc: parc.length,
+        p1Ouverts: parc.filter((p) => p.priorite === "P1").length,
+        enRetard: parc.filter((p) => p.alerte === "RETARD").length,
+        bloques: parc.filter((p) => p.statut === "BLOQUE").length,
+        pretALivrer: parc.filter((p) => p.statut === "PRET_A_LIVRER").length,
+      };
+
+      const repPriorite = PRIORITES.map((p) => ({
+        priorite: p,
+        nombre: parc.filter((x) => x.priorite === p).length,
+        pourcent: parc.length ? Math.round((parc.filter((x) => x.priorite === p).length / parc.length) * 1000) / 10 : 0,
+      }));
+      const repStatut = STATUTS_ATELIER.map((s) => ({
+        statut: s,
+        libelle: STATUT_LABELS[s],
+        nombre: parc.filter((x) => x.statut === s).length,
+      })).filter((s) => s.nombre > 0);
+      const topAnciens = [...parc].sort((a, b) => b.joursImmobilisation - a.joursImmobilisation).slice(0, 5);
+
+      return { kpis, repPriorite, repStatut, topAnciens, parc, seuils };
+    }),
+
+  // ─── Vue Alertes actives (retard, bloqués, P1, proches) ───
+  getAlertes: requirePermissionProcedure("or.consulter")
+    .query(async ({ ctx }) => {
+      const [params] = await db.select().from(atelierParametres).where(eq(atelierParametres.agenceId, ctx.user.agenceId)).limit(1);
+      const seuils = {
+        seuilPromesseJours: params?.seuilPromesseJours ?? 1,
+        seuilImmobilisationJours: params?.seuilImmobilisationJours ?? 5,
+        seuilBloqueJours: params?.seuilBloqueJours ?? 3,
+      };
+      const rows = await db
+        .select({
+          id: ordresReparation.id,
+          numero: ordresReparation.numero,
+          statut: ordresReparation.statut,
+          priorite: ordresReparation.priorite,
+          dateOuverture: ordresReparation.dateOuverture,
+          datePromesse: ordresReparation.datePromesse,
+          raisonBlocage: ordresReparation.raisonBlocage,
+          responsableNom: employes.nom,
+          responsablePrenom: employes.prenom,
+          immatriculation: vehicules.immatriculation,
+          clientNom: clients.nom,
+          clientPrenom: clients.prenom,
+          clientRaisonSociale: clients.raisonSociale,
+          plainte: ordresReparation.plainte,
+        })
+        .from(ordresReparation)
+        .innerJoin(vehicules, eq(ordresReparation.vehiculeId, vehicules.id))
+        .leftJoin(clients, eq(ordresReparation.clientId, clients.id))
+        .leftJoin(employes, eq(ordresReparation.responsableTechnicienId, employes.id))
+        .where(and(eq(ordresReparation.agenceId, ctx.user.agenceId), sql`${ordresReparation.statut} NOT IN ('LIVRE','ANNULE')`));
+
+      const enrichis = rows.map((r) => {
+        const a = calculerAlertes({ statut: r.statut, priorite: r.priorite, datePromesse: r.datePromesse, dateEntree: r.dateOuverture ?? new Date(), seuils });
+        return {
+          ...r,
+          joursImmobilisation: joursImmobilisation(r.dateOuverture ?? new Date()),
+          retardJours: retardJours(r.datePromesse),
+          alertes: a.alertes,
+          principale: a.principale,
+          clientDisplay: r.clientRaisonSociale ?? `${r.clientPrenom ?? ""} ${r.clientNom ?? ""}`.trim(),
+        };
+      });
+      return {
+        enRetard: enrichis.filter((x) => x.principale === "RETARD" || x.alertes.includes("RETARD")),
+        bloques: enrichis.filter((x) => x.statut === "BLOQUE"),
+        p1NonTermines: enrichis.filter((x) => x.priorite === "P1"),
+        proches: enrichis.filter((x) => x.alertes.includes("PROCHE")),
+      };
+    }),
+
+  // ─── Planning journalier (par technicien + charge 80 %) ───
+  getPlanning: requirePermissionProcedure("or.consulter")
+    .query(async ({ ctx }) => {
+      const techniciens = await db
+        .select({ id: employes.id, nom: employes.nom, prenom: employes.prenom, fonction: employes.fonction })
+        .from(employes)
+        .where(and(eq(employes.agenceId, ctx.user.agenceId), eq(employes.statut, "actif")))
+        .orderBy(employes.prenom);
+
+      const ors = await db
+        .select({
+          id: ordresReparation.id,
+          numero: ordresReparation.numero,
+          statut: ordresReparation.statut,
+          priorite: ordresReparation.priorite,
+          datePromesse: ordresReparation.datePromesse,
+          dateOuverture: ordresReparation.dateOuverture,
+          raisonBlocage: ordresReparation.raisonBlocage,
+          responsableTechnicienId: ordresReparation.responsableTechnicienId,
+          immatriculation: vehicules.immatriculation,
+          marque: vehicules.marque,
+          clientNom: clients.nom,
+          clientPrenom: clients.prenom,
+          clientRaisonSociale: clients.raisonSociale,
+          plainte: ordresReparation.plainte,
+        })
+        .from(ordresReparation)
+        .innerJoin(vehicules, eq(ordresReparation.vehiculeId, vehicules.id))
+        .leftJoin(clients, eq(ordresReparation.clientId, clients.id))
+        .where(and(eq(ordresReparation.agenceId, ctx.user.agenceId), sql`${ordresReparation.statut} NOT IN ('LIVRE','ANNULE')`))
+        .orderBy(sql`CASE ${ordresReparation.priorite} WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 ELSE 4 END`);
+
+      const parTechnicien = techniciens.map((t) => {
+        const assignes = ors.filter((o) => o.responsableTechnicienId === t.id);
+        return {
+          technicien: t,
+          vehicules: assignes,
+          charge: { actifs: assignes.length, capacite: 5, pourcent: Math.round((assignes.length / 5) * 100), depassement80: assignes.length > 4 },
+        };
+      });
+      const nonAssignes = ors.filter((o) => !o.responsableTechnicienId);
+      return { parTechnicien, nonAssignes, totalParc: ors.length };
+    }),
+
   // ─── Facturation du cycle : OR → Facture (vente liée + dette si crédit) ───
   facturer: requirePermissionProcedure("or.facturer")
     .input(z.object({
@@ -446,8 +901,8 @@ export const orRouter = createTRPCRouter({
           .limit(1);
         if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "Ordre de réparation introuvable." });
         if (or.venteId) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet OR est déjà facturé." });
-        if (or.statut !== "termine") {
-          throw new TRPCError({ code: "BAD_REQUEST", message: `Seul un OR TERMINÉ peut être facturé (statut actuel : ${or.statut}).` });
+        if (!STATUTS_FACTURABLES.includes(or.statut as any)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Seul un OR PRÊT À LIVRER / LIVRÉ / CONTRÔLE QUALITÉ peut être facturé (statut actuel : ${STATUT_LABELS[or.statut ?? ""] ?? or.statut}).` });
         }
 
         const lignes = await tx
