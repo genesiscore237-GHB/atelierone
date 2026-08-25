@@ -65,11 +65,11 @@ const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PAS
   check("2 lignes (pièce + MO) avec totaux", lignes1.length === 2, "n=" + lignes1.length);
   // totalTTC : 25000*1.1925 + 2*10000*1.1925 = 29812.5 + 23850 = 53662.5
 
-  // ── 4. Facturation refusée avant "termine" ──
+  // ── 4. Facturation refusée avant "PRET_A_LIVRER" ──
   const r4 = await trpcPost("or.facturer", { id: or1Id, modePaiement: "especes" });
-  check("OR non terminé → facturation refusée", !!r4[0]?.error && /TERMINÉ/.test(r4[0].error.json.message), r4[0]?.error?.json?.message);
+  check("OR non prêt → facturation refusée", !!r4[0]?.error && /PRÊT À LIVRER|LIVRÉ|CONTRÔLE QUALITÉ/.test(r4[0].error.json.message), r4[0]?.error?.json?.message);
 
-  await trpcPost("or.update", { id: or1Id, statut: "termine" });
+  await trpcPost("or.update", { id: or1Id, statut: "PRET_A_LIVRER" });
   const r4b = await trpcPost("or.facturer", { id: or1Id, modePaiement: "especes" });
   console.log("facture OR1:", JSON.stringify(r4b[0]?.result?.data?.json ?? r4b[0]?.error?.json).slice(0, 150));
   const fac1 = r4b[0]?.result?.data?.json;
@@ -87,7 +87,7 @@ const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PAS
   const ro2 = await trpcPost("or.create", { vehiculeId: vehId, plainte: "Bruit direction" });
   const or2Id = ro2[0]?.result?.data?.json?.id;
   await trpcPost("or.addLigne", { ordreId: or2Id, type: "PIECE", libelle: "Rotule de direction", quantite: 1, prixUnitaire: 35000, tva: 19.25 });
-  await trpcPost("or.update", { id: or2Id, statut: "termine" });
+  await trpcPost("or.update", { id: or2Id, statut: "PRET_A_LIVRER" });
 
   const mois = new Date().toISOString().slice(0, 7);
   const rg = await trpcPost("contrats.facturerPeriode", {

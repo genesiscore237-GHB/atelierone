@@ -430,7 +430,7 @@ export const orRouter = createTRPCRouter({
         updateData.raisonBlocage = input.raison;
         updateData.bloquePar = input.raison ?? null;
         updateData.dateCloture = null;
-      } else if (input.nouveauStatut === "LIVRE") {
+      } else if (input.nouveauStatut === "LIVRE" || input.nouveauStatut === "PRET_A_LIVRER") {
         updateData.dateCloture = new Date();
       } else if (input.nouveauStatut === "ANNULE") {
         updateData.dateCloture = new Date();
@@ -1525,10 +1525,11 @@ export const orRouter = createTRPCRouter({
           } as any);
         }
 
-        await tx
-          .update(ordresReparation)
-          .set({ venteId: vente.id, statut: "facture", dateCloture: new Date(), updatedAt: new Date() } as any)
-          .where(eq(ordresReparation.id, input.id));
+await tx
+        .update(ordresReparation)
+        .set({ venteId: vente.id, statut: "LIVRE", dateCloture: new Date(), updatedAt: new Date() } as any)
+        .where(eq(ordresReparation.id, input.id));
+      await tx.update(vehicules).set({ statutImmobilisation: "sorti", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
 
         // Crédit → dette client (encaissable via Finance → Créances)
         if (input.modePaiement === "credit" && montantPaye < total) {
@@ -1544,7 +1545,7 @@ export const orRouter = createTRPCRouter({
           } as any);
         }
 
-        return { venteId: vente.id, reference, montantTotal: total, statut: "facture" };
+        return { venteId: vente.id, reference, montantTotal: total, statut: "LIVRE" };
       }) as any;
     }),
 });

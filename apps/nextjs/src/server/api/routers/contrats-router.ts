@@ -27,6 +27,7 @@ import {
   montantLigne,
   MODES_PAIEMENT,
 } from "~/server/lib/facturation-service";
+import { STATUTS_FACTURABLES } from "~/server/lib/atelier-service";
 
 /** MODULE CONTRATS DE MAINTENANCE — cycle de vie complet + véhicules couverts. */
 export const contratsRouter = createTRPCRouter({
@@ -382,7 +383,7 @@ export const contratsRouter = createTRPCRouter({
           .from(ordresReparation)
           .where(and(
             inArray(ordresReparation.vehiculeId, idsVehicules),
-            eq(ordresReparation.statut, "termine"),
+            inArray(ordresReparation.statut, [...STATUTS_FACTURABLES, "termine"]),
             sql`${ordresReparation.venteId} IS NULL`,
             gte(ordresReparation.dateCloture, new Date(`${input.dateDebut}T00:00:00`)),
             lte(ordresReparation.dateCloture, new Date(`${input.dateFin}T23:59:59`)),
@@ -444,7 +445,7 @@ export const contratsRouter = createTRPCRouter({
         for (const t of toutesLignes) {
           await tx
             .update(ordresReparation)
-            .set({ venteId: vente.id, statut: "facture", updatedAt: new Date() } as any)
+            .set({ venteId: vente.id, statut: "LIVRE", updatedAt: new Date() } as any)
             .where(eq(ordresReparation.id, t.orId));
         }
 

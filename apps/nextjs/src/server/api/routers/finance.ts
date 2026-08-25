@@ -248,14 +248,14 @@ export const financeRouter = createTRPCRouter({
 
       let whereConditions = [
         eq(ventes.agenceId, agenceId),
-        sql`COALESCE(${ventes.remise}::numeric, 0) > 0`,
+        sql`COALESCE(${ventes.montantPaye}::numeric, 0) < COALESCE(${ventes.montantTotal}::numeric, 0)`,
       ];
       if (input?.status === "PAID") {
-        whereConditions.push(sql`COALESCE(${ventes.montantPaye}::numeric, 0) >= COALESCE(${ventes.remise}::numeric, 0)`);
+        whereConditions.push(sql`COALESCE(${ventes.montantPaye}::numeric, 0) >= COALESCE(${ventes.montantTotal}::numeric, 0)`);
       } else if (input?.status === "UNPAID") {
         whereConditions.push(sql`COALESCE(${ventes.montantPaye}::numeric, 0) = 0`);
       } else if (input?.status === "PARTIAL") {
-        whereConditions.push(sql`COALESCE(${ventes.montantPaye}::numeric, 0) > 0 AND COALESCE(${ventes.montantPaye}::numeric, 0) < COALESCE(${ventes.remise}::numeric, 0)`);
+        whereConditions.push(sql`COALESCE(${ventes.montantPaye}::numeric, 0) > 0 AND COALESCE(${ventes.montantPaye}::numeric, 0) < COALESCE(${ventes.montantTotal}::numeric, 0)`);
       }
 
       const debtSales = await db
@@ -370,7 +370,8 @@ export const financeRouter = createTRPCRouter({
 
         if (!sale) throw new TRPCError({ code: "NOT_FOUND", message: "Vente non trouvée." });
 
-        const credit = Number(sale.remise ?? 0);
+        // Dette = montant total − montant payé (le champ remise est la remise commerciale, pas le crédit)
+        const credit = Number(sale.montantTotal ?? 0);
         const paid = Number(sale.montantPaye ?? 0);
         const remaining = credit - paid;
         const payAmount = input.amount ?? input.montant ?? 0;
