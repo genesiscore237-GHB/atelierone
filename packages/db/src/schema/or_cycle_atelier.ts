@@ -79,3 +79,17 @@ export const retoursFournisseurLignes = pgTable("retours_fournisseur_lignes", {
   quantite: numeric("quantite", { precision: 12, scale: 2 }).notNull(),
   note: text("note"),
 });
+
+/** Notifications atelier (E1) : diagnostic à valider, pièce arrivée/manquante, commande passée… */
+export const atelierNotifications = pgTable("atelier_notifications", {
+  id: serial("id").primaryKey(),
+  agenceId: integer("agence_id").notNull().references(() => agences.id),
+  orId: integer("or_id").references(() => ordresReparation.id, { onDelete: "cascade" }),
+  type: varchar("type", { length: 40 }).notNull(), // DIAGNOSTIC_A_VALIDER | PIECE_ARRIVEE | PIECE_MANQUANTE | COMMANDE_PASSEE
+  titre: varchar("titre", { length: 255 }).notNull(),
+  message: text("message"),
+  lu: boolean("lu").default(false),
+  luePar: integer("lue_par").references(() => utilisateurs.id),
+  lueLe: timestamp("lue_le"),
+  createdAt: timestamp("created_at").defaultNow(),
+});

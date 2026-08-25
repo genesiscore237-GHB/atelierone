@@ -16,6 +16,7 @@ export const achats = pgTable("achats", {
   statut: varchar("statut", { length: 50 }).notNull().default("brouillon"),
   orId: integer("or_id").references(() => ordresReparation.id), // traçabilité : commande liée à un OR
   vehiculeId: integer("vehicule_id").references(() => vehicules.id),
+  demandeId: integer("demande_id"), // FK or_demandes_pieces(id) — E3 : commande ↔ demande (FK en SQL)
   totalHT: numeric("total_ht", { precision: 12, scale: 2 }),
   totalTVA: numeric("total_tva", { precision: 12, scale: 2 }),
   totalTTC: numeric("total_ttc", { precision: 12, scale: 2 }),

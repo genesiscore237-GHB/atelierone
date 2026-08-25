@@ -41,6 +41,7 @@ export function ParcDashboard() {
   const { data: vehiculesData } = api.vehicules.list.useQuery({ limit: 100 });
   const { data: clientsData } = api.clients.list.useQuery({ limit: 200 });
   const { data: techniciens } = api.rh.list.useQuery({ limit: 100, statut: "actif" });
+  const { data: notifsData } = api.or.listNotifsAtelier.useQuery({ lu: false });
 
   const [search, setSearch] = useState("");
   const [fPriorite, setFPriorite] = useState("");
@@ -48,6 +49,13 @@ export function ParcDashboard() {
   const [fAlerte, setFAlerte] = useState("");
   const [kpiFilter, setKpiFilter] = useState<string | null>(null);
   const [showReception, setShowReception] = useState(false);
+  const [showNotifs, setShowNotifs] = useState(false);
+
+  const notifs = (notifsData ?? []) as any[];
+  const marquerLu = api.or.marquerNotifLu.useMutation({
+    onSuccess: () => utils.or.listNotifsAtelier.invalidate(),
+    onError: (e) => toast.error(e.message),
+  });
 
   const canModifier = hasPermission("or.modifier") || hasPermission("or.creer");
 
@@ -84,9 +92,18 @@ export function ParcDashboard() {
           </p>
         </div>
         {canModifier && (
-          <Button onClick={() => setShowReception(true)} className="gap-2">
-            <Plus size={16} /> Nouvelle réception
-          </Button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowNotifs((v) => !v)}
+              className={`relative flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${notifs.length > 0 ? "border-warning/40 bg-warning/10 text-warning-foreground" : "border-border text-muted-foreground"}`}
+              title="Notifications atelier"
+            >
+              🔔 {notifs.length}
+            </button>
+            <Button onClick={() => setShowReception(true)} className="gap-2">
+              <Plus size={16} /> Nouvelle réception
+            </Button>
+          </div>
         )}
       </div>
 
@@ -167,6 +184,46 @@ export function ParcDashboard() {
           </div>
         </div>
       </div>
+
+      {showNotifs && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">🔔 Notifications atelier</h3>
+            {notifs.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => marquerLu.mutate({ id: 0, tout: true })}>Tout marquer lu</Button>
+            )}
+          </div>
+          {notifs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Aucune notification en attente. Tout est traité.</p>
+          ) : (
+            <div className="space-y-2">
+              {notifs.map((n) => (
+                <div key={n.id} className={`flex items-start justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${
+                  n.type === "PIECE_ARRIVEE" ? "border-success/40 bg-success/5"
+                  : n.type === "DIAGNOSTIC_A_VALIDER" ? "border-sky-500/40 bg-sky-500/5"
+                  : n.type === "PIECE_MANQUANTE" ? "border-destructive/40 bg-destructive/5"
+                  : "border-primary/40 bg-primary/5"
+                }`}>
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground">{n.titre}</p>
+                    {n.message && <p className="truncate text-xs text-muted-foreground">{n.message}</p>}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {n.numeroOR && <Link href={`/dashboard/ordres-reparation?or=${n.orId}`} className="rounded-lg px-2 py-1 text-xs font-semibold text-primary hover:bg-primary/10">Ouvrir</Link>}
+                    <button
+                      onClick={() => marquerLu.mutate({ id: n.id })}
+                      className="rounded-lg px-2 py-1 text-xs font-semibold text-success-foreground hover:bg-success/10"
+                      title="Marquer comme traité"
+                    >
+                      ✓
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Filtres */}
       <div className="flex flex-wrap gap-3">

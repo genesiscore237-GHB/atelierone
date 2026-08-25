@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, achats, achatsLignes, fournisseurs, stocks, stocksUnites, produits, bonsReception, lignesBonReception, mouvementsStock, produitsFournisseurs, dettesFournisseurs, remboursementsFournisseurs, auditLogs, facturesFournisseur, caisses, produitUnites, prixHistorique, unitesMesure, utilisateurs, tarifs, ecartsReception } from "@atelierone/db";
+import { db, achats, achatsLignes, fournisseurs, stocks, stocksUnites, produits, bonsReception, lignesBonReception, mouvementsStock, produitsFournisseurs, dettesFournisseurs, remboursementsFournisseurs, auditLogs, facturesFournisseur, caisses, produitUnites, prixHistorique, unitesMesure, utilisateurs, tarifs, ecartsReception, ordresReparation, atelierNotifications } from "@atelierone/db";
 import { eq, and, desc, sql, lt, isNull, lte, gte, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getFacteurVersBase } from "~/server/lib/stock-engine";
@@ -1149,6 +1149,25 @@ export const procurementRouter = createTRPCRouter({
           cloturePar: newStatut === "cloturee" ? ctx.user.id : undefined,
           motif: newStatut === "cloturee" ? (input.motifReliquat ?? null) : undefined,
         }).where(eq(achats.id, Number(input.id))) as any;
+
+        // E1 — notification atelier : la pièce commandée pour un OR est arrivée
+        if ((achat as any).orId) {
+          const [orLie] = await tx
+            .select({ id: ordresReparation.id, numero: ordresReparation.numero })
+            .from(ordresReparation)
+            .where(eq(ordresReparation.id, (achat as any).orId))
+            .limit(1);
+          if (orLie) {
+            await tx.insert(atelierNotifications).values({
+              agenceId: ctx.user.agenceId,
+              orId: orLie.id,
+              type: "PIECE_ARRIVEE",
+              titre: `Pièce arrivée — OR ${orLie.numero}`,
+              message: `Commande ${br.reference} réceptionnée (${allReceived ? "complète" : "partielle"}) — pièces disponibles au magasin.`,
+              lu: false,
+            } as any);
+          }
+        }
 
         let detteCreee = false;
         if (montantRecu > 0) {

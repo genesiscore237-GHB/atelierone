@@ -24,6 +24,8 @@ import {
   achats,
   achatsLignes,
   fournisseurs,
+  atelierNotifications,
+  stocks,
 } from "@atelierone/db";
 import { eq, and, desc, sql, gte, lte, asc, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -46,7 +48,22 @@ import {
   statutDemandePieces,
   transitionRetourFournisseurValide,
 } from "~/server/lib/atelier-service";
-import { sortirPourOR } from "~/server/lib/stock-engine";
+import { sortirPourOR, enregistrerMouvement } from "~/server/lib/stock-engine";
+
+/** E1 — notification atelier (helper interne). */
+async function notifierAtelier(
+  client: typeof db | any,
+  params: { agenceId: number; orId?: number | null; type: string; titre: string; message?: string },
+) {
+  await client.insert(atelierNotifications).values({
+    agenceId: params.agenceId,
+    orId: params.orId ?? null,
+    type: params.type,
+    titre: params.titre,
+    message: params.message ?? null,
+    lu: false,
+  } as any);
+}
 
 /**
  * MODULE ORDRE DE RÉPARATION (OR) — specs GPJ / Architecture §3.2.
@@ -731,6 +748,14 @@ export const orRouter = createTRPCRouter({
           commentaire: `Diagnostic soumis — ${input.constat}`,
           changePar: Number(ctx.user.id),
         } as any);
+        // E1 — notification : diagnostic à valider par le chef d'atelier
+        await notifierAtelier(tx, {
+          agenceId: ctx.user.agenceId,
+          orId: input.orId,
+          type: "DIAGNOSTIC_A_VALIDER",
+          titre: `Diagnostic à valider — OR ${or.numero}`,
+          message: `Constat : ${input.constat}`,
+        });
         return { rapportId: rapport.id };
       }) as any;
     }),
@@ -951,6 +976,16 @@ export const orRouter = createTRPCRouter({
           commentaire: `Demande #${demande.id} traitée par le magasin → ${statut}`,
           changePar: Number(ctx.user.id),
         } as any);
+        // E1 — notification si pièces manquantes (à commander)
+        if (statut === "MANQUANTE") {
+          await notifierAtelier(tx, {
+            agenceId: ctx.user.agenceId,
+            orId: demande.orId,
+            type: "PIECE_MANQUANTE",
+            titre: `Pièces manquantes — OR ${or?.numero ?? demande.orId}`,
+            message: `Demande #${demande.id} en rupture : à commander auprès du fournisseur.`,
+          });
+        }
         return { statut };
       }) as any;
     }),
@@ -999,6 +1034,7 @@ export const orRouter = createTRPCRouter({
     .input(z.object({
       orId: z.number().int(),
       fournisseurId: z.number().int(),
+      demandeId: z.number().int().optional(),
       lignes: z.array(z.object({ produitId: z.number().int(), quantite: z.number().positive(), prixUnitaire: z.number().min(0) })).min(1),
       livraisonAttendue: z.string().optional(),
       motif: z.string().optional(),
@@ -1027,6 +1063,7 @@ export const orRouter = createTRPCRouter({
             statut: "commande",
             orId: input.orId,
             vehiculeId: or.vehiculeId,
+            demandeId: input.demandeId ?? null,
             demandeur: `OR ${or.numero}`,
             demandeurId: Number(ctx.user.id),
             livraisonAttendue: input.livraisonAttendue ?? null,
@@ -1048,6 +1085,10 @@ export const orRouter = createTRPCRouter({
           total += l.quantite * l.prixUnitaire;
         }
         await tx.update(achats).set({ totalHT: String(total), totalTTC: String(total) } as any).where(eq(achats.id, achat.id));
+        // E3 — la demande liée passe en attente d'approvisionnement (traçabilité commande ↔ demande)
+        if (input.demandeId) {
+          await tx.update(orDemandesPieces).set({ motif: `Commande ${reference} passée`, traitePar: Number(ctx.user.id), traiteLe: new Date() } as any).where(eq(orDemandesPieces.id, input.demandeId));
+        }
         await tx.insert(orHistorique).values({
           orId: input.orId,
           type: "COMMANDE_FOURNISSEUR",
@@ -1055,6 +1096,14 @@ export const orRouter = createTRPCRouter({
           commentaire: `Commande fournisseur ${fournisseur.nom} (${reference}) — ${input.lignes.length} ligne(s)`,
           changePar: Number(ctx.user.id),
         } as any);
+        // E1 — notification : commande passée
+        await notifierAtelier(tx, {
+          agenceId: ctx.user.agenceId,
+          orId: input.orId,
+          type: "COMMANDE_PASSEE",
+          titre: `Commande passée — ${reference}`,
+          message: `${fournisseur.nom} · ${input.lignes.length} ligne(s)${input.livraisonAttendue ? ` · livraison attendue le ${input.livraisonAttendue}` : ""}`,
+        });
         return { achatId: achat.id, reference };
       }) as any;
     }),
@@ -1088,45 +1137,67 @@ export const orRouter = createTRPCRouter({
       motif: z.enum(["DEFAILLANTE", "NON_CONFORME", "ERREUR_COMMANDE"]).default("DEFAILLANTE"),
       lignes: z.array(z.object({ produitId: z.number().int().optional(), libelle: z.string().optional(), quantite: z.number().positive(), note: z.string().optional() })).min(1),
       commentaire: z.string().optional(),
+      // E2 — la pièce défaillante est encore en stock (reçue non montée) : on la sort
+      impacteStock: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const [or] = await db
-        .select({ id: ordresReparation.id, numero: ordresReparation.numero })
-        .from(ordresReparation)
-        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
-        .limit(1);
-      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
-      const [row] = await db
-        .insert(retoursFournisseur)
-        .values({
-          agenceId: ctx.user.agenceId,
-          achatId: input.achatId ?? null,
-          fournisseurId: input.fournisseurId ?? null,
+      return db.transaction(async (tx) => {
+        const [or] = await tx
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, vehiculeId: ordresReparation.vehiculeId })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+        if (input.impacteStock) {
+          for (const l of input.lignes) {
+            if (!l.produitId) continue;
+            // Type dédié RETOUR_FOURNISSEUR (annexe Statuts — specs V2)
+            await enregistrerMouvement(tx as any, {
+              type: "RETOUR_FOURNISSEUR" as any,
+              sens: "S",
+              produitId: l.produitId,
+              agenceId: ctx.user.agenceId,
+              quantite: l.quantite,
+              orId: input.orId,
+              vehiculeId: or.vehiculeId ?? 0,
+              documentLie: `OR-${or.numero}`,
+              motif: `Retour fournisseur (${input.motif})`,
+              effectuePar: Number(ctx.user.id),
+            });
+          }
+        }
+        const [row] = await tx
+          .insert(retoursFournisseur)
+          .values({
+            agenceId: ctx.user.agenceId,
+            achatId: input.achatId ?? null,
+            fournisseurId: input.fournisseurId ?? null,
+            orId: input.orId,
+            motif: input.motif,
+            statut: "RETOURNE",
+            dateRetour: new Date().toISOString().slice(0, 10),
+            commentaire: input.commentaire ?? null,
+            creePar: Number(ctx.user.id),
+          } as any)
+          .returning();
+        for (const l of input.lignes) {
+          await tx.insert(retoursFournisseurLignes).values({
+            retourId: row.id,
+            produitId: l.produitId ?? null,
+            libelle: l.libelle ?? null,
+            quantite: String(l.quantite),
+            note: l.note ?? null,
+          } as any);
+        }
+        await tx.insert(orHistorique).values({
           orId: input.orId,
-          motif: input.motif,
-          statut: "RETOURNE",
-          dateRetour: new Date().toISOString().slice(0, 10),
-          commentaire: input.commentaire ?? null,
-          creePar: Number(ctx.user.id),
-        } as any)
-        .returning();
-      for (const l of input.lignes) {
-        await db.insert(retoursFournisseurLignes).values({
-          retourId: row.id,
-          produitId: l.produitId ?? null,
-          libelle: l.libelle ?? null,
-          quantite: String(l.quantite),
-          note: l.note ?? null,
+          type: "RETOUR_FOURNISSEUR",
+          nouvelleValeur: "RETOURNE",
+          commentaire: `Retour fournisseur #${row.id} — ${input.motif}${input.commentaire ? ` : ${input.commentaire}` : ""}`,
+          changePar: Number(ctx.user.id),
         } as any);
-      }
-      await db.insert(orHistorique).values({
-        orId: input.orId,
-        type: "RETOUR_FOURNISSEUR",
-        nouvelleValeur: "RETOURNE",
-        commentaire: `Retour fournisseur #${row.id} — ${input.motif}${input.commentaire ? ` : ${input.commentaire}` : ""}`,
-        changePar: Number(ctx.user.id),
-      } as any);
-      return { retourId: row.id };
+        return { retourId: row.id };
+      }) as any;
     }),
 
   enregistrerRemplacement: requirePermissionProcedure("or.pieces.servir")
@@ -1515,6 +1586,15 @@ export const orRouter = createTRPCRouter({
           .returning();
 
         for (const ligne of lignes) {
+          let coutUnitaire: string | null = null;
+          if (ligne.produitId) {
+            const [cmpRow] = await tx
+              .select({ cmup: stocks.coutUnitaireMoyen })
+              .from(stocks)
+              .where(and(eq(stocks.produitId, ligne.produitId), eq(stocks.agenceId, ctx.user.agenceId)))
+              .limit(1);
+            coutUnitaire = cmpRow?.cmup != null ? String(Number(cmpRow.cmup)) : null;
+          }
           await tx.insert(ventesLignes).values({
             venteId: vente.id,
             produitId: ligne.produitId ?? null,
@@ -1522,6 +1602,7 @@ export const orRouter = createTRPCRouter({
             quantite: Number(ligne.quantite),
             prixUnitaire: String(Number(ligne.prixUnitaire) * (1 + Number(ligne.tva ?? 0) / 100)),
             totalLigne: String(montantLigne(ligne)),
+            coutUnitaire,
           } as any);
         }
 
@@ -1547,6 +1628,114 @@ await tx
 
         return { venteId: vente.id, reference, montantTotal: total, statut: "LIVRE" };
       }) as any;
+    }),
+
+  // ─── E4 — Marge par OR : revenu facturé − coût des pièces (CMP) ───
+  getMargeOr: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id, venteId: ordresReparation.venteId, numero: ordresReparation.numero })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      if (!or.venteId) return { facture: false as const };
+
+      const lignes = await db
+        .select({
+          libelle: ventesLignes.libelle,
+          produitId: ventesLignes.produitId,
+          quantite: ventesLignes.quantite,
+          totalLigne: ventesLignes.totalLigne,
+          coutUnitaire: ventesLignes.coutUnitaire,
+        })
+        .from(ventesLignes)
+        .where(eq(ventesLignes.venteId, or.venteId));
+
+      let revenu = 0;
+      let coutPieces = 0;
+      const details = lignes.map((l) => {
+        const total = Number(l.totalLigne ?? 0);
+        const cout = l.coutUnitaire != null ? Number(l.coutUnitaire) * Number(l.quantite) : null;
+        revenu += total;
+        if (cout != null) coutPieces += cout;
+        return { libelle: l.libelle ?? `#${l.produitId}`, revenu: total, coutPieces: cout ?? 0, marge: cout != null ? Math.round((total - cout) * 100) / 100 : null };
+      });
+      const marge = Math.round((revenu - coutPieces) * 100) / 100;
+      const pourcentMarge = revenu > 0 ? Math.round((marge / revenu) * 1000) / 10 : null;
+      return { facture: true as const, revenu: Math.round(revenu * 100) / 100, coutPieces: Math.round(coutPieces * 100) / 100, marge, pourcentMarge, lignes: details };
+    }),
+
+  // ─── E5 — Accusé de réception client (texte rempli + lien WhatsApp cliquable) ───
+  accuseReception: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({
+          numero: ordresReparation.numero,
+          datePromesse: ordresReparation.datePromesse,
+          immatriculation: vehicules.immatriculation,
+          clientNom: clients.nom,
+          clientPrenom: clients.prenom,
+          clientTelephone: clients.telephone,
+        })
+        .from(ordresReparation)
+        .innerJoin(vehicules, eq(ordresReparation.vehiculeId, vehicules.id))
+        .leftJoin(clients, eq(ordresReparation.clientId, clients.id))
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+
+      const [p] = await db.select().from(atelierParametres).where(eq(atelierParametres.agenceId, ctx.user.agenceId)).limit(1);
+      const modele = p?.texteAccuseReception ?? "Nous accusons réception de votre véhicule {IMMATRICULATION} sous l'ordre {OR}. Restitution promise : {PROMESSE}.";
+      const promesse = or.datePromesse ? new Date(or.datePromesse).toLocaleDateString("fr-FR") : "à convenir";
+      const texte = modele
+        .replace("{IMMATRICULATION}", or.immatriculation)
+        .replace("{OR}", or.numero)
+        .replace("{PROMESSE}", promesse);
+
+      const tel = (or.clientTelephone ?? "").replace(/\D/g, "");
+      const whatsappUrl = tel ? `https://wa.me/${tel.length > 8 ? tel : `237${tel}`}?text=${encodeURIComponent(texte)}` : null;
+
+      return { texte, whatsappUrl, numeroOR: or.numero, immatriculation: or.immatriculation, promesse };
+    }),
+
+  // ─── E1 — Notifications atelier ───
+  listNotifsAtelier: requirePermissionProcedure("or.consulter")
+    .input(z.object({ lu: z.boolean().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const conditions: any[] = [eq(atelierNotifications.agenceId, ctx.user.agenceId)];
+      if (input?.lu !== undefined) conditions.push(eq(atelierNotifications.lu, input.lu));
+      return db
+        .select({
+          id: atelierNotifications.id,
+          orId: atelierNotifications.orId,
+          type: atelierNotifications.type,
+          titre: atelierNotifications.titre,
+          message: atelierNotifications.message,
+          lu: atelierNotifications.lu,
+          createdAt: atelierNotifications.createdAt,
+          numeroOR: ordresReparation.numero,
+        })
+        .from(atelierNotifications)
+        .leftJoin(ordresReparation, eq(atelierNotifications.orId, ordresReparation.id))
+        .where(and(...conditions))
+        .orderBy(desc(atelierNotifications.createdAt))
+        .limit(50);
+    }),
+
+  marquerNotifLu: requirePermissionProcedure("or.modifier")
+    .input(z.object({ id: z.number().int(), tout: z.boolean().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.tout) {
+        await db.update(atelierNotifications).set({ lu: true, luePar: Number(ctx.user.id), lueLe: new Date() } as any)
+          .where(and(eq(atelierNotifications.agenceId, ctx.user.agenceId), eq(atelierNotifications.lu, false)));
+      } else {
+        await db.update(atelierNotifications).set({ lu: true, luePar: Number(ctx.user.id), lueLe: new Date() } as any)
+          .where(and(eq(atelierNotifications.id, input.id), eq(atelierNotifications.agenceId, ctx.user.agenceId)));
+      }
+      return { success: true };
     }),
 });
 

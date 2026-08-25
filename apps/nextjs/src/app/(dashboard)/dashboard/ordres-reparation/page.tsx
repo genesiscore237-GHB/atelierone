@@ -611,6 +611,11 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
 
       <CycleAtelierSections or={or} id={id} />
 
+      <CycleAtelierSections or={or} id={id} />
+
+      {/* E5 — Accusé de réception client + E4 — marge */}
+      <AccuseReceptionBlock or={or} id={id} />
+
       {/* Historique du cycle de vie */}
       <div className="rounded-xl border border-border bg-card p-4">
         <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
@@ -641,6 +646,71 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── E5/E4 — Accusé de réception client + marge par OR ───
+function AccuseReceptionBlock({ or, id }: { or: any; id: number }) {
+  const { data: ar } = api.or.accuseReception.useQuery({ orId: Number(id) });
+  const { data: marge, isLoading: margeLoading } = api.or.getMargeOr.useQuery(
+    { orId: Number(id) },
+    { enabled: !!or.venteId }
+  );
+  const [copie, setCopie] = useState(false);
+  if (!ar) return null;
+
+  const copier = async () => {
+    try {
+      await navigator.clipboard.writeText(ar.texte);
+      setCopie(true);
+      setTimeout(() => setCopie(false), 2000);
+    } catch {
+      toast.error("Copie impossible");
+    }
+  };
+
+  const margeData = (marge ?? {}) as any;
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h3 className="mb-2 text-sm font-bold uppercase tracking-wider text-foreground">Accusé de réception client</h3>
+        <p className="rounded-lg bg-muted/30 px-3 py-2 text-sm text-foreground/90">{ar.texte}</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {ar.whatsappUrl && (
+            <a href={ar.whatsappUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-success/15 px-3 py-1.5 text-xs font-semibold text-success-foreground hover:bg-success/25">
+              💬 Envoyer par WhatsApp
+            </a>
+          )}
+          <button onClick={copier} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-accent">
+            {copie ? "✓ Copié" : "Copier le texte"}
+          </button>
+        </div>
+      </div>
+
+      {or.venteId && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-2 text-sm font-bold uppercase tracking-wider text-foreground">Marge de l'intervention</h3>
+          {margeLoading ? (
+            <div className="h-12 animate-pulse rounded-lg bg-muted" />
+          ) : margeData?.facture ? (
+            <div className="grid grid-cols-3 gap-2 text-sm">
+              <div className="rounded-lg bg-muted/40 p-2">
+                <p className="text-[10px] uppercase text-muted-foreground">Revenu</p>
+                <p className="font-bold">{Number(margeData.revenu).toLocaleString("fr-FR")} F</p>
+              </div>
+              <div className="rounded-lg bg-muted/40 p-2">
+                <p className="text-[10px] uppercase text-muted-foreground">Coût pièces</p>
+                <p className="font-bold text-warning-foreground">{Number(margeData.coutPieces).toLocaleString("fr-FR")} F</p>
+              </div>
+              <div className={`rounded-lg p-2 ${Number(margeData.marge) >= 0 ? "bg-success/10" : "bg-destructive/10"}`}>
+                <p className="text-[10px] uppercase text-muted-foreground">Marge</p>
+                <p className="font-bold">{Number(margeData.marge).toLocaleString("fr-FR")} F{margeData.pourcentMarge != null && ` (${margeData.pourcentMarge} %)`}</p>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
