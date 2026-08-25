@@ -11,7 +11,7 @@ import { agences } from "./agences";
 export const orHistorique = pgTable("or_historique", {
   id: serial("id").primaryKey(),
   orId: integer("or_id").notNull().references(() => ordresReparation.id, { onDelete: "cascade" }),
-  type: varchar("type", { length: 20 }).notNull(), // STATUT | PRIORITE | RESPONSABLE | BLOCAGE | NOTE | CREATION
+  type: varchar("type", { length: 40 }).notNull(), // STATUT | PRIORITE | RESPONSABLE | BLOCAGE | NOTE | CREATION | VALIDATION_DIAGNOSTIC | VALIDATION_DEVIS | DEMANDE_PIECES | COMMANDE_FOURNISSEUR | RETOUR_FOURNISSEUR
   ancienneValeur: varchar("ancienne_valeur", { length: 255 }),
   nouvelleValeur: varchar("nouvelle_valeur", { length: 255 }),
   commentaire: text("commentaire"),

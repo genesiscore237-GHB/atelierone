@@ -5,6 +5,8 @@ import { produits } from "./produits";
 import { unitesMesure } from "./unites_mesure";
 import { utilisateurs } from "./utilisateurs";
 import { caisses } from "./caisses";
+import { ordresReparation } from "./ordres_reparation";
+import { vehicules } from "./vehicules";
 
 export const achats = pgTable("achats", {
   id: serial("id").primaryKey(),
@@ -12,6 +14,8 @@ export const achats = pgTable("achats", {
   agenceId: integer("agence_id").notNull().references(() => agences.id),
   reference: varchar("reference", { length: 100 }).notNull().unique(),
   statut: varchar("statut", { length: 50 }).notNull().default("brouillon"),
+  orId: integer("or_id").references(() => ordresReparation.id), // traçabilité : commande liée à un OR
+  vehiculeId: integer("vehicule_id").references(() => vehicules.id),
   totalHT: numeric("total_ht", { precision: 12, scale: 2 }),
   totalTVA: numeric("total_tva", { precision: 12, scale: 2 }),
   totalTTC: numeric("total_ttc", { precision: 12, scale: 2 }),
@@ -36,6 +40,7 @@ export const achatsLignes = pgTable("achats_lignes", {
   id: serial("id").primaryKey(),
   achatId: integer("achat_id").notNull().references(() => achats.id),
   produitId: integer("produit_id").notNull().references(() => produits.id),
+  orId: integer("or_id").references(() => ordresReparation.id), // traçabilité ligne ↔ OR
   quantite: integer("quantite").notNull(),
   uniteId: uuid("unite_id").references(() => unitesMesure.id),
   facteurConversion: numeric("facteur_conversion", { precision: 12, scale: 6 }).notNull().default("1"),

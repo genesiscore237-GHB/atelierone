@@ -8,6 +8,11 @@ import {
   migrerStatutLegacy,
   chargeTechnicien,
   STATUTS_FACTURABLES,
+  transitionRapportDiagnosticValide,
+  diagnosticSoumissible,
+  devisSoumissible,
+  statutDemandePieces,
+  transitionRetourFournisseurValide,
 } from "./atelier-service";
 
 describe("Parc V2 — priorités (matrice fichier client)", () => {
@@ -121,5 +126,55 @@ describe("Parc V2 — divers", () => {
     expect(chargeTechnicien(4, 5)).toEqual({ actifs: 4, capacite: 5, pourcent: 80, depassement80: false });
     expect(chargeTechnicien(5, 5).depassement80).toBe(true);
     expect(chargeTechnicien(1, 5).pourcent).toBe(20);
+  });
+});
+
+describe("Cycle d'atelier — rapport de diagnostic et validation", () => {
+  it("transition diagnostic : brouillon → soumis → validé / renvoyé", () => {
+    expect(transitionRapportDiagnosticValide("BROUILLON", "SOUMIS")).toBe(true);
+    expect(transitionRapportDiagnosticValide("SOUMIS", "VALIDE")).toBe(true);
+    expect(transitionRapportDiagnosticValide("SOUMIS", "RETOURNE")).toBe(true);
+    expect(transitionRapportDiagnosticValide("RETOURNE", "SOUMIS")).toBe(true);
+    expect(transitionRapportDiagnosticValide("VALIDE", "SOUMIS")).toBe(false);
+    expect(transitionRapportDiagnosticValide("BROUILLON", "VALIDE")).toBe(false);
+  });
+
+  it("diagnostic soumissible : constat + au moins une préconisation", () => {
+    expect(diagnosticSoumissible({ constat: "Bruit au freinage" }, [{}])).toBe(true);
+    expect(diagnosticSoumissible({ constat: "" }, [{}])).toBe(false);
+    expect(diagnosticSoumissible({ constat: "Bruit" }, [])).toBe(false);
+  });
+
+  it("devis soumissible : diagnostic VALIDE + lignes", () => {
+    expect(devisSoumissible("VALIDE", [{}])).toBe(true);
+    expect(devisSoumissible("SOUMIS", [{}])).toBe(false);
+    expect(devisSoumissible("VALIDE", [])).toBe(false);
+  });
+
+  it("statut OR : diagnostic → à valider → en cours (validation chef)", () => {
+    expect(transitionStatutAtelierValide("EN_ATTENTE_DIAGNOSTIC", "EN_ATTENTE_VALIDATION_DIAGNOSTIC").ok).toBe(true);
+    expect(transitionStatutAtelierValide("EN_ATTENTE_VALIDATION_DIAGNOSTIC", "EN_COURS").ok).toBe(true);
+    expect(transitionStatutAtelierValide("EN_ATTENTE_VALIDATION_DIAGNOSTIC", "EN_ATTENTE_DIAGNOSTIC").ok).toBe(true); // renvoyé
+    expect(transitionStatutAtelierValide("EN_ATTENTE_DIAGNOSTIC", "LIVRE").ok).toBe(false);
+  });
+});
+
+describe("Cycle d'atelier — demandes de pièces et retours fournisseur", () => {
+  it("statut demande calculé depuis les lignes servies/manquantes", () => {
+    expect(statutDemandePieces([{ quantite: 2, quantiteServie: 0, manquant: false }])).toBe("EN_ATTENTE");
+    expect(statutDemandePieces([{ quantite: 2, quantiteServie: 1, manquant: false }])).toBe("PARTIELLE");
+    expect(statutDemandePieces([{ quantite: 2, quantiteServie: 2, manquant: false }])).toBe("SERVIE");
+    expect(statutDemandePieces([{ quantite: 2, quantiteServie: 0, manquant: true }])).toBe("MANQUANTE");
+    expect(statutDemandePieces([{ quantite: 1, quantiteServie: 1, manquant: false }, { quantite: 1, quantiteServie: 0, manquant: true }])).toBe("PARTIELLE");
+    expect(statutDemandePieces([])).toBe("EN_ATTENTE");
+  });
+
+  it("cycle retour fournisseur : retourné → remplacé → clôturé", () => {
+    expect(transitionRetourFournisseurValide("BROUILLON", "RETOURNE")).toBe(true);
+    expect(transitionRetourFournisseurValide("RETOURNE", "REMPLACE")).toBe(true);
+    expect(transitionRetourFournisseurValide("RETOURNE", "CLOTURE")).toBe(true);
+    expect(transitionRetourFournisseurValide("REMPLACE", "CLOTURE")).toBe(true);
+    expect(transitionRetourFournisseurValide("RETOURNE", "BROUILLON")).toBe(false);
+    expect(transitionRetourFournisseurValide("CLOTURE", "REMPLACE")).toBe(false);
   });
 });

@@ -59,10 +59,11 @@ export const lignesOrdreReparation = pgTable("lignes_ordre_reparation", {
   prixUnitaire: numeric("prix_unitaire", { precision: 12, scale: 2 }).notNull().default("0"),
   tva: numeric("tva", { precision: 5, scale: 2 }).default("0"),
   totalLigne: numeric("total_ligne", { precision: 12, scale: 2 }).default("0"),
-  technicienId: integer("technicien_id").references(() => employes.id),
+technicienId: integer("technicien_id").references(() => employes.id),
   dureeHeures: numeric("duree_heures", { precision: 6, scale: 2 }),
   statut: varchar("statut", { length: 30 }).default("a_faire"), // a_faire | en_cours | fait | valide
-  // specs V2 §04 processus 8 — pièces fournies par le client : traçabilité sans impact stock
+  rapportId: integer("rapport_id"), // lien vers or_rapports_diagnostic (préconisations du diagnostic)
+  // specs MVP — validation admin par ligne : l'extra n'est compté que si validé
   fournieParClient: boolean("fournie_par_client").default(false),
   remiseAuClient: boolean("remise_au_client").default(false),
   motifClient: text("motif_client"),

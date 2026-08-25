@@ -51,6 +51,7 @@ export const SOCLE_PERMISSIONS = [
   { code: "or.modifier", nom: "Modifier un OR / interventions", module: "or" },
   { code: "or.valider", nom: "Valider les travaux (clôture)", module: "or" },
   { code: "or.facturer", nom: "Facturer un OR", module: "or" },
+  { code: "or.pieces.servir", nom: "Servir les demandes de pièces des OR (magasin)", module: "or" },
   // Contrats flottes
   { code: "contrats.consulter", nom: "Consulter les contrats", module: "contrats" },
   { code: "contrats.creer", nom: "Créer un contrat flotte", module: "contrats" },
@@ -119,7 +120,7 @@ export const SOCLE_MATRICE: Record<string, string[]> = {
   magasinier: [
     "stock.consulter", "stock.modifier", "stock.inventaire",
     "achats.commander", "achats.recevoir", "achats.consulter",
-    "fournisseur.consulter", "fournisseur.gerer", "or.consulter",
+    "fournisseur.consulter", "fournisseur.gerer", "or.consulter", "or.pieces.servir",
   ],
   technicien: [
     "or.consulter", "or.modifier", "vehicules.consulter", "stock.consulter", "planning.consulter",

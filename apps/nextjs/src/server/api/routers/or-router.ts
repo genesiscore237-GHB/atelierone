@@ -16,8 +16,16 @@ import {
   orHistorique,
   orPhotos,
   atelierParametres,
+  orRapportsDiagnostic,
+  orDemandesPieces,
+  orDemandesPiecesLignes,
+  retoursFournisseur,
+  retoursFournisseurLignes,
+  achats,
+  achatsLignes,
+  fournisseurs,
 } from "@atelierone/db";
-import { eq, and, desc, sql, gte, lte, asc } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lte, asc, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
 import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererReferenceFacture, MODES_PAIEMENT, montantLigne } from "~/server/lib/facturation-service";
@@ -32,7 +40,13 @@ import {
   MOTIFS_ENTREE,
   STATUT_LABELS,
   STATUTS_FACTURABLES,
+  transitionRapportDiagnosticValide,
+  diagnosticSoumissible,
+  devisSoumissible,
+  statutDemandePieces,
+  transitionRetourFournisseurValide,
 } from "~/server/lib/atelier-service";
+import { sortirPourOR } from "~/server/lib/stock-engine";
 
 /**
  * MODULE ORDRE DE RÉPARATION (OR) — specs GPJ / Architecture §3.2.
@@ -265,10 +279,11 @@ export const orRouter = createTRPCRouter({
         .where(eq(lignesOrdreReparation.ordreId, input.id))
         .orderBy(lignesOrdreReparation.id);
 
-      const [historique, photos, parametres] = await Promise.all([
+      const [historique, photos, parametres, rapports] = await Promise.all([
         db.select().from(orHistorique).where(eq(orHistorique.orId, input.id)).orderBy(asc(orHistorique.changeLe)),
         db.select().from(orPhotos).where(eq(orPhotos.orId, input.id)).orderBy(asc(orPhotos.createdAt)),
         db.select().from(atelierParametres).where(eq(atelierParametres.agenceId, ctx.user.agenceId)).limit(1),
+        db.select().from(orRapportsDiagnostic).where(eq(orRapportsDiagnostic.orId, input.id)).orderBy(desc(orRapportsDiagnostic.id)).limit(1),
       ]);
       const seuils = parametres?.[0]
         ? { seuilPromesseJours: parametres[0].seuilPromesseJours ?? 1, seuilImmobilisationJours: parametres[0].seuilImmobilisationJours ?? 5, seuilBloqueJours: parametres[0].seuilBloqueJours ?? 3 }
@@ -286,6 +301,7 @@ export const orRouter = createTRPCRouter({
         lignes,
         historique,
         photos,
+        rapportDiagnostic: rapports?.[0] ?? null,
         joursImmobilisation: joursImmobilisation(dateEntree),
         retardJours: retardJours(or.datePromesse),
         alerte: alerte.principale,
@@ -658,6 +674,538 @@ export const orRouter = createTRPCRouter({
     .input(z.object({ orId: z.number().int() }))
     .query(async ({ ctx, input }) => {
       return listerPiecesClientService(input.orId, ctx.user.agenceId);
+    }),
+
+  // ─── Rapport de diagnostic structuré + validation (P1) ───
+  creerRapportDiagnostic: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      constat: z.string().min(3),
+      cause: z.string().optional(),
+      lignes: z.array(z.object({
+        type: z.enum(["PIECE", "SERVICE"]).default("PIECE"),
+        produitId: z.number().int().optional(),
+        libelle: z.string().min(1),
+        quantite: z.number().min(0.01).default(1),
+        prixUnitaire: z.number().min(0).default(0),
+        tva: z.number().min(0).default(0),
+        dureeHeures: z.number().min(0).optional(),
+      })).min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [or] = await tx
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, statut: ordresReparation.statut })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+        if (!diagnosticSoumissible({ constat: input.constat }, input.lignes)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Le rapport doit avoir un constat et au moins une préconisation." });
+        }
+        const [rapport] = await tx
+          .insert(orRapportsDiagnostic)
+          .values({ orId: input.orId, technicienId: Number(ctx.user.id) ?? null, constat: input.constat, cause: input.cause ?? null, statut: "SOUMIS", dateSoumission: new Date() } as any)
+          .returning();
+        let order = 0;
+        for (const l of input.lignes) {
+          await tx.insert(lignesOrdreReparation).values({
+            ordreId: input.orId,
+            type: l.type,
+            produitId: l.produitId ?? null,
+            libelle: l.libelle,
+            quantite: String(l.quantite),
+            prixUnitaire: String(l.prixUnitaire),
+            tva: String(l.tva),
+            totalLigne: String(l.quantite * l.prixUnitaire * (1 + l.tva / 100)),
+            rapportId: rapport.id,
+            statut: "a_faire",
+          } as any);
+        }
+        await tx.update(ordresReparation).set({ statut: "EN_ATTENTE_VALIDATION_DIAGNOSTIC", updatedAt: new Date() } as any).where(eq(ordresReparation.id, input.orId));
+        await tx.insert(orHistorique).values({
+          orId: input.orId,
+          type: "VALIDATION_DIAGNOSTIC",
+          ancienneValeur: or.statut ?? null,
+          nouvelleValeur: "EN_ATTENTE_VALIDATION_DIAGNOSTIC",
+          commentaire: `Diagnostic soumis — ${input.constat}`,
+          changePar: Number(ctx.user.id),
+        } as any);
+        return { rapportId: rapport.id };
+      }) as any;
+    }),
+
+  validerDiagnostic: requirePermissionProcedure("or.valider")
+    .input(z.object({ rapportId: z.number().int(), commentaire: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const [rapport] = await db.select().from(orRapportsDiagnostic).where(eq(orRapportsDiagnostic.id, input.rapportId)).limit(1);
+      if (!rapport) throw new TRPCError({ code: "NOT_FOUND", message: "Rapport introuvable." });
+      if (!transitionRapportDiagnosticValide(rapport.statut, "VALIDE")) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de valider un rapport en statut ${rapport.statut}.` });
+      }
+      await db.update(orRapportsDiagnostic).set({ statut: "VALIDE", validePar: Number(ctx.user.id), valideLe: new Date(), commentaireValidateur: input.commentaire ?? null, updatedAt: new Date() } as any).where(eq(orRapportsDiagnostic.id, input.rapportId));
+      await db.update(ordresReparation).set({ statut: "EN_COURS", diagnostic: rapport.constat, updatedAt: new Date() } as any).where(eq(ordresReparation.id, rapport.orId));
+      await db.insert(orHistorique).values({
+        orId: rapport.orId,
+        type: "VALIDATION_DIAGNOSTIC",
+        ancienneValeur: "EN_ATTENTE_VALIDATION_DIAGNOSTIC",
+        nouvelleValeur: "EN_COURS",
+        commentaire: `Diagnostic validé par le chef d'atelier${input.commentaire ? ` — ${input.commentaire}` : ""}`,
+        changePar: Number(ctx.user.id),
+      } as any);
+      return { success: true };
+    }),
+
+  retournerDiagnostic: requirePermissionProcedure("or.valider")
+    .input(z.object({ rapportId: z.number().int(), commentaire: z.string().min(3) }))
+    .mutation(async ({ ctx, input }) => {
+      const [rapport] = await db.select().from(orRapportsDiagnostic).where(eq(orRapportsDiagnostic.id, input.rapportId)).limit(1);
+      if (!rapport) throw new TRPCError({ code: "NOT_FOUND", message: "Rapport introuvable." });
+      if (!transitionRapportDiagnosticValide(rapport.statut, "RETOURNE")) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Seul un rapport SOUMIS peut être renvoyé." });
+      }
+      await db.update(orRapportsDiagnostic).set({ statut: "RETOURNE", commentaireValidateur: input.commentaire, updatedAt: new Date() } as any).where(eq(orRapportsDiagnostic.id, input.rapportId));
+      await db.update(ordresReparation).set({ statut: "EN_ATTENTE_DIAGNOSTIC", updatedAt: new Date() } as any).where(eq(ordresReparation.id, rapport.orId));
+      await db.insert(orHistorique).values({
+        orId: rapport.orId,
+        type: "VALIDATION_DIAGNOSTIC",
+        ancienneValeur: "EN_ATTENTE_VALIDATION_DIAGNOSTIC",
+        nouvelleValeur: "EN_ATTENTE_DIAGNOSTIC",
+        commentaire: `Diagnostic renvoyé : ${input.commentaire}`,
+        changePar: Number(ctx.user.id),
+      } as any);
+      return { success: true };
+    }),
+
+  // ─── Devis : soumission + validation client (P2) ───
+  soumettreDevis: requirePermissionProcedure("or.valider")
+    .input(z.object({ orId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id, statut: ordresReparation.statut })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      const [rapport] = await db
+        .select({ statut: orRapportsDiagnostic.statut })
+        .from(orRapportsDiagnostic)
+        .where(eq(orRapportsDiagnostic.orId, input.orId))
+        .orderBy(sql`${orRapportsDiagnostic.id} DESC`)
+        .limit(1);
+      const lignes = await db.select().from(lignesOrdreReparation).where(eq(lignesOrdreReparation.ordreId, input.orId));
+      if (!devisSoumissible(rapport?.statut ?? null, lignes)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Le devis exige un diagnostic validé avec des lignes de préconisation." });
+      }
+      await db.update(ordresReparation).set({ statut: "EN_ATTENTE_VALIDATION", devisAccepte: false, updatedAt: new Date() } as any).where(eq(ordresReparation.id, input.orId));
+      await db.insert(orHistorique).values({
+        orId: input.orId,
+        type: "VALIDATION_DEVIS",
+        ancienneValeur: or.statut ?? null,
+        nouvelleValeur: "EN_ATTENTE_VALIDATION",
+        commentaire: "Devis soumis au client",
+        changePar: Number(ctx.user.id),
+      } as any);
+      return { success: true };
+    }),
+
+  validerDevis: requirePermissionProcedure("or.valider")
+    .input(z.object({ orId: z.number().int(), accepte: z.boolean(), motif: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id, statut: ordresReparation.statut })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      if (or.statut !== "EN_ATTENTE_VALIDATION") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Le devis doit d'abord être soumis (statut EN_ATTENTE_VALIDATION)." });
+      }
+      if (input.accepte) {
+        await db.update(ordresReparation).set({ devisAccepte: true, statut: "EN_COURS", updatedAt: new Date() } as any).where(eq(ordresReparation.id, input.orId));
+        await db.insert(orHistorique).values({
+          orId: input.orId,
+          type: "VALIDATION_DEVIS",
+          ancienneValeur: "EN_ATTENTE_VALIDATION",
+          nouvelleValeur: "EN_COURS",
+          commentaire: "Devis accepté par le client",
+          changePar: Number(ctx.user.id),
+        } as any);
+      } else {
+        if (!input.motif?.trim()) throw new TRPCError({ code: "BAD_REQUEST", message: "Le refus du devis exige un motif." });
+        await db.insert(orHistorique).values({
+          orId: input.orId,
+          type: "VALIDATION_DEVIS",
+          ancienneValeur: "EN_ATTENTE_VALIDATION",
+          nouvelleValeur: "EN_ATTENTE_VALIDATION",
+          commentaire: `Devis refusé par le client : ${input.motif}`,
+          changePar: Number(ctx.user.id),
+        } as any);
+      }
+      return { success: true, accepte: input.accepte };
+    }),
+
+  // ─── Demandes de pièces au magasin (P3) ───
+  creerDemandePieces: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      lignes: z.array(z.object({ produitId: z.number().int(), quantite: z.number().positive(), prixEstime: z.number().optional(), note: z.string().optional() })).min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [or] = await tx
+          .select({ id: ordresReparation.id, vehiculeId: ordresReparation.vehiculeId, numero: ordresReparation.numero })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+        const [active] = await tx
+          .select({ id: orDemandesPieces.id })
+          .from(orDemandesPieces)
+          .where(and(eq(orDemandesPieces.orId, input.orId), sql`${orDemandesPieces.statut} IN ('EN_ATTENTE','PARTIELLE')`))
+          .limit(1);
+        if (active) throw new TRPCError({ code: "BAD_REQUEST", message: "Une demande est déjà en cours sur cet OR." });
+        const [demande] = await tx
+          .insert(orDemandesPieces)
+          .values({ orId: input.orId, vehiculeId: or.vehiculeId, demandeurId: Number(ctx.user.id) ?? null, statut: "EN_ATTENTE" } as any)
+          .returning();
+        for (const l of input.lignes) {
+          await tx.insert(orDemandesPiecesLignes).values({
+            demandeId: demande.id,
+            produitId: l.produitId,
+            quantite: String(l.quantite),
+            prixEstime: l.prixEstime != null ? String(l.prixEstime) : null,
+            note: l.note ?? null,
+          } as any);
+        }
+        await tx.insert(orHistorique).values({
+          orId: input.orId,
+          type: "DEMANDE_PIECES",
+          nouvelleValeur: "EN_ATTENTE",
+          commentaire: `Demande de pièces au magasin (${input.lignes.length} ligne(s))`,
+          changePar: Number(ctx.user.id),
+        } as any);
+        return { demandeId: demande.id };
+      }) as any;
+    }),
+
+  traiterDemandePieces: requirePermissionProcedure("or.pieces.servir")
+    .input(z.object({
+      demandeId: z.number().int(),
+      actions: z.array(z.object({
+        ligneId: z.number().int(),
+        servir: z.boolean(),
+        quantiteServie: z.number().positive().optional(),
+        motifManquant: z.string().optional(),
+      })).min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [demande] = await tx
+          .select()
+          .from(orDemandesPieces)
+          .where(eq(orDemandesPieces.id, input.demandeId))
+          .limit(1);
+        if (!demande) throw new TRPCError({ code: "NOT_FOUND", message: "Demande introuvable." });
+        if (demande.statut === "SERVIE" || demande.statut === "ANNULEE") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Demande déjà ${demande.statut}.` });
+        }
+        const [or] = await tx
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, vehiculeId: ordresReparation.vehiculeId })
+          .from(ordresReparation)
+          .where(eq(ordresReparation.id, demande.orId))
+          .limit(1);
+
+        const lignes = await tx.select().from(orDemandesPiecesLignes).where(eq(orDemandesPiecesLignes.demandeId, input.demandeId));
+        for (const action of input.actions) {
+          const ligne = lignes.find((l) => l.id === action.ligneId);
+          if (!ligne) throw new TRPCError({ code: "BAD_REQUEST", message: "Ligne de demande introuvable." });
+          if (action.servir) {
+            const qte = action.quantiteServie ?? Number(ligne.quantite);
+            if (qte > Number(ligne.quantite) - Number(ligne.quantiteServie)) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: `Quantité servie (${qte}) supérieure au restant demandé pour la ligne ${ligne.id}.` });
+            }
+            await sortirPourOR(tx as any, {
+              produitId: ligne.produitId,
+              agenceId: ctx.user.agenceId,
+              quantite: qte,
+              orId: demande.orId,
+              vehiculeId: or?.vehiculeId ?? 0,
+              numeroOR: or?.numero ?? String(demande.orId),
+              motif: `Service demande #${demande.id}`,
+              effectuePar: Number(ctx.user.id),
+            });
+            await tx.update(orDemandesPiecesLignes).set({ quantiteServie: String(Number(ligne.quantiteServie) + qte) } as any).where(eq(orDemandesPiecesLignes.id, ligne.id));
+          } else {
+            await tx.update(orDemandesPiecesLignes).set({ manquant: true, motifManquant: action.motifManquant ?? "Indisponible en stock" } as any).where(eq(orDemandesPiecesLignes.id, ligne.id));
+          }
+        }
+        const maj = await tx.select().from(orDemandesPiecesLignes).where(eq(orDemandesPiecesLignes.demandeId, input.demandeId));
+        const statut = statutDemandePieces(maj.map((l) => ({ quantite: Number(l.quantite), quantiteServie: Number(l.quantiteServie), manquant: !!l.manquant })));
+        await tx.update(orDemandesPieces).set({ statut, traitePar: Number(ctx.user.id), traiteLe: new Date() } as any).where(eq(orDemandesPieces.id, input.demandeId));
+        await tx.insert(orHistorique).values({
+          orId: demande.orId,
+          type: "DEMANDE_PIECES",
+          ancienneValeur: demande.statut ?? null,
+          nouvelleValeur: statut,
+          commentaire: `Demande #${demande.id} traitée par le magasin → ${statut}`,
+          changePar: Number(ctx.user.id),
+        } as any);
+        return { statut };
+      }) as any;
+    }),
+
+  listerDemandesPieces: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      const demandes = await db
+        .select({
+          id: orDemandesPieces.id,
+          orId: orDemandesPieces.orId,
+          statut: orDemandesPieces.statut,
+          demandeurId: orDemandesPieces.demandeurId,
+          traiteLe: orDemandesPieces.traiteLe,
+          motif: orDemandesPieces.motif,
+          createdAt: orDemandesPieces.createdAt,
+          demandeurNom: employes.nom,
+          demandeurPrenom: employes.prenom,
+        })
+        .from(orDemandesPieces)
+        .leftJoin(employes, eq(orDemandesPieces.demandeurId, employes.id))
+        .where(eq(orDemandesPieces.orId, input.orId))
+        .orderBy(desc(orDemandesPieces.createdAt));
+      const lignes = await db
+        .select({
+          id: orDemandesPiecesLignes.id,
+          demandeId: orDemandesPiecesLignes.demandeId,
+          produitId: orDemandesPiecesLignes.produitId,
+          quantite: orDemandesPiecesLignes.quantite,
+          quantiteServie: orDemandesPiecesLignes.quantiteServie,
+          prixEstime: orDemandesPiecesLignes.prixEstime,
+          note: orDemandesPiecesLignes.note,
+          manquant: orDemandesPiecesLignes.manquant,
+          motifManquant: orDemandesPiecesLignes.motifManquant,
+          titre: produits.titre,
+          codeArticle: produits.codeArticle,
+        })
+        .from(orDemandesPiecesLignes)
+        .leftJoin(produits, eq(orDemandesPiecesLignes.produitId, produits.id))
+        .where(inArray(orDemandesPiecesLignes.demandeId, demandes.map((d) => d.id)));
+      return demandes.map((d) => ({ ...d, lignes: lignes.filter((l) => l.demandeId === d.id) }));
+    }),
+
+  // ─── Commande fournisseur liée à l'OR (P4) ───
+  creerCommandeFournisseur: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      fournisseurId: z.number().int(),
+      lignes: z.array(z.object({ produitId: z.number().int(), quantite: z.number().positive(), prixUnitaire: z.number().min(0) })).min(1),
+      livraisonAttendue: z.string().optional(),
+      motif: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [or] = await tx
+          .select({ id: ordresReparation.id, vehiculeId: ordresReparation.vehiculeId, numero: ordresReparation.numero })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+        const [fournisseur] = await tx.select({ id: fournisseurs.id, nom: fournisseurs.nom }).from(fournisseurs).where(eq(fournisseurs.id, input.fournisseurId)).limit(1);
+        if (!fournisseur) throw new TRPCError({ code: "NOT_FOUND", message: "Fournisseur introuvable." });
+        const [last] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(achats)
+          .where(sql`${achats.reference} LIKE ${`BC-${new Date().getFullYear()}-%`}`);
+        const reference = `BC-${new Date().getFullYear()}-${String((last?.n ?? 0) + 1).padStart(5, "0")}`;
+        const [achat] = await tx
+          .insert(achats)
+          .values({
+            fournisseurId: input.fournisseurId,
+            agenceId: ctx.user.agenceId,
+            reference,
+            statut: "commande",
+            orId: input.orId,
+            vehiculeId: or.vehiculeId,
+            demandeur: `OR ${or.numero}`,
+            demandeurId: Number(ctx.user.id),
+            livraisonAttendue: input.livraisonAttendue ?? null,
+            motif: input.motif ?? `Pièces pour ${or.numero}`,
+            priorite: "haute",
+            creePar: Number(ctx.user.id),
+          } as any)
+          .returning();
+        let total = 0;
+        for (const l of input.lignes) {
+          await tx.insert(achatsLignes).values({
+            achatId: achat.id,
+            produitId: l.produitId,
+            orId: input.orId,
+            quantite: l.quantite,
+            prixUnitaire: String(l.prixUnitaire),
+            totalLigne: String(l.quantite * l.prixUnitaire),
+          } as any);
+          total += l.quantite * l.prixUnitaire;
+        }
+        await tx.update(achats).set({ totalHT: String(total), totalTTC: String(total) } as any).where(eq(achats.id, achat.id));
+        await tx.insert(orHistorique).values({
+          orId: input.orId,
+          type: "COMMANDE_FOURNISSEUR",
+          nouvelleValeur: reference,
+          commentaire: `Commande fournisseur ${fournisseur.nom} (${reference}) — ${input.lignes.length} ligne(s)`,
+          changePar: Number(ctx.user.id),
+        } as any);
+        return { achatId: achat.id, reference };
+      }) as any;
+    }),
+
+  listerCommandesFournisseur: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await db
+        .select({
+          id: achats.id,
+          reference: achats.reference,
+          statut: achats.statut,
+          livraisonAttendue: achats.livraisonAttendue,
+          totalTTC: achats.totalTTC,
+          createdAt: achats.createdAt,
+          fournisseurNom: fournisseurs.nom,
+        })
+        .from(achats)
+        .leftJoin(fournisseurs, eq(achats.fournisseurId, fournisseurs.id))
+        .where(eq(achats.orId, input.orId))
+        .orderBy(desc(achats.createdAt));
+      return rows;
+    }),
+
+  // ─── Retour fournisseur (pièce défaillante / non conforme) (P5) ───
+  creerRetourFournisseur: requirePermissionProcedure("or.pieces.servir")
+    .input(z.object({
+      orId: z.number().int(),
+      achatId: z.number().int().optional(),
+      fournisseurId: z.number().int().optional(),
+      motif: z.enum(["DEFAILLANTE", "NON_CONFORME", "ERREUR_COMMANDE"]).default("DEFAILLANTE"),
+      lignes: z.array(z.object({ produitId: z.number().int().optional(), libelle: z.string().optional(), quantite: z.number().positive(), note: z.string().optional() })).min(1),
+      commentaire: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id, numero: ordresReparation.numero })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      const [row] = await db
+        .insert(retoursFournisseur)
+        .values({
+          agenceId: ctx.user.agenceId,
+          achatId: input.achatId ?? null,
+          fournisseurId: input.fournisseurId ?? null,
+          orId: input.orId,
+          motif: input.motif,
+          statut: "RETOURNE",
+          dateRetour: new Date().toISOString().slice(0, 10),
+          commentaire: input.commentaire ?? null,
+          creePar: Number(ctx.user.id),
+        } as any)
+        .returning();
+      for (const l of input.lignes) {
+        await db.insert(retoursFournisseurLignes).values({
+          retourId: row.id,
+          produitId: l.produitId ?? null,
+          libelle: l.libelle ?? null,
+          quantite: String(l.quantite),
+          note: l.note ?? null,
+        } as any);
+      }
+      await db.insert(orHistorique).values({
+        orId: input.orId,
+        type: "RETOUR_FOURNISSEUR",
+        nouvelleValeur: "RETOURNE",
+        commentaire: `Retour fournisseur #${row.id} — ${input.motif}${input.commentaire ? ` : ${input.commentaire}` : ""}`,
+        changePar: Number(ctx.user.id),
+      } as any);
+      return { retourId: row.id };
+    }),
+
+  enregistrerRemplacement: requirePermissionProcedure("or.pieces.servir")
+    .input(z.object({ retourId: z.number().int(), commentaire: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const [retour] = await db.select().from(retoursFournisseur).where(eq(retoursFournisseur.id, input.retourId)).limit(1);
+      if (!retour) throw new TRPCError({ code: "NOT_FOUND", message: "Retour introuvable." });
+      if (!transitionRetourFournisseurValide(retour.statut, "REMPLACE")) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de remplacer un retour en statut ${retour.statut}.` });
+      }
+      await db.update(retoursFournisseur).set({ statut: "REMPLACE", commentaire: input.commentaire ?? retour.commentaire } as any).where(eq(retoursFournisseur.id, input.retourId));
+      if (retour.orId) {
+        await db.insert(orHistorique).values({
+          orId: retour.orId,
+          type: "RETOUR_FOURNISSEUR",
+          ancienneValeur: "RETOURNE",
+          nouvelleValeur: "REMPLACE",
+          commentaire: `Pièce de remplacement reçue (retour #${retour.id})${input.commentaire ? ` — ${input.commentaire}` : ""}`,
+          changePar: Number(ctx.user.id),
+        } as any);
+      }
+      return { success: true, statut: "REMPLACE" };
+    }),
+
+  cloturerRetour: requirePermissionProcedure("or.pieces.servir")
+    .input(z.object({ retourId: z.number().int(), commentaire: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const [retour] = await db.select().from(retoursFournisseur).where(eq(retoursFournisseur.id, input.retourId)).limit(1);
+      if (!retour) throw new TRPCError({ code: "NOT_FOUND", message: "Retour introuvable." });
+      if (!transitionRetourFournisseurValide(retour.statut, "CLOTURE")) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de clôturer un retour en statut ${retour.statut}.` });
+      }
+      await db.update(retoursFournisseur).set({ statut: "CLOTURE", commentaire: input.commentaire ?? retour.commentaire } as any).where(eq(retoursFournisseur.id, input.retourId));
+      if (retour.orId) {
+        await db.insert(orHistorique).values({
+          orId: retour.orId,
+          type: "RETOUR_FOURNISSEUR",
+          ancienneValeur: retour.statut ?? null,
+          nouvelleValeur: "CLOTURE",
+          commentaire: `Retour fournisseur #${retour.id} clôturé`,
+          changePar: Number(ctx.user.id),
+        } as any);
+      }
+      return { success: true, statut: "CLOTURE" };
+    }),
+
+  listerRetoursFournisseur: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      const retours = await db
+        .select({
+          id: retoursFournisseur.id,
+          achatId: retoursFournisseur.achatId,
+          fournisseurId: retoursFournisseur.fournisseurId,
+          motif: retoursFournisseur.motif,
+          statut: retoursFournisseur.statut,
+          dateRetour: retoursFournisseur.dateRetour,
+          commentaire: retoursFournisseur.commentaire,
+          createdAt: retoursFournisseur.createdAt,
+          fournisseurNom: fournisseurs.nom,
+        })
+        .from(retoursFournisseur)
+        .leftJoin(fournisseurs, eq(retoursFournisseur.fournisseurId, fournisseurs.id))
+        .where(eq(retoursFournisseur.orId, input.orId))
+        .orderBy(desc(retoursFournisseur.createdAt));
+      const lignes = await db
+        .select({
+          id: retoursFournisseurLignes.id,
+          retourId: retoursFournisseurLignes.retourId,
+          produitId: retoursFournisseurLignes.produitId,
+          libelle: retoursFournisseurLignes.libelle,
+          quantite: retoursFournisseurLignes.quantite,
+          note: retoursFournisseurLignes.note,
+          titre: produits.titre,
+        })
+        .from(retoursFournisseurLignes)
+        .leftJoin(produits, eq(retoursFournisseurLignes.produitId, produits.id))
+        .where(inArray(retoursFournisseurLignes.retourId, retours.map((r) => r.id)));
+      return retours.map((r) => ({ ...r, lignes: lignes.filter((l) => l.retourId === r.id) }));
     }),
 
   // ─── Paramètres du module (seuils, listes, texte accusé) ───

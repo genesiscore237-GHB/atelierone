@@ -16,6 +16,7 @@ export const PRIORITE_META: Record<Priorite, { libelle: string; couleur: string;
 
 export const STATUTS_ATELIER = [
   "EN_ATTENTE_DIAGNOSTIC",
+  "EN_ATTENTE_VALIDATION_DIAGNOSTIC",
   "EN_COURS",
   "EN_ATTENTE_PIECES",
   "EN_ATTENTE_VALIDATION",
@@ -28,6 +29,7 @@ export const STATUTS_ATELIER = [
 
 export const STATUT_LABELS: Record<string, string> = {
   EN_ATTENTE_DIAGNOSTIC: "En attente diagnostic",
+  EN_ATTENTE_VALIDATION_DIAGNOSTIC: "Diagnostic à valider",
   EN_COURS: "En cours",
   EN_ATTENTE_PIECES: "En attente pièces",
   EN_ATTENTE_VALIDATION: "En attente validation",
@@ -40,6 +42,7 @@ export const STATUT_LABELS: Record<string, string> = {
 
 export const STATUT_BADGE: Record<string, string> = {
   EN_ATTENTE_DIAGNOSTIC: "bg-muted text-muted-foreground",
+  EN_ATTENTE_VALIDATION_DIAGNOSTIC: "bg-sky-500/15 text-sky-400",
   EN_COURS: "bg-primary/15 text-primary",
   EN_ATTENTE_PIECES: "bg-warning/15 text-warning-foreground",
   EN_ATTENTE_VALIDATION: "bg-warning/15 text-warning-foreground",
@@ -170,7 +173,8 @@ function joursRestantsPromesse(datePromesse: string, aujourdhui: string | Date):
 }
 
 const TRANSITIONS_ATELIER: Record<string, string[]> = {
-  EN_ATTENTE_DIAGNOSTIC: ["EN_COURS", "EN_ATTENTE_PIECES", "EN_ATTENTE_VALIDATION", "BLOQUE", "ANNULE"],
+  EN_ATTENTE_DIAGNOSTIC: ["EN_ATTENTE_VALIDATION_DIAGNOSTIC", "EN_COURS", "EN_ATTENTE_PIECES", "EN_ATTENTE_VALIDATION", "BLOQUE", "ANNULE"],
+  EN_ATTENTE_VALIDATION_DIAGNOSTIC: ["EN_COURS", "EN_ATTENTE_VALIDATION", "EN_ATTENTE_DIAGNOSTIC", "BLOQUE", "ANNULE"],
   EN_COURS: ["EN_ATTENTE_PIECES", "EN_ATTENTE_VALIDATION", "CONTROLE_QUALITE", "BLOQUE", "ANNULE"],
   EN_ATTENTE_PIECES: ["EN_COURS", "BLOQUE", "ANNULE"],
   EN_ATTENTE_VALIDATION: ["EN_COURS", "BLOQUE", "ANNULE"],
@@ -180,6 +184,52 @@ const TRANSITIONS_ATELIER: Record<string, string[]> = {
   LIVRE: [],
   ANNULE: [],
 };
+
+/** Cycle du rapport de diagnostic (technicien → chef d'atelier). */
+export const STATUTS_RAPPORT_DIAGNOSTIC = ["BROUILLON", "SOUMIS", "VALIDE", "RETOURNE"] as const;
+
+export function transitionRapportDiagnosticValide(de: string | null | undefined, vers: string): boolean {
+  switch (de) {
+    case "BROUILLON": return vers === "SOUMIS";
+    case "SOUMIS": return vers === "VALIDE" || vers === "RETOURNE";
+    case "RETOURNE": return vers === "SOUMIS";
+    case "VALIDE": return false;
+    default: return vers === "SOUMIS";
+  }
+}
+
+/** Un diagnostic n'est soumissible que s'il a un constat ET au moins une préconisation (ligne). */
+export function diagnosticSoumissible(rapport: { constat?: string | null; cause?: string | null }, lignes: unknown[]): boolean {
+  return !!rapport.constat?.trim() && lignes.length > 0;
+}
+
+/** Un devis n'est soumissible que si le diagnostic est validé et qu'il y a des lignes. */
+export function devisSoumissible(rapportStatut: string | null | undefined, lignes: unknown[], devisExistant?: boolean): boolean {
+  return rapportStatut === "VALIDE" && lignes.length > 0;
+}
+
+/** Statut calculé d'une demande de pièces à partir des lignes servies/manquantes. */
+export function statutDemandePieces(lignes: Array<{ quantite: number; quantiteServie: number; manquant: boolean }>): "EN_ATTENTE" | "PARTIELLE" | "SERVIE" | "MANQUANTE" {
+  if (lignes.length === 0) return "EN_ATTENTE";
+  const total = lignes.reduce((s, l) => s + l.quantite, 0);
+  const servie = lignes.reduce((s, l) => s + l.quantiteServie, 0);
+  if (lignes.every((l) => l.manquant)) return "MANQUANTE";
+  if (servie <= 0) return "EN_ATTENTE";
+  if (servie >= total) return "SERVIE";
+  return "PARTIELLE";
+}
+
+/** Cycle de vie d'un retour fournisseur. */
+export const STATUTS_RETOUR_FOURNISSEUR = ["BROUILLON", "RETOURNE", "REMPLACE", "CLOTURE"] as const;
+
+export function transitionRetourFournisseurValide(de: string | null | undefined, vers: string): boolean {
+  switch (de) {
+    case "BROUILLON": return vers === "RETOURNE";
+    case "RETOURNE": return vers === "REMPLACE" || vers === "CLOTURE";
+    case "REMPLACE": return vers === "CLOTURE";
+    default: return false;
+  }
+}
 
 export function transitionStatutAtelierValide(de: string | null | undefined, vers: string, raison?: string | null): { ok: boolean; raison?: string } {
   if (!de) return { ok: true };

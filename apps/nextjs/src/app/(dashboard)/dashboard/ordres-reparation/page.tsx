@@ -24,6 +24,7 @@ import {
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { usePermissions } from "~/hooks/usePermissions";
 import {
   STATUT_BADGE,
   STATUT_LABELS,
@@ -608,6 +609,8 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
         </div>
       )}
 
+      <CycleAtelierSections or={or} id={id} />
+
       {/* Historique du cycle de vie */}
       <div className="rounded-xl border border-border bg-card p-4">
         <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
@@ -728,6 +731,475 @@ function PrioriteSelector({ or, id }: { or: any; id: number }) {
         <option value="">Priorité…</option>
         {(["P1", "P2", "P3", "P4"] as const).filter((x) => x !== p).map((x) => <option key={x} value={x} className="bg-background">{x} — {PRIORITE_META[x]?.libelle}</option>)}
       </select>
+    </div>
+  );
+}
+
+// ─── Cycle d'atelier : diagnostic & devis, demandes pièces, commandes, retours ───
+function CycleAtelierSections({ or, id }: { or: any; id: number }) {
+  const { hasPermission } = usePermissions();
+  const utils = api.useUtils();
+  const canValider = hasPermission("or.valider");
+  const canServir = hasPermission("or.pieces.servir");
+  const canModifier = hasPermission("or.modifier");
+  const { data: produitsData } = api.catalog.list.useQuery({ limit: 200 });
+  const { data: fournisseurs } = api.reference.listFournisseurs.useQuery();
+  const produitsList = (produitsData?.items ?? []) as any[];
+  const fournisseursList = (fournisseurs ?? []) as any[];
+  const { data: demandes } = api.or.listerDemandesPieces.useQuery({ orId: id }, { enabled: !!id });
+  const { data: commandes } = api.or.listerCommandesFournisseur.useQuery({ orId: id }, { enabled: !!id });
+  const { data: retours } = api.or.listerRetoursFournisseur.useQuery({ orId: id }, { enabled: !!id });
+
+  const rapport = or.rapportDiagnostic ?? null;
+  const invalidateAll = () => { utils.or.getById.invalidate(); };
+
+  // Diagnostics & devis
+  const [diagForm, setDiagForm] = useState<{ constat: string; cause: string; lignes: Array<{ type: string; libelle: string; produitId: number; quantite: number; prixUnitaire: number }> }>({ constat: "", cause: "", lignes: [{ type: "PIECE", libelle: "", produitId: 0, quantite: 1, prixUnitaire: 0 }] });
+  const [showDiag, setShowDiag] = useState(false);
+  const [renvoiMotif, setRenvoiMotif] = useState("");
+  const [confirmRenvoi, setConfirmRenvoi] = useState<string | null>(null);
+  const [refusMotif, setRefusMotif] = useState("");
+  const [confirmRefus, setConfirmRefus] = useState(false);
+
+  const creerRapport = api.or.creerRapportDiagnostic.useMutation({
+    onSuccess: () => { toast.success("Diagnostic soumis — en attente de validation"); invalidateAll(); setShowDiag(false); },
+    onError: (e) => toast.error(e.message),
+  });
+  const validerDiag = api.or.validerDiagnostic.useMutation({
+    onSuccess: () => { toast.success("Diagnostic validé — devis disponible"); invalidateAll(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const renvoyerDiag = api.or.retournerDiagnostic.useMutation({
+    onSuccess: () => { toast.success("Diagnostic renvoyé au technicien"); invalidateAll(); setConfirmRenvoi(null); setRenvoiMotif(""); },
+    onError: (e) => toast.error(e.message),
+  });
+  const soumettreDevis = api.or.soumettreDevis.useMutation({
+    onSuccess: () => { toast.success("Devis soumis au client"); invalidateAll(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const validerDevis = api.or.validerDevis.useMutation({
+    onSuccess: (r) => { toast.success(r.accepte ? "Devis accepté — travaux autorisés" : "Devis refusé"); invalidateAll(); setConfirmRefus(false); setRefusMotif(""); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Demandes de pièces
+  const [showDemande, setShowDemande] = useState(false);
+  const [demandeForm, setDemandeForm] = useState<Array<{ produitId: number; quantite: number; note: string }>>([{ produitId: 0, quantite: 1, note: "" }]);
+  const creerDemande = api.or.creerDemandePieces.useMutation({
+    onSuccess: () => { toast.success("Demande envoyée au magasin"); invalidateAll(); setShowDemande(false); setDemandeForm([{ produitId: 0, quantite: 1, note: "" }]); },
+    onError: (e) => toast.error(e.message),
+  });
+  const traiterDemande = api.or.traiterDemandePieces.useMutation({
+    onSuccess: (r) => { toast.success(`Demande traitée → ${r.statut}`); invalidateAll(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Commandes fournisseur
+  const [showCmd, setShowCmd] = useState(false);
+  const [cmdForm, setCmdForm] = useState<{ fournisseurId: number; livraisonAttendue: string; lignes: Array<{ produitId: number; quantite: number; prixUnitaire: number }> }>({ fournisseurId: 0, livraisonAttendue: "", lignes: [{ produitId: 0, quantite: 1, prixUnitaire: 0 }] });
+  const creerCmd = api.or.creerCommandeFournisseur.useMutation({
+    onSuccess: (r) => { toast.success(`Commande ${r.reference} envoyée au fournisseur`); invalidateAll(); setShowCmd(false); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Retours fournisseur
+  const [showRetour, setShowRetour] = useState(false);
+  const [retourForm, setRetourForm] = useState<{ fournisseurId: number; motif: string; commentaire: string; lignes: Array<{ produitId: number; quantite: number; note: string }> }>({ fournisseurId: 0, motif: "DEFAILLANTE", commentaire: "", lignes: [{ produitId: 0, quantite: 1, note: "" }] });
+  const creerRetour = api.or.creerRetourFournisseur.useMutation({
+    onSuccess: (r) => { toast.success(`Retour fournisseur #${r.retourId} enregistré`); invalidateAll(); setShowRetour(false); },
+    onError: (e) => toast.error(e.message),
+  });
+  const remplacerRetour = api.or.enregistrerRemplacement.useMutation({
+    onSuccess: () => { toast.success("Pièce de remplacement reçue"); invalidateAll(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const cloturerRetour = api.or.cloturerRetour.useMutation({
+    onSuccess: () => { toast.success("Retour clôturé"); invalidateAll(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const statutRapport = rapport?.statut ?? null;
+  const dem = (demandes ?? []) as any[];
+  const cmd = (commandes ?? []) as any[];
+  const ret = (retours ?? []) as any[];
+
+  return (
+    <div className="space-y-4">
+      {/* Diagnostic & devis */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Diagnostic & devis</h3>
+          {canModifier && or.statut === "EN_ATTENTE_DIAGNOSTIC" && (
+            <Button size="sm" variant="outline" onClick={() => setShowDiag(true)}>Soumettre le diagnostic</Button>
+          )}
+        </div>
+        {rapport ? (
+          <div className="space-y-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                statutRapport === "VALIDE" ? "bg-success/15 text-success-foreground" : statutRapport === "SOUMIS" ? "bg-sky-500/15 text-sky-400" : statutRapport === "RETOURNE" ? "bg-destructive/15 text-destructive" : "bg-muted text-muted-foreground"
+              }`}>{statutRapport}</span>
+              <span className="text-xs text-muted-foreground">soumis le {rapport.dateSoumission ? new Date(rapport.dateSoumission).toLocaleString("fr-FR") : "—"}</span>
+              {rapport.valideLe && <span className="text-xs text-success-foreground">validé le {new Date(rapport.valideLe).toLocaleString("fr-FR")}</span>}
+            </div>
+            <p><b>Constat :</b> {rapport.constat}</p>
+            {rapport.cause && <p><b>Cause probable :</b> {rapport.cause}</p>}
+            {rapport.commentaireValidateur && <p className="text-xs text-muted-foreground">Commentaire validateur : {rapport.commentaireValidateur}</p>}
+            <div className="flex flex-wrap gap-2">
+              {statutRapport === "SOUMIS" && canValider && (
+                <>
+                  <Button size="sm" onClick={() => validerDiag.mutate({ rapportId: rapport.id })}><Check size={13} /> Valider le diagnostic</Button>
+                  <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirmRenvoi(rapport.id)}>Renvoyer au technicien</Button>
+                </>
+              )}
+              {statutRapport === "VALIDE" && canValider && (
+                <Button size="sm" onClick={() => soumettreDevis.mutate({ orId: id })}>Soumettre le devis au client</Button>
+              )}
+              {or.statut === "EN_ATTENTE_VALIDATION" && canValider && (
+                <>
+                  <Button size="sm" className="bg-success text-success-foreground hover:bg-success/90" onClick={() => validerDevis.mutate({ orId: id, accepte: true })}>
+                    <Check size={13} /> Approuver le devis
+                  </Button>
+                  <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirmRefus(true)}>Refuser le devis</Button>
+                </>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Aucun rapport de diagnostic. Le technicien qualifié soumet son constat, ses préconisations et les pièces nécessaires.</p>
+        )}
+      </div>
+
+      {/* Demandes de pièces au magasin */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Demandes de pièces (magasin)</h3>
+          {canModifier && (
+            <Button size="sm" variant="outline" onClick={() => setShowDemande(true)}>Nouvelle demande</Button>
+          )}
+        </div>
+        {dem.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucune demande. Les pièces préconisées au diagnostic sont demandées au magasin ici.</p>
+        ) : (
+          <div className="space-y-2">
+            {dem.map((d: any) => (
+              <div key={d.id} className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold">Demande #{d.id}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
+                      d.statut === "SERVIE" ? "bg-success/15 text-success-foreground" : d.statut === "MANQUANTE" ? "bg-destructive/15 text-destructive" : d.statut === "PARTIELLE" ? "bg-warning/15 text-warning-foreground" : "bg-muted text-muted-foreground"
+                    }`}>{d.statut}</span>
+                    <span className="text-xs text-muted-foreground">{d.demandeurPrenom} {d.demandeurNom} · {new Date(d.createdAt).toLocaleDateString("fr-FR")}</span>
+                  </div>
+                </div>
+                <div className="mt-1.5 space-y-1">
+                  {d.lignes.map((l: any) => (
+                    <div key={l.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="min-w-0 flex-1 truncate">
+                        {l.titre ?? `#${l.produitId}`}
+                        <span className="ml-1 text-muted-foreground">× {l.quantite}{Number(l.quantiteServie) > 0 && ` (servi ${l.quantiteServie})`}</span>
+                        {l.manquant && <span className="ml-1 font-bold text-destructive">⛔ {l.motifManquant ?? "manquant"}</span>}
+                      </span>
+                      {canServir && d.statut !== "SERVIE" && d.statut !== "ANNULEE" && (
+                        <span className="flex items-center gap-1">
+                          {!l.manquant && Number(l.quantiteServie) < Number(l.quantite) && (
+                            <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => traiterDemande.mutate({ demandeId: d.id, actions: [{ ligneId: l.id, servir: true }] })}>
+                              Servir
+                            </Button>
+                          )}
+                          {!l.manquant && (
+                            <Button size="sm" variant="ghost" className="h-6 text-[10px] text-destructive" onClick={() => traiterDemande.mutate({ demandeId: d.id, actions: [{ ligneId: l.id, servir: false, motifManquant: "Indisponible en stock" }] })}>
+                              Manquant
+                            </Button>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Commandes fournisseur liées à l'OR */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Commandes fournisseur (traçabilité OR)</h3>
+          {canModifier && (
+            <Button size="sm" variant="outline" onClick={() => setShowCmd(true)}>Commander au fournisseur</Button>
+          )}
+        </div>
+        {cmd.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucune commande liée à cet OR. Une pièce manquante en stock se commande ici, liée au véhicule.</p>
+        ) : (
+          <div className="space-y-2">
+            {cmd.map((c: any) => (
+              <div key={c.id} className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm">
+                <div>
+                  <span className="font-mono text-xs font-bold">{c.reference}</span>
+                  <span className="ml-2">{c.fournisseurNom}</span>
+                  <span className={`ml-2 rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
+                    c.statut === "recu" ? "bg-success/15 text-success-foreground" : c.statut === "commande" ? "bg-sky-500/15 text-sky-400" : c.statut === "annulee" ? "bg-destructive/15 text-destructive" : "bg-muted text-muted-foreground"
+                  }`}>{c.statut}</span>
+                </div>
+                <span className="font-mono text-xs">{Number(c.totalTTC ?? 0).toLocaleString("fr-FR")} F{c.livraisonAttendue ? ` · livraison ${c.livraisonAttendue}` : ""}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Retours fournisseur (pièces défaillantes / non conformes) */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Retours fournisseur</h3>
+          {canServir && (
+            <Button size="sm" variant="outline" onClick={() => setShowRetour(true)}>Retourner une pièce</Button>
+          )}
+        </div>
+        {ret.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucun retour. Une pièce défaillante ou non conforme est renvoyée au fournisseur ici, en attendant le remplacement.</p>
+        ) : (
+          <div className="space-y-2">
+            {ret.map((r: any) => (
+              <div key={r.id} className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold">Retour #{r.id}</span>
+                    <span className="rounded-full bg-destructive/15 px-2 py-0.5 text-[9px] font-black uppercase text-destructive">{r.motif}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${
+                      r.statut === "CLOTURE" ? "bg-muted text-muted-foreground" : r.statut === "REMPLACE" ? "bg-success/15 text-success-foreground" : "bg-warning/15 text-warning-foreground"
+                    }`}>{r.statut}</span>
+                    <span className="text-xs text-muted-foreground">{r.fournisseurNom ?? "—"}</span>
+                  </div>
+                  {canServir && r.statut === "RETOURNE" && (
+                    <span className="flex gap-1">
+                      <Button size="sm" className="h-6 text-[10px]" onClick={() => remplacerRetour.mutate({ retourId: r.id })}>Reçu le remplacement</Button>
+                      <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => cloturerRetour.mutate({ retourId: r.id })}>Clôturer</Button>
+                    </span>
+                  )}
+                  {canServir && r.statut === "REMPLACE" && (
+                    <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => cloturerRetour.mutate({ retourId: r.id })}>Clôturer</Button>
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {(r.lignes ?? []).map((l: any) => `${l.titre ?? l.libelle ?? `#${l.produitId}`} ×${l.quantite}`).join(" · ")}
+                  {r.commentaire && <span className="ml-1">— {r.commentaire}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Modal : soumettre le diagnostic */}
+      {showDiag && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowDiag(false)}>
+          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-4 text-lg font-bold text-foreground">Rapport de diagnostic</h3>
+            <div className="space-y-3">
+              <div>
+                <Label className="text-xs text-muted-foreground">Constat / symptômes confirmés *</Label>
+                <textarea rows={2} value={diagForm.constat} onChange={(e) => setDiagForm({ ...diagForm, constat: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50" />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Cause probable</Label>
+                <textarea rows={1} value={diagForm.cause} onChange={(e) => setDiagForm({ ...diagForm, cause: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50" />
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Préconisations (travaux & pièces nécessaires) *</div>
+                <div className="space-y-2">
+                  {diagForm.lignes.map((l, i) => (
+                    <div key={i} className="grid grid-cols-12 gap-2">
+                      <select value={l.type} onChange={(e) => { const lignes = [...diagForm.lignes]; lignes[i] = { ...l, type: e.target.value }; setDiagForm({ ...diagForm, lignes }); }} className="col-span-2 h-9 rounded-lg border border-border bg-background px-2 text-xs">
+                        <option value="PIECE">Pièce</option>
+                        <option value="SERVICE">Main-d'œuvre</option>
+                      </select>
+                      <select value={l.produitId} onChange={(e) => { const lignes = [...diagForm.lignes]; lignes[i] = { ...l, produitId: Number(e.target.value) }; setDiagForm({ ...diagForm, lignes }); }} className="col-span-4 h-9 rounded-lg border border-border bg-background px-2 text-xs">
+                        <option value={0}>Article (optionnel)</option>
+                        {produitsList.map((p: any) => <option key={p.id} value={p.id} className="bg-background">{p.titre}</option>)}
+                      </select>
+                      <input value={l.libelle} onChange={(e) => { const lignes = [...diagForm.lignes]; lignes[i] = { ...l, libelle: e.target.value }; setDiagForm({ ...diagForm, lignes }); }} placeholder="Libellé *" className="col-span-3 h-9 rounded-lg border border-border bg-accent/30 px-2 text-xs text-foreground outline-none" />
+                      <input type="number" min={1} value={l.quantite} onChange={(e) => { const lignes = [...diagForm.lignes]; lignes[i] = { ...l, quantite: Number(e.target.value) }; setDiagForm({ ...diagForm, lignes }); }} className="col-span-1 h-9 rounded-lg border border-border bg-accent/30 px-2 text-xs text-foreground outline-none" />
+                      <input type="number" min={0} value={l.prixUnitaire} onChange={(e) => { const lignes = [...diagForm.lignes]; lignes[i] = { ...l, prixUnitaire: Number(e.target.value) }; setDiagForm({ ...diagForm, lignes }); }} placeholder="PU" className="col-span-2 h-9 rounded-lg border border-border bg-accent/30 px-2 text-xs text-foreground outline-none" />
+                    </div>
+                  ))}
+                </div>
+                <Button size="sm" variant="outline" className="mt-2" onClick={() => setDiagForm({ ...diagForm, lignes: [...diagForm.lignes, { type: "PIECE", libelle: "", produitId: 0, quantite: 1, prixUnitaire: 0 }] })}>+ Ligne</Button>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowDiag(false)}>Annuler</Button>
+              <Button
+                disabled={creerRapport.isPending || diagForm.constat.trim().length < 3 || diagForm.lignes.some((l) => !l.libelle.trim())}
+                onClick={() => creerRapport.mutate({ orId: id, constat: diagForm.constat, cause: diagForm.cause || undefined, lignes: diagForm.lignes.map((l) => ({ type: l.type as any, produitId: l.produitId || undefined, libelle: l.libelle, quantite: l.quantite, prixUnitaire: l.prixUnitaire })) })}
+              >
+                Soumettre pour validation
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal : nouvelle demande de pièces */}
+      {showDemande && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowDemande(false)}>
+          <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-4 text-lg font-bold text-foreground">Demande de pièces au magasin</h3>
+            <div className="space-y-2">
+              {demandeForm.map((l, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2">
+                  <select value={l.produitId} onChange={(e) => { const lignes = [...demandeForm]; lignes[i] = { ...l, produitId: Number(e.target.value) }; setDemandeForm(lignes); }} className="col-span-7 h-9 rounded-lg border border-border bg-background px-2 text-xs">
+                    <option value={0}>Article *</option>
+                    {produitsList.map((p: any) => <option key={p.id} value={p.id} className="bg-background">{p.titre}</option>)}
+                  </select>
+                  <input type="number" min={1} value={l.quantite} onChange={(e) => { const lignes = [...demandeForm]; lignes[i] = { ...l, quantite: Number(e.target.value) }; setDemandeForm(lignes); }} className="col-span-2 h-9 rounded-lg border border-border bg-accent/30 px-2 text-xs text-foreground outline-none" />
+                  <input value={l.note} onChange={(e) => { const lignes = [...demandeForm]; lignes[i] = { ...l, note: e.target.value }; setDemandeForm(lignes); }} placeholder="Note" className="col-span-3 h-9 rounded-lg border border-border bg-accent/30 px-2 text-xs text-foreground outline-none" />
+                </div>
+              ))}
+              <Button size="sm" variant="outline" onClick={() => setDemandeForm([...demandeForm, { produitId: 0, quantite: 1, note: "" }])}>+ Ligne</Button>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowDemande(false)}>Annuler</Button>
+              <Button
+                disabled={creerDemande.isPending || demandeForm.some((l) => !l.produitId)}
+                onClick={() => creerDemande.mutate({ orId: id, lignes: demandeForm.map((l) => ({ produitId: l.produitId, quantite: l.quantite, note: l.note || undefined })) })}
+              >
+                Envoyer au magasin
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal : commande fournisseur */}
+      {showCmd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowCmd(false)}>
+          <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-4 text-lg font-bold text-foreground">Commande fournisseur (liée à l'OR)</h3>
+            <div className="space-y-3">
+              <div>
+                <Label className="text-xs text-muted-foreground">Fournisseur *</Label>
+                <select value={cmdForm.fournisseurId} onChange={(e) => setCmdForm({ ...cmdForm, fournisseurId: Number(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                  <option value={0}>Sélectionner…</option>
+                  {fournisseursList.map((f: any) => <option key={f.id} value={f.id} className="bg-background">{f.nom}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                {cmdForm.lignes.map((l, i) => (
+                  <div key={i} className="grid grid-cols-12 gap-2">
+                    <select value={l.produitId} onChange={(e) => { const lignes = [...cmdForm.lignes]; lignes[i] = { ...l, produitId: Number(e.target.value) }; setCmdForm({ ...cmdForm, lignes }); }} className="col-span-6 h-9 rounded-lg border border-border bg-background px-2 text-xs">
+                      <option value={0}>Article *</option>
+                      {produitsList.map((p: any) => <option key={p.id} value={p.id} className="bg-background">{p.titre}</option>)}
+                    </select>
+                    <input type="number" min={1} value={l.quantite} onChange={(e) => { const lignes = [...cmdForm.lignes]; lignes[i] = { ...l, quantite: Number(e.target.value) }; setCmdForm({ ...cmdForm, lignes }); }} className="col-span-2 h-9 rounded-lg border border-border bg-accent/30 px-2 text-xs text-foreground outline-none" />
+                    <input type="number" min={0} value={l.prixUnitaire} onChange={(e) => { const lignes = [...cmdForm.lignes]; lignes[i] = { ...l, prixUnitaire: Number(e.target.value) }; setCmdForm({ ...cmdForm, lignes }); }} placeholder="PU" className="col-span-4 h-9 rounded-lg border border-border bg-accent/30 px-2 text-xs text-foreground outline-none" />
+                  </div>
+                ))}
+                <Button size="sm" variant="outline" onClick={() => setCmdForm({ ...cmdForm, lignes: [...cmdForm.lignes, { produitId: 0, quantite: 1, prixUnitaire: 0 }] })}>+ Ligne</Button>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Livraison attendue</Label>
+                <Input type="date" className="mt-1" value={cmdForm.livraisonAttendue} onChange={(e) => setCmdForm({ ...cmdForm, livraisonAttendue: e.target.value })} />
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowCmd(false)}>Annuler</Button>
+              <Button
+                disabled={creerCmd.isPending || !cmdForm.fournisseurId || cmdForm.lignes.some((l) => !l.produitId)}
+                onClick={() => creerCmd.mutate({ orId: id, fournisseurId: cmdForm.fournisseurId, livraisonAttendue: cmdForm.livraisonAttendue || undefined, lignes: cmdForm.lignes.map((l) => ({ produitId: l.produitId, quantite: l.quantite, prixUnitaire: l.prixUnitaire })) })}
+              >
+                Passer la commande
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal : retour fournisseur */}
+      {showRetour && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowRetour(false)}>
+          <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-4 text-lg font-bold text-foreground">Retour fournisseur (pièce défaillante / non conforme)</h3>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Fournisseur</Label>
+                  <select value={retourForm.fournisseurId} onChange={(e) => setRetourForm({ ...retourForm, fournisseurId: Number(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                    <option value={0}>—</option>
+                    {fournisseursList.map((f: any) => <option key={f.id} value={f.id} className="bg-background">{f.nom}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Motif</Label>
+                  <select value={retourForm.motif} onChange={(e) => setRetourForm({ ...retourForm, motif: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                    <option value="DEFAILLANTE">Pièce défaillante</option>
+                    <option value="NON_CONFORME">Non conforme</option>
+                    <option value="ERREUR_COMMANDE">Erreur de commande</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {retourForm.lignes.map((l, i) => (
+                  <div key={i} className="grid grid-cols-12 gap-2">
+                    <select value={l.produitId} onChange={(e) => { const lignes = [...retourForm.lignes]; lignes[i] = { ...l, produitId: Number(e.target.value) }; setRetourForm({ ...retourForm, lignes }); }} className="col-span-7 h-9 rounded-lg border border-border bg-background px-2 text-xs">
+                      <option value={0}>Article (optionnel)</option>
+                      {produitsList.map((p: any) => <option key={p.id} value={p.id} className="bg-background">{p.titre}</option>)}
+                    </select>
+                    <input type="number" min={1} value={l.quantite} onChange={(e) => { const lignes = [...retourForm.lignes]; lignes[i] = { ...l, quantite: Number(e.target.value) }; setRetourForm({ ...retourForm, lignes }); }} className="col-span-2 h-9 rounded-lg border border-border bg-accent/30 px-2 text-xs text-foreground outline-none" />
+                    <input value={l.note} onChange={(e) => { const lignes = [...retourForm.lignes]; lignes[i] = { ...l, note: e.target.value }; setRetourForm({ ...retourForm, lignes }); }} placeholder="Note" className="col-span-3 h-9 rounded-lg border border-border bg-accent/30 px-2 text-xs text-foreground outline-none" />
+                  </div>
+                ))}
+                <Button size="sm" variant="outline" onClick={() => setRetourForm({ ...retourForm, lignes: [...retourForm.lignes, { produitId: 0, quantite: 1, note: "" }] })}>+ Ligne</Button>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">Commentaire</Label>
+                <Input className="mt-1" value={retourForm.commentaire} onChange={(e) => setRetourForm({ ...retourForm, commentaire: e.target.value })} />
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowRetour(false)}>Annuler</Button>
+              <Button
+                disabled={creerRetour.isPending || retourForm.lignes.some((l) => !l.produitId && !l.note)}
+                onClick={() => creerRetour.mutate({ orId: id, fournisseurId: retourForm.fournisseurId || undefined, motif: retourForm.motif as any, commentaire: retourForm.commentaire || undefined, lignes: retourForm.lignes.map((l) => ({ produitId: l.produitId || undefined, quantite: l.quantite, note: l.note || undefined })) })}
+              >
+                Enregistrer le retour
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal : renvoi diagnostic */}
+      {confirmRenvoi && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setConfirmRenvoi(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-foreground">Renvoyer le diagnostic au technicien</h3>
+            <input value={renvoiMotif} onChange={(e) => setRenvoiMotif(e.target.value)} placeholder="Motif du renvoi *" className="mt-3 w-full rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50" />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setConfirmRenvoi(null)}>Annuler</Button>
+              <Button disabled={renvoiMotif.trim().length < 3} onClick={() => renvoyerDiag.mutate({ rapportId: Number(confirmRenvoi), commentaire: renvoiMotif.trim() })}>Renvoyer</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal : refus devis */}
+      {confirmRefus && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setConfirmRefus(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-foreground">Refuser le devis (client)</h3>
+            <input value={refusMotif} onChange={(e) => setRefusMotif(e.target.value)} placeholder="Motif du refus *" className="mt-3 w-full rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50" />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setConfirmRefus(false)}>Annuler</Button>
+              <Button className="bg-destructive text-destructive-foreground" disabled={refusMotif.trim().length < 3} onClick={() => validerDevis.mutate({ orId: id, accepte: false, motif: refusMotif.trim() })}>Refuser</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
