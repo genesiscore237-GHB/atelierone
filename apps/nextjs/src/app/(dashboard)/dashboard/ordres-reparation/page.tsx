@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
@@ -611,10 +611,13 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
 
       <CycleAtelierSections or={or} id={id} />
 
-      <CycleAtelierSections or={or} id={id} />
+<CycleAtelierSections or={or} id={id} />
 
-      {/* E5 — Accusé de réception client + E4 — marge */}
+      {/* E5/E4 — Accusé de réception client + marge */}
       <AccuseReceptionBlock or={or} id={id} />
+
+      {/* Photos du véhicule */}
+      <PhotosBlock photos={or.photos ?? []} orId={Number(id)} />
 
       {/* Historique du cycle de vie */}
       <div className="rounded-xl border border-border bg-card p-4">
@@ -646,6 +649,74 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── E5/E4 — Accusé de réception client + marge par OR ───
+function PhotosBlock({ photos, orId }: { photos: any[]; orId: number }) {
+  const utils = api.useUtils();
+  const [uploading, setUploading] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const ajouter = api.or.ajouterPhoto.useMutation({
+    onSuccess: () => {
+      toast.success("Photo ajoutée");
+      utils.or.getById.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const handleUpload = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setUploading(true);
+    for (const file of Array.from(files).slice(0, 5)) {
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("folder", `or-${orId}`);
+        const res = await fetch("/api/uploads", { method: "POST", body: formData });
+        if (!res.ok) { const e = await res.json(); throw new Error(e.error); }
+        const data = await res.json();
+        const type = file.type.startsWith("video") ? "VIDEO" : "PHOTO";
+        await new Promise<void>((resolve, reject) => {
+          ajouter.mutate({ id: orId, url: data.url, type: type as any }, {
+            onSettled: () => resolve(),
+          });
+        });
+      } catch (e: any) {
+        toast.error(e.message ?? "Erreur upload");
+      }
+    }
+    setUploading(false);
+    toast.success(`${files.length} fichier(s) téléversé(s)`);
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Photos & vidéos</h3>
+        <input ref={fileInput} type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4" className="hidden" onChange={(e) => handleUpload(e.target.files)} />
+        <Button size="sm" variant="outline" onClick={() => fileInput.current?.click()} disabled={uploading} className="gap-1.5 text-xs">
+          {uploading ? <Loader2 className="size-3 animate-spin" /> : <Plus size={13} />} Ajouter
+        </Button>
+      </div>
+      {(photos ?? []).length === 0 ? (
+        <p className="text-sm text-muted-foreground">Aucune photo. Ajoutez des photos de l&apos;état du véhicule à la réception.</p>
+      ) : (
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+          {(photos ?? []).map((p: any) => (
+            <a key={p.id} href={p.url} target="_blank" rel="noopener noreferrer" className="group relative overflow-hidden rounded-lg border border-border">
+              {p.type === "PHOTO" ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={p.url} alt="" className="aspect-square w-full object-cover transition-transform group-hover:scale-105" />
+              ) : (
+                <div className="flex aspect-square items-center justify-center bg-muted text-xs">🎬</div>
+              )}
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
