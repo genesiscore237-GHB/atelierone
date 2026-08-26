@@ -28,9 +28,14 @@ const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PAS
     body: new URLSearchParams({ csrfToken: csrf.csrfToken, email: "admin@gpj.cm", password: "admin123", callbackUrl: BASE + "/dashboard" }),
   });
 
-  // ── 1. Réception complète : véhicule + client + priorité + promesse ──
-  const rv = await trpcPost("vehicules.create", { immatriculation: "LT-PARC-01", marque: "Toyota", modele: "Corolla", typeVehicule: "voiture" });
-  const vehId = rv[0]?.result?.data?.json?.id;
+  // ── 1. Réception complète : véhicule + client + priorité + promesse (idempotent) ──
+  const exV = await trpcGet("vehicules.list", { search: "LT-PARC-01", limit: 10 });
+  const ex = (exV[0]?.result?.data?.json?.vehicules ?? []).find((x) => x.immatriculation === "LT-PARC-01");
+  let vehId = ex?.id;
+  if (!vehId) {
+    const rv = await trpcPost("vehicules.create", { immatriculation: "LT-PARC-01", marque: "Toyota", modele: "Corolla", typeVehicule: "voiture" });
+    vehId = rv[0]?.result?.data?.json?.id;
+  }
   const rc = await trpcPost("clients.create", { typeClient: "PART", civilite: "M", nom: "Parc", prenom: "Test", telephone: "699 00 00 01" });
   const clientId = rc[0]?.result?.data?.json?.id;
 

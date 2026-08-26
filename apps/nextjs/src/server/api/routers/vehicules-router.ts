@@ -5,8 +5,22 @@ import {
   vehicules,
   clients,
   ordresReparation,
+  lignesOrdreReparation,
   contratsMaintenance,
   contratsMaintenanceVehicules,
+  employes,
+  orRapportsDiagnostic,
+  orDemandesPieces,
+  orDemandesPiecesLignes,
+  retoursFournisseur,
+  retoursFournisseurLignes,
+  fournisseurs,
+  ventes,
+  ventesLignes,
+  orPhotos,
+  orHistorique,
+  atelierNotifications,
+  produits,
 } from "@atelierone/db";
 import { eq, and, desc, sql, or, ilike } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -81,7 +95,7 @@ export const vehiculesRouter = createTRPCRouter({
       return { vehicules: rows, total: count?.n ?? 0 };
     }),
 
-  // ─── Fiche véhicule (historique OR + contrat actif) ───
+// ─── Fiche véhicule 360° (OR courant, diagnostic, devis, travaux, pièces, facture, photos, alertes) ───
   get: requirePermissionProcedure("vehicules.consulter")
     .input(z.object({ id: z.number().int() }))
     .query(async ({ ctx, input }) => {
@@ -98,6 +112,8 @@ export const vehiculesRouter = createTRPCRouter({
           numeroChassis: vehicules.numeroChassis,
           kilometrage: vehicules.kilometrage,
           carburant: vehicules.carburant,
+          chauffeurNom: vehicules.chauffeurNom,
+          chauffeurTelephone: vehicules.chauffeurTelephone,
           typeVehicule: vehicules.typeVehicule,
           statutImmobilisation: vehicules.statutImmobilisation,
           siteId: vehicules.siteId,
@@ -111,23 +127,259 @@ export const vehiculesRouter = createTRPCRouter({
       if (!vehicule) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
 
       const [client] = vehicule.clientId
-        ? await db.select().from(clients).where(eq(clients.id, vehicule.clientId)).limit(1)
+        ? await db
+            .select({
+              id: clients.id,
+              nom: clients.nom,
+              prenom: clients.prenom,
+              raisonSociale: clients.raisonSociale,
+              codeClient: clients.codeClient,
+              typeClient: clients.typeClient,
+              statut: clients.statut,
+              telephone: clients.telephone,
+              telephoneSecondaire: clients.telephoneSecondaire,
+            })
+            .from(clients)
+            .where(eq(clients.id, vehicule.clientId))
+            .limit(1)
         : [null];
 
+      // ── OR courant : dernier OR non clos, sinon dernier OR (terminé) ──
+      const [orCourant] = await db
+        .select({
+          id: ordresReparation.id,
+          numero: ordresReparation.numero,
+          statut: ordresReparation.statut,
+          priorite: ordresReparation.priorite,
+          motEntree: ordresReparation.motEntree,
+          plainte: ordresReparation.plainte,
+          dateOuverture: ordresReparation.dateOuverture,
+          dateCloture: ordresReparation.dateCloture,
+          datePromesse: ordresReparation.datePromesse,
+          responsableTechnicienId: ordresReparation.responsableTechnicienId,
+          raisonBlocage: ordresReparation.raisonBlocage,
+          clientAttendSurPlace: ordresReparation.clientAttendSurPlace,
+          devisAccepte: ordresReparation.devisAccepte,
+          venteId: ordresReparation.venteId,
+          totalTTC: ordresReparation.totalTTC,
+          createdAt: ordresReparation.createdAt,
+        })
+        .from(ordresReparation)
+        .where(eq(ordresReparation.vehiculeId, input.id))
+        .orderBy(sql`CASE WHEN ${ordresReparation.statut} IN ('LIVRE','ANNULE','CLOTURE') THEN 1 ELSE 0 END`, desc(ordresReparation.dateOuverture))
+        .limit(1);
+
+      let responsable: { id: number; nom: string; prenom: string | null } | null = null;
+      let rapportDiagnostic: Record<string, unknown> | null = null;
+      let lignesTravaux: Record<string, unknown>[] = [];
+      let demandesPieces: Record<string, unknown>[] = [];
+      let retoursList: Record<string, unknown>[] = [];
+      let facture: Record<string, unknown> | null = null;
+      let factureLignes: Record<string, unknown>[] = [];
+      let photos: Record<string, unknown>[] = [];
+      let alertes: Record<string, unknown>[] = [];
+      let timeline: Record<string, unknown>[] = [];
+
+      if (orCourant) {
+        if (orCourant.responsableTechnicienId) {
+          const [emp] = await db
+            .select({ id: employes.id, nom: employes.nom, prenom: employes.prenom })
+            .from(employes)
+            .where(eq(employes.id, orCourant.responsableTechnicienId))
+            .limit(1);
+          responsable = emp ?? null;
+        }
+
+        const [rapport] = await db
+          .select({
+            id: orRapportsDiagnostic.id,
+            constat: orRapportsDiagnostic.constat,
+            cause: orRapportsDiagnostic.cause,
+            statut: orRapportsDiagnostic.statut,
+            dateSoumission: orRapportsDiagnostic.dateSoumission,
+            valideLe: orRapportsDiagnostic.valideLe,
+            commentaireValidateur: orRapportsDiagnostic.commentaireValidateur,
+            technicienId: orRapportsDiagnostic.technicienId,
+            validePar: orRapportsDiagnostic.validePar,
+          })
+          .from(orRapportsDiagnostic)
+          .where(eq(orRapportsDiagnostic.orId, orCourant.id))
+          .orderBy(sql`${orRapportsDiagnostic.id} DESC`)
+          .limit(1);
+        if (rapport) {
+          rapportDiagnostic = { ...rapport, technicien: null as unknown, validateur: null as unknown };
+          if (rapport.technicienId) {
+            const [t] = await db.select({ nom: employes.nom, prenom: employes.prenom }).from(employes).where(eq(employes.id, rapport.technicienId)).limit(1);
+            (rapportDiagnostic as any).technicien = t ?? null;
+          }
+          if (rapport.validePar) {
+            const [vp] = await db.select({ nom: employes.nom, prenom: employes.prenom }).from(employes).where(eq(employes.id, rapport.validePar)).limit(1);
+            (rapportDiagnostic as any).validateur = vp ?? null;
+          }
+        }
+
+        lignesTravaux = await db
+          .select({
+            id: lignesOrdreReparation.id,
+            libelle: lignesOrdreReparation.libelle,
+            quantite: lignesOrdreReparation.quantite,
+            prixUnitaire: lignesOrdreReparation.prixUnitaire,
+            statut: lignesOrdreReparation.statut,
+            produitId: lignesOrdreReparation.produitId,
+          })
+          .from(lignesOrdreReparation)
+          .where(eq(lignesOrdreReparation.ordreId, orCourant.id))
+          .orderBy(desc(lignesOrdreReparation.id))
+          .limit(100);
+
+        // Demandes de pièces + retours fournisseur pour l'OR courant
+        const demandes = await db
+          .select({
+            id: orDemandesPieces.id,
+            statut: orDemandesPieces.statut,
+            motif: orDemandesPieces.motif,
+            traiteLe: orDemandesPieces.traiteLe,
+            createdAt: orDemandesPieces.createdAt,
+          })
+          .from(orDemandesPieces)
+          .where(eq(orDemandesPieces.orId, orCourant.id))
+          .orderBy(desc(orDemandesPieces.id))
+          .limit(20);
+        demandesPieces = await Promise.all(
+          demandes.map(async (d) => {
+            const lignes = await db
+              .select({
+                id: orDemandesPiecesLignes.id,
+                quantite: orDemandesPiecesLignes.quantite,
+                quantiteServie: orDemandesPiecesLignes.quantiteServie,
+                prixEstime: orDemandesPiecesLignes.prixEstime,
+                note: orDemandesPiecesLignes.note,
+                produitId: orDemandesPiecesLignes.produitId,
+                produitLibelle: produits.titre,
+                produitRef: produits.codeArticle,
+              })
+              .from(orDemandesPiecesLignes)
+              .leftJoin(produits, eq(orDemandesPiecesLignes.produitId, produits.id))
+              .where(eq(orDemandesPiecesLignes.demandeId, d.id));
+            return { ...d, lignes };
+          })
+        );
+
+        // Retours fournisseur liés à l'OR
+        retoursList = await db
+          .select({
+            id: retoursFournisseur.id,
+            statut: retoursFournisseur.statut,
+            motif: retoursFournisseur.motif,
+            createdAt: retoursFournisseur.createdAt,
+            fournisseurId: retoursFournisseur.fournisseurId,
+            fournisseurNom: fournisseurs.nom,
+          })
+          .from(retoursFournisseur)
+          .leftJoin(fournisseurs, eq(retoursFournisseur.fournisseurId, fournisseurs.id))
+          .where(eq(retoursFournisseur.orId, orCourant.id))
+          .orderBy(desc(retoursFournisseur.id))
+          .limit(10);
+
+        if (orCourant.venteId) {
+          const [v] = await db
+            .select({
+              id: ventes.id,
+              reference: ventes.reference,
+              montantTotal: ventes.montantTotal,
+              statut: ventes.statut,
+              createdAt: ventes.createdAt,
+            })
+            .from(ventes)
+            .where(eq(ventes.id, orCourant.venteId))
+            .limit(1);
+          if (v) {
+            facture = v;
+            factureLignes = await db
+              .select({
+                id: ventesLignes.id,
+                libelle: ventesLignes.libelle,
+                quantite: ventesLignes.quantite,
+                prixUnitaire: ventesLignes.prixUnitaire,
+                totalLigne: ventesLignes.totalLigne,
+              })
+              .from(ventesLignes)
+              .where(eq(ventesLignes.venteId, v.id))
+              .limit(200);
+          }
+        }
+
+        photos = await db
+          .select({ id: orPhotos.id, url: orPhotos.url, type: orPhotos.type, createdAt: orPhotos.createdAt })
+          .from(orPhotos)
+          .where(eq(orPhotos.orId, orCourant.id))
+          .orderBy(desc(orPhotos.id))
+          .limit(30);
+
+        alertes = await db
+          .select({ id: atelierNotifications.id, type: atelierNotifications.type, titre: atelierNotifications.titre, message: atelierNotifications.message, lu: atelierNotifications.lu, createdAt: atelierNotifications.createdAt })
+          .from(atelierNotifications)
+          .where(and(eq(atelierNotifications.orId, orCourant.id), eq(atelierNotifications.lu, false)))
+          .orderBy(desc(atelierNotifications.createdAt))
+          .limit(20);
+
+        timeline = await db
+          .select({
+            id: orHistorique.id,
+            type: orHistorique.type,
+            ancienneValeur: orHistorique.ancienneValeur,
+            nouvelleValeur: orHistorique.nouvelleValeur,
+            commentaire: orHistorique.commentaire,
+            changeLe: orHistorique.changeLe,
+          })
+          .from(orHistorique)
+          .where(eq(orHistorique.orId, orCourant.id))
+          .orderBy(desc(orHistorique.changeLe))
+          .limit(100);
+      }
+
+      // ── Historique complet des OR ──
       const historiqueOR = await db
         .select({
           id: ordresReparation.id,
           numero: ordresReparation.numero,
           statut: ordresReparation.statut,
+          priorite: ordresReparation.priorite,
           plainte: ordresReparation.plainte,
+          motEntree: ordresReparation.motEntree,
           dateOuverture: ordresReparation.dateOuverture,
           dateCloture: ordresReparation.dateCloture,
+          datePromesse: ordresReparation.datePromesse,
+          raisonBlocage: ordresReparation.raisonBlocage,
           totalTTC: ordresReparation.totalTTC,
+          venteId: ordresReparation.venteId,
+          responsableTechnicienId: ordresReparation.responsableTechnicienId,
         })
         .from(ordresReparation)
         .where(eq(ordresReparation.vehiculeId, input.id))
         .orderBy(desc(ordresReparation.dateOuverture))
         .limit(50);
+
+      // Responsables de l'historique (1 requête groupée)
+      const empIds = [...new Set(historiqueOR.map((h) => h.responsableTechnicienId).filter(Boolean))] as number[];
+      const emps = empIds.length
+        ? await db.select({ id: employes.id, nom: employes.nom, prenom: employes.prenom }).from(employes).where(sql`${employes.id} IN (${sql.join(empIds.map((i) => sql`${i}`), sql`, `)})`)
+        : [];
+      const empMap = new Map(emps.map((e) => [e.id, e]));
+      const historiqueEnrichi = historiqueOR.map((h) => ({
+        ...h,
+        responsable: h.responsableTechnicienId ? (empMap.get(h.responsableTechnicienId) ?? null) : null,
+      }));
+
+      // ── Autres véhicules du même client ──
+      const autresVehicules = vehicule.clientId
+        ? await db
+            .select({ id: vehicules.id, immatriculation: vehicules.immatriculation, marque: vehicules.marque, modele: vehicules.modele, statutImmobilisation: vehicules.statutImmobilisation })
+            .from(vehicules)
+            .where(and(eq(vehicules.clientId, vehicule.clientId), eq(vehicules.isActive, true), sql`${vehicules.id} != ${input.id}`))
+            .orderBy(desc(vehicules.createdAt))
+            .limit(10)
+        : [];
 
       const liaisonContrat = await db
         .select({
@@ -146,7 +398,7 @@ export const vehiculesRouter = createTRPCRouter({
         .where(and(eq(contratsMaintenanceVehicules.vehiculeId, input.id), eq(contratsMaintenanceVehicules.actif, true)))
         .limit(5);
 
-      return { vehicule, client, historiqueOR, contrats: liaisonContrat };
+      return { vehicule, client, orCourant, orTermine: orCourant ? ["LIVRE", "ANNULE", "CLOTURE"].includes(orCourant.statut) : false, responsable, rapportDiagnostic, lignesTravaux, demandesPieces, retours: retoursList, facture, factureLignes, photos, alertes, timeline, historiqueOR: historiqueEnrichi, autresVehicules, contrats: liaisonContrat };
     }),
 
   // ─── Création ───
@@ -162,6 +414,8 @@ export const vehiculesRouter = createTRPCRouter({
         numeroChassis: z.string().optional(),
         kilometrage: z.number().int().min(0).optional(),
         carburant: z.enum(CARBURANTS).optional(),
+        chauffeurNom: z.string().max(100).optional(),
+        chauffeurTelephone: z.string().max(30).optional(),
         typeVehicule: z.enum(TYPES_VEHICULE).optional(),
         notes: z.string().optional(),
       })
@@ -196,6 +450,8 @@ export const vehiculesRouter = createTRPCRouter({
           numeroChassis: input.numeroChassis ?? null,
           kilometrage: input.kilometrage ?? 0,
           carburant: input.carburant ?? null,
+          chauffeurNom: input.chauffeurNom ?? null,
+          chauffeurTelephone: input.chauffeurTelephone ?? null,
           typeVehicule: input.typeVehicule ?? "voiture",
           statutImmobilisation: "en_reception",
           notes: input.notes ?? null,
@@ -218,6 +474,8 @@ export const vehiculesRouter = createTRPCRouter({
         numeroChassis: z.string().optional(),
         kilometrage: z.number().int().min(0).optional(),
         carburant: z.enum(CARBURANTS).optional(),
+        chauffeurNom: z.string().max(100).optional().nullable(),
+        chauffeurTelephone: z.string().max(30).optional().nullable(),
         typeVehicule: z.enum(TYPES_VEHICULE).optional(),
         notes: z.string().optional().nullable(),
       })

@@ -41,11 +41,20 @@ const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PAS
   }
   check("Client entreprise disponible", !!entrId, "id=" + entrId);
 
-  // ── 1. Création véhicule + doublon refusé ──
-  const r1 = await trpcPost("vehicules.create", { immatriculation: "LT-2026-AT", clientId: entrId, marque: "Toyota", modele: "Hilux", annee: 2020, kilometrage: 45000, carburant: "diesel", typeVehicule: "utilitaire", numeroChassis: "JTMDF3FV5P000001" });
-  const v = r1[0]?.result?.data?.json;
-  console.log("véhicule:", JSON.stringify(v).slice(0, 150));
-  check("Véhicule créé (en_reception)", !r1[0]?.error && v?.statutImmobilisation === "en_reception" && v?.immatriculation === "LT-2026-AT", r1[0]?.error?.json?.message);
+  // ── 1. Création véhicule + doublon refusé (idempotent) ──
+  const existing = await trpcGet("vehicules.list", { search: "LT-2026-AT", limit: 10 });
+  let v = (existing[0]?.result?.data?.json?.vehicules ?? []).find((x) => x.immatriculation === "LT-2026-AT");
+  if (!v) {
+    const r1 = await trpcPost("vehicules.create", { immatriculation: "LT-2026-AT", clientId: entrId, marque: "Toyota", modele: "Hilux", annee: 2020, kilometrage: 45000, carburant: "diesel", typeVehicule: "utilitaire", numeroChassis: "JTMDF3FV5P000001" });
+    v = r1[0]?.result?.data?.json;
+    check("Véhicule créé (en_reception)", !r1[0]?.error && v?.statutImmobilisation === "en_reception" && v?.immatriculation === "LT-2026-AT", r1[0]?.error?.json?.message);
+  } else {
+    check("Véhicule déjà existant (réutilisé)", v?.immatriculation === "LT-2026-AT");
+    if (v?.statutImmobilisation !== "en_reception") {
+      await trpcPost("vehicules.changerStatut", { id: v.id, nouveauStatut: "sorti", motif: "Reset test" }).catch(() => {});
+      await trpcPost("vehicules.changerStatut", { id: v.id, nouveauStatut: "en_reception", motif: "Reset test" }).catch(() => {});
+    }
+  }
   const vId = v?.id;
 
   const r1b = await trpcPost("vehicules.create", { immatriculation: "LT-2026-AT", marque: "Nissan" });
