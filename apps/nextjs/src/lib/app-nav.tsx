@@ -23,6 +23,7 @@ import {
   Wrench,
   CalendarClock,
   Timer,
+  Activity,
   Package,
   ListOrdered,
   ShoppingCart,
@@ -326,6 +327,14 @@ export const DOMAINS: AppDomain[] = [
         href: "/dashboard/atelier/parametres",
         icon: Settings2,
         desc: "Seuils d'alerte, emplacements, raisons de blocage",
+        moduleId: "or",
+      },
+      {
+        id: "atelier-performance",
+        label: "Performance & Qualité",
+        href: "/dashboard/atelier/performance",
+        icon: Activity,
+        desc: "Santé du garage en temps réel — KPIs décisionnels, SAV, compétences, délais",
         moduleId: "or",
       },
       {
