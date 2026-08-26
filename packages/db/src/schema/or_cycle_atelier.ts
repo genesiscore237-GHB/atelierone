@@ -9,6 +9,32 @@ import { bonsReception } from "./bons_reception";
 import { vehicules } from "./vehicules";
 import { agences } from "./agences";
 
+/** N2 — Temps standards par famille de service (compétitivité délais — specs V2). */
+export const servicesStandards = pgTable("services_standards", {
+  id: serial("id").primaryKey(),
+  agenceId: integer("agence_id").notNull().references(() => agences.id),
+  famille: varchar("famille", { length: 40 }).notNull(),
+  libelle: varchar("libelle", { length: 120 }).notNull(),
+  tempsStandardHeures: numeric("temps_standard_heures", { precision: 6, scale: 2 }).notNull(),
+  delaiCibleJours: integer("delai_cible_jours").default(1),
+  active: boolean("active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+/** N4 — Cibles des indicateurs de santé du garage (paramétrables par la Direction). */
+export const kpiCibles = pgTable("kpi_cibles", {
+  id: serial("id").primaryKey(),
+  agenceId: integer("agence_id").notNull().references(() => agences.id),
+  code: varchar("code", { length: 50 }).notNull(), // PONCTUALITE | FTQ | TAUX_RETOUR_SAV | RAPIDITE_DIAG_JOURS | FIABILITE_APPRO
+  cible: numeric("cible", { precision: 10, scale: 2 }).notNull(),
+  seuilOrange: numeric("seuil_orange", { precision: 10, scale: 2 }),
+  seuilRouge: numeric("seuil_rouge", { precision: 10, scale: 2 }),
+  unite: varchar("unite", { length: 12 }).default("%"),
+  sens: varchar("sens", { length: 8 }).default("HAUT"), // HAUT = plus haut est mieux | BAS = plus bas est mieux
+  fenetreJours: integer("fenetre_jours").default(30),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 /**
  * CYCLE D'ATELIER — rapport de diagnostic, demandes de pièces, retours fournisseur.
  * (diagnostic structuré → validation chef → devis client → magasin → fournisseur → retour)

@@ -12,6 +12,7 @@ import { customersRouter } from "~/server/api/routers/customers";
 import { clientsRouter } from "~/server/api/routers/clients-router";
 import { contratsRouter } from "~/server/api/routers/contrats-router";
 import { vehiculesRouter } from "~/server/api/routers/vehicules-router";
+import { atelierKpiRouter } from "~/server/api/routers/atelier-kpi-router";
 import { returnsRouter } from "~/server/api/routers/returns";
 import { loyaltyRouter } from "~/server/api/routers/loyalty";
 import { dashboardRouter } from "~/server/api/routers/dashboard";
@@ -57,6 +58,7 @@ export const appRouter = createTRPCRouter({
   clients: clientsRouter,
   contrats: contratsRouter,
   vehicules: vehiculesRouter,
+  atelierKpi: atelierKpiRouter,
   returns: returnsRouter,
   loyalty: loyaltyRouter,
   dashboard: dashboardRouter,

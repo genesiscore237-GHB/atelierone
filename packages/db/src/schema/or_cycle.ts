@@ -36,6 +36,7 @@ export const atelierParametres = pgTable("atelier_parametres", {
   seuilPromesseJours: integer("seuil_promesse_jours").default(1), // alerte PROCHE
   seuilImmobilisationJours: integer("seuil_immobilisation_jours").default(5), // alerte LONG
   seuilBloqueJours: integer("seuil_bloque_jours").default(3), // escalade direction
+  seuilSavJours: integer("seuil_sav_jours").default(30), // fenêtre détection retour SAV (specs V2)
   emplacements: text("emplacements").default('["Réception","Parc A","Parc B","Pont 1","Pont 2","Carrosserie","Diagnostic"]'),
   raisonsBlocage: text("raisons_blocage").default('["Pièces manquantes","Validation client","Diagnostic incomplet","Attente expertise","Manque technicien","Outillage","Autre"]'),
   texteAccuseReception: text("texte_accuse_reception").default("Nous accusons réception de votre véhicule {IMMATRICULATION} sous l'ordre {OR}. Restitution promise : {PROMESSE}."),

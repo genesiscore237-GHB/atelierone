@@ -19,7 +19,7 @@ export { clients } from "./clients";
 export { clientContacts, clientAdresses, clientInteractions, clientStatutHistorique } from "./client_relations";
 export { contratsMaintenance, contratsMaintenanceVehicules } from "./contrats_maintenance";
 export { orHistorique, orPhotos, atelierParametres } from "./or_cycle";
-export { orRapportsDiagnostic, orDemandesPieces, orDemandesPiecesLignes, retoursFournisseur, retoursFournisseurLignes, atelierNotifications } from "./or_cycle_atelier";
+export { orRapportsDiagnostic, orDemandesPieces, orDemandesPiecesLignes, retoursFournisseur, retoursFournisseurLignes, atelierNotifications, servicesStandards, kpiCibles } from "./or_cycle_atelier";
 export { caisses, mouvementsCaisse } from "./caisses";
 export { caisseOperateurs } from "./caisse_operateurs";
 export { depenses } from "./depenses";

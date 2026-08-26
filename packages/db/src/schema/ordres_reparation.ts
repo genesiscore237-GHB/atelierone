@@ -40,6 +40,12 @@ export const ordresReparation = pgTable("ordres_reparation", {
   totalTTC: numeric("total_ttc", { precision: 12, scale: 2 }).default("0"),
   venteId: integer("vente_id"),
   contratId: integer("contrat_id"), // contrat de maintenance couvrant le véhicule (facturation groupée)
+  // Module Performance & Qualité (specs V2 — pilotage)
+  savOrigineOrId: integer("sav_origine_or_id"), // lien vers l'OR d'origine si retour SAV
+  motifRetourSAV: varchar("motif_retour_sav", { length: 40 }), // CONSIGNE_NON_RESPECTEE | MALFACON | DIAGNOSTIC_ERRONE | PIECE_DEFAILLANTE | AUTRE
+  familleService: varchar("famille_service", { length: 40 }), // MECANIQUE_LEGERE | FREINAGE | DIAGNOSTIC | CARROSSERIE | DISTRIBUTION | CLIMATISATION | ELECTRONIQUE | GROSSE_MECA | AUTRE
+  satisfactionNote: integer("satisfaction_note"), // 1-5 étoiles (saisie à la livraison)
+  satisfactionCommentaire: text("satisfaction_commentaire"),
   creePar: integer("cree_par").references(() => utilisateurs.id),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
