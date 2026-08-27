@@ -39,6 +39,10 @@ export const ordresReparation = pgTable("ordres_reparation", {
   totalMainOeuvre: numeric("total_main_oeuvre", { precision: 12, scale: 2 }).default("0"),
   totalTTC: numeric("total_ttc", { precision: 12, scale: 2 }).default("0"),
   venteId: integer("vente_id"),
+  // Suivi de facturation client (module Client 360° période) :
+  // NON_TRANSMISE → TRANSMISE (facture_transmise_le) → attente BC (attente_bon_commande) → attente paiement → avance → payée
+  factureTransmiseLe: timestamp("facture_transmise_le"), // date d'envoi de la facture au client
+  attenteBonCommande: boolean("attente_bon_commande").default(false), // facture transmise, attend le bon de commande (entreprises/flottes)
   contratId: integer("contrat_id"), // contrat de maintenance couvrant le véhicule (facturation groupée)
   // Module Performance & Qualité (specs V2 — pilotage)
   savOrigineOrId: integer("sav_origine_or_id"), // lien vers l'OR d'origine si retour SAV

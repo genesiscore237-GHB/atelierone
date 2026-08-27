@@ -11,8 +11,11 @@ import {
   contratsMaintenanceVehicules,
   vehicules,
   ventes,
+  ventesLignes,
+  ordresReparation,
+  paiements,
 } from "@atelierone/db";
-import { eq, and, or, ilike, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, or, ilike, desc, sql, inArray, gte, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import {
   validerFicheClient,
@@ -512,5 +515,244 @@ export const clientsRouter = createTRPCRouter({
         .from(clientStatutHistorique)
         .where(eq(clientStatutHistorique.clientId, input.clientId))
         .orderBy(desc(clientStatutHistorique.changeLe));
+    }),
+
+  // ─── Activité du client sur une période : véhicules + états de facture ───
+  // États de facture par véhicule :
+  //   EN_TRAVAUX (OR non terminé) | PRET (OR terminé non facturé ou facture en cours)
+  //   Facture : PAS_DE_FACTURE | NON_TRANSMISE | ATTENTE_BON_COMMANDE | ATTENTE_PAIEMENT | AVANCE | PAYEE
+  getActivite: requirePermissionProcedure("clients.consulter")
+    .input(z.object({ clientId: z.number().int(), dateDebut: z.string().optional(), dateFin: z.string().optional() }))
+    .query(async ({ ctx, input }) => {
+      const [client] = await db
+        .select({ id: clients.id, agenceId: clients.agenceId })
+        .from(clients)
+        .where(and(eq(clients.id, input.clientId), eq(clients.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Client introuvable." });
+
+      const debut = input.dateDebut ? new Date(input.dateDebut) : new Date(new Date().getFullYear(), 0, 1);
+      const fin = input.dateFin ? new Date(input.dateFin + "T23:59:59") : new Date();
+
+      // Véhicules du client
+      const vehs = await db
+        .select({
+          id: vehicules.id,
+          immatriculation: vehicules.immatriculation,
+          marque: vehicules.marque,
+          modele: vehicules.modele,
+          typeVehicule: vehicules.typeVehicule,
+          statutImmobilisation: vehicules.statutImmobilisation,
+          chauffeurNom: vehicules.chauffeurNom,
+          createdAt: vehicules.createdAt,
+        })
+        .from(vehicules)
+        .where(and(eq(vehicules.clientId, input.clientId), eq(vehicules.agenceId, ctx.user.agenceId), eq(vehicules.isActive, true)));
+
+      // OR du client sur la période
+      const ors = await db
+        .select({
+          id: ordresReparation.id,
+          numero: ordresReparation.numero,
+          vehiculeId: ordresReparation.vehiculeId,
+          statut: ordresReparation.statut,
+          priorite: ordresReparation.priorite,
+          plainte: ordresReparation.plainte,
+          dateOuverture: ordresReparation.dateOuverture,
+          dateCloture: ordresReparation.dateCloture,
+          datePromesse: ordresReparation.datePromesse,
+          raisonBlocage: ordresReparation.raisonBlocage,
+          totalTTC: ordresReparation.totalTTC,
+          venteId: ordresReparation.venteId,
+          factureTransmiseLe: ordresReparation.factureTransmiseLe,
+          attenteBonCommande: ordresReparation.attenteBonCommande,
+          createdAt: ordresReparation.createdAt,
+        })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.clientId, input.clientId), eq(ordresReparation.agenceId, ctx.user.agenceId), gte(ordresReparation.dateOuverture, debut), lte(ordresReparation.dateOuverture, fin)))
+        .orderBy(desc(ordresReparation.dateOuverture));
+
+      // Ventes (factures) des OR de la période + paiements
+      const venteIds = [...new Set(ors.map((o) => o.venteId).filter(Boolean))] as number[];
+      const ventesRows = venteIds.length
+        ? await db
+            .select({ id: ventes.id, reference: ventes.reference, montantTotal: ventes.montantTotal, montantPaye: ventes.montantPaye, statut: ventes.statut, createdAt: ventes.createdAt })
+            .from(ventes)
+            .where(inArray(ventes.id, venteIds))
+        : [];
+      const venteMap = new Map(ventesRows.map((v) => [v.id, v]));
+
+      const payes = venteIds.length
+        ? await db
+            .select({ id: paiements.id, venteId: paiements.venteId, montant: paiements.montant, createdAt: paiements.createdAt })
+            .from(paiements)
+            .where(and(inArray(paiements.venteId, venteIds), gte(paiements.createdAt, debut), lte(paiements.createdAt, fin)))
+        : [];
+      const payesParVente = new Map<number, number>();
+      for (const p of payes) payesParVente.set(p.venteId, (payesParVente.get(p.venteId) ?? 0) + Number(p.montant));
+
+      // Lignes des ventes pour la marge (CMP)
+      const lignes = venteIds.length
+        ? await db
+            .select({ venteId: ventesLignes.venteId, totalLigne: ventesLignes.totalLigne, coutUnitaire: ventesLignes.coutUnitaire, quantite: ventesLignes.quantite })
+            .from(ventesLignes)
+            .where(inArray(ventesLignes.venteId, venteIds))
+        : [];
+      const margeParVente = new Map<number, number>();
+      for (const l of lignes) {
+        const revenu = Number(l.totalLigne ?? 0);
+        const cout = l.coutUnitaire != null ? Number(l.coutUnitaire) * Number(l.quantite) : 0;
+        margeParVente.set(l.venteId, (margeParVente.get(l.venteId) ?? 0) + (revenu - cout));
+      }
+
+      const TERMINES = ["LIVRE", "ANNULE", "CLOTURE"] as const;
+      const orsParVehicule = new Map<number, typeof ors>();
+      for (const o of ors) {
+        const list = orsParVehicule.get(o.vehiculeId) ?? [];
+        list.push(o);
+        orsParVehicule.set(o.vehiculeId, list);
+      }
+
+      // Délai moyen de paiement (jours entre facture et paiements)
+      let totalJours = 0, nbPayes = 0;
+      for (const v of ventesRows) {
+        const ps = payes.filter((p) => p.venteId === v.id && Number(p.montant) > 0);
+        if (ps.length && v.createdAt) {
+          const jours = ps.reduce((acc, p) => acc + Math.max(0, Math.round((new Date(p.createdAt).getTime() - new Date(v.createdAt).getTime()) / 86400000)), 0) / ps.length;
+          totalJours += jours; nbPayes++;
+        }
+      }
+
+      // États par véhicule
+      const vehiculesDetail = vehs.map((veh) => {
+        const vehOrs = (orsParVehicule.get(veh.id) ?? []).slice();
+        const orCourant = vehOrs.find((o) => !TERMINES.includes(o.statut as any)) ?? vehOrs[0] ?? null;
+        const factures = vehOrs
+          .filter((o) => o.venteId && venteMap.has(o.venteId))
+          .map((o) => {
+            const v = venteMap.get(o.venteId!)!;
+            const paye = Number(v.montantPaye ?? 0);
+            const total = Number(v.montantTotal ?? 0);
+            let etat: string;
+            if (paye >= total && total > 0) etat = "PAYEE";
+            else if (paye > 0) etat = "AVANCE";
+            else if (o.attenteBonCommande) etat = "ATTENTE_BON_COMMANDE";
+            else if (o.factureTransmiseLe) etat = "ATTENTE_PAIEMENT";
+            else etat = "NON_TRANSMISE";
+            return {
+              orId: o.id,
+              orNumero: o.numero,
+              venteId: o.venteId,
+              reference: v.reference,
+              dateFacture: v.createdAt,
+              total: total,
+              paye: paye,
+              reste: Math.max(0, total - paye),
+              etat,
+              transmiseLe: o.factureTransmiseLe,
+              attenteBonCommande: o.attenteBonCommande ?? false,
+              marge: margeParVente.get(o.venteId!) ?? null,
+            };
+          });
+        const etatVehicule = orCourant && !TERMINES.includes(orCourant.statut as any)
+          ? "EN_TRAVAUX"
+          : orCourant?.statut === "PRET_A_LIVRER"
+            ? "PRET"
+            : orCourant
+              ? "LIVRE"
+              : "SORTI";
+        return {
+          ...veh,
+          etat: etatVehicule,
+          orCourant: orCourant
+            ? {
+                id: orCourant.id, numero: orCourant.numero, statut: orCourant.statut, priorite: orCourant.priorite,
+                plainte: orCourant.plainte, dateOuverture: orCourant.dateOuverture, datePromesse: orCourant.datePromesse,
+                raisonBlocage: orCourant.raisonBlocage, totalTTC: orCourant.totalTTC,
+              }
+            : null,
+          factures,
+        };
+      });
+
+      // Totaux de la période
+      const facturesAll = vehiculesDetail.flatMap((v) => v.factures);
+      const totalFacture = facturesAll.reduce((s, f) => s + f.total, 0);
+      const totalPaye = facturesAll.reduce((s, f) => s + f.paye, 0);
+      const totalMarge = facturesAll.reduce((s, f) => s + (f.marge ?? 0), 0);
+      const compteursFactures = {
+        NON_TRANSMISE: facturesAll.filter((f) => f.etat === "NON_TRANSMISE").length,
+        ATTENTE_BON_COMMANDE: facturesAll.filter((f) => f.etat === "ATTENTE_BON_COMMANDE").length,
+        ATTENTE_PAIEMENT: facturesAll.filter((f) => f.etat === "ATTENTE_PAIEMENT").length,
+        AVANCE: facturesAll.filter((f) => f.etat === "AVANCE").length,
+        PAYEE: facturesAll.filter((f) => f.etat === "PAYEE").length,
+      };
+
+      return {
+        vehicules: vehiculesDetail,
+        compteurs: {
+          totalVehicules: vehs.length,
+          enTravaux: vehiculesDetail.filter((v) => v.etat === "EN_TRAVAUX").length,
+          prets: vehiculesDetail.filter((v) => v.etat === "PRET").length,
+          sortis: vehiculesDetail.filter((v) => v.etat === "SORTI").length,
+        },
+        facturation: {
+          totalFacture, totalPaye, totalReste: totalFacture - totalPaye, totalMarge,
+          delaiMoyenPaiementJours: nbPayes ? Math.round((totalJours / nbPayes) * 10) / 10 : null,
+          compteurs: compteursFactures,
+        },
+        periode: { debut, fin },
+      };
+    }),
+
+  // ─── Suivi de facture : marquer transmise / attente BC / reprise ───
+  marquerFactureTransmise: requirePermissionProcedure("clients.modifier")
+    .input(z.object({ orId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id, venteId: ordresReparation.venteId, attenteBonCommande: ordresReparation.attenteBonCommande })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      if (!or.venteId) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet OR n'est pas encore facturé." });
+      await db
+        .update(ordresReparation)
+        .set({ factureTransmiseLe: new Date(), attenteBonCommande: false, updatedAt: new Date() } as any)
+        .where(eq(ordresReparation.id, input.orId));
+      return { success: true, transmiseLe: new Date() };
+    }),
+
+  marquerAttenteBonCommande: requirePermissionProcedure("clients.modifier")
+    .input(z.object({ orId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id, venteId: ordresReparation.venteId, factureTransmiseLe: ordresReparation.factureTransmiseLe })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      if (!or.venteId) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet OR n'est pas encore facturé." });
+      await db
+        .update(ordresReparation)
+        .set({ factureTransmiseLe: or.factureTransmiseLe ?? new Date(), attenteBonCommande: true, updatedAt: new Date() } as any)
+        .where(eq(ordresReparation.id, input.orId));
+      return { success: true };
+    }),
+
+  reprendreFacture: requirePermissionProcedure("clients.modifier")
+    .input(z.object({ orId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      await db
+        .update(ordresReparation)
+        .set({ attenteBonCommande: false, updatedAt: new Date() } as any)
+        .where(eq(ordresReparation.id, input.orId));
+      return { success: true };
     }),
 });

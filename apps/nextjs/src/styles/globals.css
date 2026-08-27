@@ -295,6 +295,8 @@
   --module-planning-bg: oklch(0.60 0.16 290 / 0.10);
   --module-marge: oklch(0.55 0.22 140);
   --module-marge-bg: oklch(0.55 0.22 140 / 0.10);
+  --module-perf: oklch(0.62 0.15 270);
+  --module-perf-bg: oklch(0.62 0.15 270 / 0.10);
 }
 
 .dark {

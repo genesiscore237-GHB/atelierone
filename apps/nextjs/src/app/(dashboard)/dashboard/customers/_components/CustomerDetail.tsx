@@ -24,6 +24,7 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { usePermissions } from "~/hooks/usePermissions";
+import { ActivitesClient } from "./ActivitesClient";
 
 const TYPE_LABELS: Record<string, string> = {
   PART: "Particulier", ENTR: "Entreprise", ADMIN: "Administration", ASSUR: "Assurance", FLOTTE: "Flotte", PROSP: "Prospect",
@@ -40,6 +41,7 @@ const TABS = [
   { id: "identite", label: "Identité", icon: Users },
   { id: "contacts", label: "Contacts", icon: Phone },
   { id: "adresses", label: "Adresses", icon: MapPin },
+  { id: "activite", label: "Activité & Factures", icon: Wallet },
   { id: "contrats", label: "Contrats", icon: FileSignature },
   { id: "vehicules", label: "Véhicules", icon: Ban },
   { id: "interactions", label: "Interactions", icon: MessageSquarePlus },
@@ -253,6 +255,12 @@ export function CustomerDetail({ id }: { id: string }) {
                 </span>
               </div>
             ))}
+          </div>
+        )}
+
+        {tab === "activite" && (
+          <div className="space-y-4">
+            <ActivitesClient clientId={Number(id)} clientName={displayName} />
           </div>
         )}
 

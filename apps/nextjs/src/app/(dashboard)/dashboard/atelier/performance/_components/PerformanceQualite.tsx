@@ -1,8 +1,10 @@
 ﻿"use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { api } from "~/trpc/react";
-import { Activity, AlertTriangle, Car, CheckCircle, Clock, Gauge, Users } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, Car, CheckCircle, Clock, Gauge, Receipt, Users } from "lucide-react";
+import Link from "next/link";
 import { PRIORITE_META, STATUT_BADGE, STATUT_LABELS } from "~/server/lib/atelier-service";
 
 const PERIODES = [
@@ -15,16 +17,30 @@ const PERIODES = [
 type PeriodeId = (typeof PERIODES)[number]["id"];
 
 const TABS = [
-  { id: "sante", label: "Santé du garage", icon: Gauge },
+  { id: "direction", label: "Direction", icon: Gauge },
+  { id: "sante", label: "Santé du garage", icon: Activity },
   { id: "sav", label: "Qualité & SAV", icon: AlertTriangle },
   { id: "diag", label: "Diagnostic", icon: Clock },
   { id: "competences", label: "Compétences / RH", icon: Users },
-  { id: "delais", label: "Compétitivité délais", icon: Activity },
+  { id: "delais", label: "Compétitivité délais", icon: CheckCircle },
+  { id: "facturation", label: "Facturation", icon: Receipt },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
+const POINT_MATINAL = [
+  "Tous les P1 ont un technicien assigné aujourd'hui",
+  "Aucun véhicule en RETARD n'est sans action prévue",
+  "Les BLOQUÉS ont une raison claire et un plan de déblocage",
+  "Les promesses de livraison du jour sont tenables",
+  "Les techniciens savent sur quel véhicule ils travaillent",
+  "Capacité réservée (~20%) pour les urgences de la journée",
+  "Les factures en attente de bon de commande ont été relancées",
+];
+
 export function PerformanceQualite() {
-  const [tab, setTab] = useState<TabId>("sante");
+  const params = useSearchParams();
+  const initialTab = (params.get("tab") as TabId | null) ?? "direction";
+  const [tab, setTab] = useState<TabId>(TABS.some((t) => t.id === initialTab) ? initialTab : "direction");
   const [periode, setPeriode] = useState<PeriodeId>("mois");
 
   return (
@@ -57,12 +73,208 @@ export function PerformanceQualite() {
       </div>
 
       <div className="mt-6">
+        {tab === "direction" && <VueDirection periode={periode} />}
         {tab === "sante" && <VueSante periode={periode} />}
         {tab === "sav" && <VueSAV periode={periode} />}
         {tab === "diag" && <VueDiagnostic periode={periode} />}
         {tab === "competences" && <VueCompetences periode={periode} />}
         {tab === "delais" && <VueDelais periode={periode} />}
+        {tab === "facturation" && <VueFacturation periode={periode} />}
       </div>
+    </div>
+  );
+}
+
+// ─── Vue Direction (temps réel + point matinal + alertes) ───
+function VueDirection({ periode }: { periode: PeriodeId }) {
+  const { data, isLoading } = api.or.getDashboard.useQuery();
+  const { data: fact } = api.atelierKpi.getFacturation.useQuery({ periode });
+  const [checklist, setChecklist] = useState<Record<number, boolean>>({});
+
+  if (isLoading || !data) return <div className="h-64 animate-pulse rounded-xl bg-muted" />;
+  const kpis = data.kpis as any;
+  const repPriorite = (data.repPriorite ?? []) as any[];
+  const repStatut = (data.repStatut ?? []) as any[];
+  const parc = (data.parc ?? []) as any[];
+  const critiques = parc.filter((p: any) => p.alerte === "RETARD" || p.alerte === "BLOQUE" || p.priorite === "P1");
+  const fmtFCFA = (n: number | string | null | undefined) => new Intl.NumberFormat("fr-FR").format(Number(n ?? 0));
+
+  return (
+    <div className="space-y-4">
+      {/* Bandeau temps réel */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <BandeauKpi label="Véhicules en parc" value={kpis.totalParc} className="text-foreground" />
+        <BandeauKpi label="Priorité P1" value={kpis.p1Ouverts} className={kpis.p1Ouverts > 0 ? "text-destructive" : "text-success-foreground"} />
+        <BandeauKpi label="En retard" value={kpis.enRetard} className={kpis.enRetard > 0 ? "text-destructive" : "text-success-foreground"} />
+        <BandeauKpi label="Bloqués" value={kpis.bloques} className={kpis.bloques > 0 ? "text-warning" : "text-success-foreground"} />
+        <BandeauKpi label="Prêts à livrer" value={kpis.pretALivrer} className="text-primary" />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Répartitions */}
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-foreground">Répartition par priorité</h3>
+          <div className="space-y-2">
+            {repPriorite.map((r: any) => (
+              <div key={r.priorite} className="flex items-center gap-2 text-sm">
+                <span className={`w-8 rounded px-1.5 py-0.5 text-center text-[11px] font-black text-white ${r.priorite === "P1" ? "bg-destructive" : r.priorite === "P2" ? "bg-warning" : r.priorite === "P3" ? "bg-success" : "bg-muted text-muted-foreground"}`}>{r.priorite}</span>
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                  <div className={`h-full rounded-full ${r.priorite === "P1" ? "bg-destructive" : r.priorite === "P2" ? "bg-warning" : r.priorite === "P3" ? "bg-success" : "bg-muted"}`} style={{ width: `${Math.max(3, r.pourcent)}%` }} />
+                </div>
+                <span className="w-24 text-right text-xs text-muted-foreground">{r.nombre} · {r.pourcent}%</span>
+              </div>
+            ))}
+          </div>
+          <h3 className="mb-3 mt-5 text-sm font-bold uppercase tracking-wider text-foreground">Répartition par statut</h3>
+          <div className="flex flex-wrap gap-1.5">
+            {repStatut.map((s: any) => (
+              <span key={s.statut} className="rounded-full border border-border/60 bg-muted/20 px-2.5 py-1 text-[10px] font-semibold uppercase text-muted-foreground">
+                {s.libelle} <b className="text-foreground">{s.nombre}</b>
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* Point matinal */}
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+            <CheckCircle size={14} className="text-primary" /> Point matinal ({Object.values(checklist).filter(Boolean).length}/{POINT_MATINAL.length})
+          </h3>
+          <div className="space-y-2">
+            {POINT_MATINAL.map((item, i) => (
+              <label key={i} className="flex cursor-pointer items-start gap-2.5 rounded-lg px-2 py-1.5 text-sm hover:bg-muted/30">
+                <input
+                  type="checkbox"
+                  checked={!!checklist[i]}
+                  onChange={(e) => setChecklist((prev) => ({ ...prev, [i]: e.target.checked }))}
+                  className="mt-0.5 size-4 accent-primary"
+                />
+                <span className={checklist[i] ? "text-muted-foreground line-through" : "text-foreground"}>{item}</span>
+              </label>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2 border-t border-border/50 pt-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-destructive">🔴 Retards : {kpis.enRetard}</span>
+            <span className="rounded-full bg-warning/10 px-2 py-0.5 text-warning-foreground">🟣 Bloqués : {kpis.bloques}</span>
+            <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-destructive">🔴 P1 : {kpis.p1Ouverts}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Alertes critiques — action requise */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+          <AlertTriangle size={14} className="text-warning" /> Alertes critiques — action requise ({critiques.length})
+        </h3>
+        {critiques.length === 0 ? (
+          <p className="text-sm text-success-foreground">Aucune alerte critique — tout est sous contrôle.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40 text-left text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">Immat.</th>
+                  <th className="px-3 py-2">Client</th>
+                  <th className="px-3 py-2">Priorité</th>
+                  <th className="px-3 py-2">Statut</th>
+                  <th className="px-3 py-2 text-right">Jours</th>
+                  <th className="px-3 py-2 text-right">Retard</th>
+                  <th className="px-3 py-2">Alerte</th>
+                  <th className="px-3 py-2">Action requise</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/60">
+                {critiques.slice(0, 15).map((p: any) => (
+                  <tr key={p.id} className="hover:bg-muted/20">
+                    <td className="px-3 py-2 font-mono text-xs font-bold">{p.immatriculation}</td>
+                    <td className="px-3 py-2 text-xs">{p.clientDisplay}</td>
+                    <td className="px-3 py-2"><span className={`rounded px-1.5 py-0.5 text-[10px] font-black text-white ${p.priorite === "P1" ? "bg-destructive" : p.priorite === "P2" ? "bg-warning" : p.priorite === "P3" ? "bg-success" : "bg-muted text-muted-foreground"}`}>{p.priorite}</span></td>
+                    <td className="px-3 py-2 text-xs">{STATUT_LABELS[p.statut] ?? p.statut}</td>
+                    <td className="px-3 py-2 text-right text-xs">{p.joursImmobilisation} j</td>
+                    <td className="px-3 py-2 text-right text-xs font-bold text-destructive">{p.retardJours > 0 ? `${p.retardJours} j` : "—"}</td>
+                    <td className="px-3 py-2 text-xs font-bold">{p.alerte}</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {p.alerte === "RETARD" && "Relancer / terminer les travaux"}
+                      {p.alerte === "BLOQUE" && `Débloquer : ${p.raisonBlocage ?? "raison non renseignée"}`}
+                      {p.alerte !== "RETARD" && p.alerte !== "BLOQUE" && "Priorité critique — avancer immédiatement"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Link href={`/dashboard/ordres-reparation?or=${p.id}`} className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
+                        Ouvrir <ArrowRight size={11} />
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Vue Facturation ───
+function VueFacturation({ periode }: { periode: PeriodeId }) {
+  const { data, isLoading } = api.atelierKpi.getFacturation.useQuery({ periode });
+  if (isLoading || !data) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
+  const fmtFCFA = (n: number | string | null | undefined) => new Intl.NumberFormat("fr-FR").format(Number(n ?? 0));
+  const ETATS: Record<string, { label: string; badge: string }> = {
+    NON_TRANSMISE: { label: "Non transmise", badge: "bg-muted text-muted-foreground" },
+    ATTENTE_BON_COMMANDE: { label: "Attente bon de commande", badge: "bg-violet-500/15 text-violet-400" },
+    ATTENTE_PAIEMENT: { label: "Attente paiement", badge: "bg-warning/15 text-warning-foreground" },
+    AVANCE: { label: "Avance reçue", badge: "bg-sky-500/15 text-sky-400" },
+    PAYEE: { label: "Payée", badge: "bg-success/15 text-success-foreground" },
+  };
+  const etats = (data.etats ?? {}) as Record<string, number>;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <BandeauKpi label="Facturé (période)" value={fmtFCFA(data.totalFacture) + " F"} className="text-foreground" />
+        <BandeauKpi label="Encaissé" value={fmtFCFA(data.totalPaye) + " F"} className="text-success-foreground" />
+        <BandeauKpi label="Restant dû" value={fmtFCFA(data.totalReste) + " F"} className={data.totalReste > 0 ? "text-destructive" : "text-success-foreground"} />
+        <BandeauKpi label="Marge (CMP)" value={fmtFCFA(data.totalMarge) + " F"} className="text-primary" />
+        <BandeauKpi label="Taux recouvrement" value={data.tauxRecouvrement != null ? `${data.tauxRecouvrement} %` : "—"} className="text-foreground" />
+        <div className="rounded-xl border border-border bg-card p-3">
+          <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">États</p>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {Object.entries(ETATS).map(([k, m]) => (
+              <span key={k} className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase ${m.badge}`}>{m.label} <b>{etats[k] ?? 0}</b></span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-foreground">Top clients en retard de paiement</h3>
+        {(data.topClientsRetard ?? []).length === 0 ? (
+          <p className="text-sm text-success-foreground">Aucun client en retard — excellent recouvrement.</p>
+        ) : (
+          <div className="space-y-2">
+            {(data.topClientsRetard ?? []).map((c: any, i: number) => (
+              <div key={i} className="flex items-center gap-2 rounded-lg bg-muted/30 px-3 py-2 text-sm">
+                <span className="w-5 text-xs font-black text-muted-foreground">{i + 1}</span>
+                <span className="font-semibold">{c.client}</span>
+                <span className="text-xs text-muted-foreground">{c.ors} OR</span>
+                <span className="ml-auto text-xs text-muted-foreground">facturé {fmtFCFA(c.facture)} F</span>
+                <span className="text-xs text-success-foreground">payé {fmtFCFA(c.paye)} F</span>
+                <span className="w-28 text-right text-xs font-bold text-destructive">reste {fmtFCFA(c.reste)} F</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BandeauKpi({ label, value, className }: { label: string; value: string | number; className?: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-3">
+      <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className={`mt-1 text-xl font-black ${className ?? "text-foreground"}`}>{value}</p>
     </div>
   );
 }

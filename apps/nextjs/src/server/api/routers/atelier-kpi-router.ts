@@ -13,6 +13,8 @@ import {
   employes,
   vehicules,
   clients,
+  ventes,
+  ventesLignes,
 } from "@atelierone/db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -394,5 +396,77 @@ export const atelierKpiRouter = createTRPCRouter({
         return row;
       }
       return { success: true };
+    }),
+
+  // ─── Vue facturation direction : facturé / encaissé / restant + top clients en retard ───
+  getFacturation: requirePermissionProcedure("or.consulter")
+    .input(z.object({ periode: z.enum(["jour", "semaine", "mois", "trimestre"]).default("mois") }))
+    .query(async ({ ctx, input }) => {
+      const depuis = fenetreDepuis(input.periode);
+      const ors = await db
+        .select({
+          id: ordresReparation.id,
+          numero: ordresReparation.numero,
+          venteId: ordresReparation.venteId,
+          totalTTC: ordresReparation.totalTTC,
+          factureTransmiseLe: ordresReparation.factureTransmiseLe,
+          attenteBonCommande: ordresReparation.attenteBonCommande,
+          clientId: ordresReparation.clientId,
+          clientNom: clients.nom,
+          clientPrenom: clients.prenom,
+          clientRaisonSociale: clients.raisonSociale,
+          vehiculeImmat: vehicules.immatriculation,
+          dateCloture: ordresReparation.dateCloture,
+        })
+        .from(ordresReparation)
+        .leftJoin(clients, eq(ordresReparation.clientId, clients.id))
+        .leftJoin(vehicules, eq(ordresReparation.vehiculeId, vehicules.id))
+        .where(and(eq(ordresReparation.agenceId, ctx.user.agenceId), sql`${ordresReparation.dateCloture} >= ${depuis}::date`));
+
+      let totalFacture = 0, totalPaye = 0, totalMarge = 0;
+      const etats = { NON_TRANSMISE: 0, ATTENTE_BON_COMMANDE: 0, ATTENTE_PAIEMENT: 0, AVANCE: 0, PAYEE: 0 };
+      const parClient = new Map<number, { client: string; facture: number; paye: number; reste: number; ors: number }>();
+      const lignes: Record<number, { totalLigne: string | null; coutUnitaire: string | null; quantite: number }[]> = {};
+      const ids = ors.map((o) => o.venteId).filter(Boolean) as number[];
+
+      if (ids.length) {
+        const vRows = await db.select({ id: ventes.id, montantTotal: ventes.montantTotal, montantPaye: ventes.montantPaye }).from(ventes).where(sql`${ventes.id} IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
+        const vMap = new Map(vRows.map((v) => [v.id, v]));
+        const lRows = await db.select({ venteId: ventesLignes.venteId, totalLigne: ventesLignes.totalLigne, coutUnitaire: ventesLignes.coutUnitaire, quantite: ventesLignes.quantite }).from(ventesLignes).where(sql`${ventesLignes.venteId} IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
+        for (const l of lRows) (lignes[l.venteId] ??= []).push(l);
+
+        for (const o of ors) {
+          if (!o.venteId) continue;
+          const v = vMap.get(o.venteId);
+          if (!v) continue;
+          const total = Number(v.montantTotal ?? 0);
+          const paye = Number(v.montantPaye ?? 0);
+          const margeLignes = lignes[o.venteId] ?? [];
+          const marge = margeLignes.reduce((s, l) => s + (Number(l.totalLigne ?? 0) - (l.coutUnitaire != null ? Number(l.coutUnitaire) * Number(l.quantite) : 0)), 0);
+          totalFacture += total; totalPaye += paye; totalMarge += marge;
+          let etat: keyof typeof etats;
+          if (paye >= total && total > 0) etat = "PAYEE";
+          else if (paye > 0) etat = "AVANCE";
+          else if (o.attenteBonCommande) etat = "ATTENTE_BON_COMMANDE";
+          else if (o.factureTransmiseLe) etat = "ATTENTE_PAIEMENT";
+          else etat = "NON_TRANSMISE";
+          etats[etat]++;
+          const key = o.clientId ?? 0;
+          const pc = parClient.get(key) ?? { client: o.clientRaisonSociale ?? `${o.clientPrenom ?? ""} ${o.clientNom ?? ""}`.trim(), facture: 0, paye: 0, reste: 0, ors: 0 };
+          pc.facture += total; pc.paye += paye; pc.reste += total - paye; pc.ors++;
+          parClient.set(key, pc);
+        }
+      }
+
+      const topClientsRetard = [...parClient.values()]
+        .filter((p) => p.reste > 0)
+        .sort((a, b) => b.reste - a.reste)
+        .slice(0, 8);
+
+      return {
+        totalFacture, totalPaye, totalReste: totalFacture - totalPaye, totalMarge,
+        etats, topClientsRetard,
+        tauxRecouvrement: totalFacture > 0 ? Math.round((totalPaye / totalFacture) * 1000) / 10 : null,
+      };
     }),
 });
