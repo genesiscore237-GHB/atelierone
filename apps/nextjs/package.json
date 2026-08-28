@@ -11,7 +11,12 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf .next",
     "test": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "sim:start": "node scripts/sim/start.cjs",
+    "sim:copy-admin": "node scripts/sim/copy-admin.cjs",
+    "sim:licence": "node scripts/test-saas-licence.cjs",
+    "sim:sync": "node scripts/test-saas-sync.cjs",
+    "sim:central": "node scripts/test-saas-central.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

@@ -79,3 +79,5 @@ docs/lipatrad_mvogada_jsonl/
 # Dumps de sauvegarde et fichiers temporaires de déploiement
 backups/
 tmp/
+.next-sim-*/
+

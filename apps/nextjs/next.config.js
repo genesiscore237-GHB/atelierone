@@ -16,6 +16,7 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   outputFileTracingRoot: path.join(__dirname, "../../"),
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   serverExternalPackages: ["pino", "pino-pretty"],
   typescript: {
     ignoreBuildErrors: true,

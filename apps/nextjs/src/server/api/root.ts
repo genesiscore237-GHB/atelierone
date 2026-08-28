@@ -9,6 +9,9 @@ import { analyticsRouter } from "~/server/api/routers/analytics";
 import { pricingRouter } from "~/server/api/routers/pricing";
 import { procurementRouter } from "~/server/api/routers/procurement";
 import { fournisseursRouter } from "~/server/api/routers/fournisseurs-router";
+import { licenceRouter } from "~/server/api/routers/licence-router";
+import { syncRouter } from "~/server/api/routers/sync-router";
+import { centralRouter } from "~/server/api/routers/central-router";
 import { customersRouter } from "~/server/api/routers/customers";
 import { clientsRouter } from "~/server/api/routers/clients-router";
 import { contratsRouter } from "~/server/api/routers/contrats-router";
@@ -45,6 +48,10 @@ import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 
 export const appRouter = createTRPCRouter({
   user: userRouter,
+  // MODULE SAAS — licence (garage) et sync (garage) toujours montées ; central si APP_ROLE=central
+  licence: licenceRouter,
+  sync: syncRouter,
+  ...(process.env.APP_ROLE === "central" ? { central: centralRouter } : {}),
   settings: settingsRouter,
   catalog: catalogRouter,
   reference: referenceRouter,

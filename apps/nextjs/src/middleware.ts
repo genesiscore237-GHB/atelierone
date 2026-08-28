@@ -6,7 +6,7 @@ export default auth((req) => {
   const isLoggedIn = !!req.auth?.user;
   const isLoginPage = nextUrl.pathname === "/login";
 
-  if (nextUrl.pathname.startsWith("/_next") || nextUrl.pathname.startsWith("/api/auth") || nextUrl.pathname.startsWith("/favicon") || nextUrl.pathname.startsWith("/public") || nextUrl.pathname.startsWith("/auth")) {
+  if (nextUrl.pathname.startsWith("/_next") || nextUrl.pathname.startsWith("/api/auth") || nextUrl.pathname.startsWith("/api/sync") || nextUrl.pathname.startsWith("/api/uploads") || nextUrl.pathname.startsWith("/favicon") || nextUrl.pathname.startsWith("/public") || nextUrl.pathname.startsWith("/auth")) {
     const response = NextResponse.next();
     response.headers.set("X-Content-Type-Options", "nosniff");
     response.headers.set("X-Frame-Options", "DENY");

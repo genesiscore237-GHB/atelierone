@@ -3,10 +3,11 @@ import superjson from "superjson";
 import { ZodError } from "zod";
 import { sql, eq } from "drizzle-orm";
 import { auth } from "@atelierone/auth";
-import { db, auditLogs } from "@atelierone/db";
+import { db, auditLogs, licenceLocale } from "@atelierone/db";
 import type { ExtendedUser, UserRole } from "@atelierone/auth/types";
 import { RBACService } from "~/server/lib/rbac-service";
 import { logger } from "~/server/lib/logger";
+import { verifierLicence, type LicenceStatut } from "~/server/lib/licence-service";
 
 export const createTRPCContext = async (opts: { headers: Headers }) => {
   const session = await auth();
@@ -42,6 +43,52 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
     logger.debug({ path, durationMs: end - start }, "[TRPC] %s took %dms", path, end - start);
   }
   return result;
+});
+
+// ─── LICENCE À DÉCOMPTE (module SaaS) ───
+// Actif uniquement si LICENCE_MODE=on (garages de simulation / production).
+//  BLOQUE        → toutes les procédures refusées
+//  LECTURE_SEULE → queries OK, mutations refusées
+// Exemptions : licence.* (état/renouvellement) et sync.* (agent) pour permettre
+// au garage de se réenregistrer et de synchroniser même bloqué.
+let licenceCache: { at: number; statut: LicenceStatut | null; joursRestants: number; joursGrace: number } | null = null;
+
+/** Invalidation forcée (après enregistrement / renouvellement local). */
+export function invaliderLicenceCache() {
+  licenceCache = null;
+}
+
+async function lireLicenceLocale() {
+  const TTL = 5_000;
+  if (licenceCache && Date.now() - licenceCache.at < TTL) return licenceCache;
+  let result = { statut: null as LicenceStatut | null, joursRestants: 0, joursGrace: 0 };
+  try {
+    const [row] = await db.select({ jeton: licenceLocale.jeton, dateFin: licenceLocale.dateFin, graceJours: licenceLocale.graceJours }).from(licenceLocale).limit(1);
+    if (row) {
+      const v = verifierLicence(row.jeton, process.env.LICENCE_SECRET ?? "", new Date(row.dateFin));
+      // On vérifie depuis MAINTENANT (l'échéance locale est relative au temps réel)
+      const vMaintenant = verifierLicence(row.jeton, process.env.LICENCE_SECRET ?? "");
+      result = { statut: vMaintenant.valide ? vMaintenant.statut : "BLOQUE", joursRestants: vMaintenant.joursRestants, joursGrace: vMaintenant.joursGrace };
+      void v;
+    }
+  } catch (e) {
+    logger.warn({ e }, "Licence locale illisible");
+  }
+  licenceCache = { at: Date.now(), ...result };
+  return licenceCache;
+}
+
+const licenceGuard = t.middleware(async ({ ctx, type, path, next }) => {
+  if (process.env.LICENCE_MODE !== "on") return next();
+  if (path.startsWith("licence.") || path.startsWith("sync.") || path.startsWith("auth.")) return next();
+  const l = await lireLicenceLocale();
+  if (l.statut === "BLOQUE") {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Licence expirée : renouvelez votre abonnement pour continuer à utiliser AtelierOne." });
+  }
+  if (type === "mutation" && l.statut === "LECTURE_SEULE") {
+    throw new TRPCError({ code: "PAYMENT_REQUIRED", message: "Abonnement échu : vous êtes en lecture seule. Renouvelez pour retrouver toutes les fonctionnalités." });
+  }
+  return next();
 });
 
 const isAuthed = t.middleware(async ({ ctx, next }) => {
@@ -114,13 +161,13 @@ const auditMiddlware = t.middleware(async ({ ctx, next, path, type, input }) => 
 });
 
 export const publicProcedure = t.procedure.use(timingMiddleware);
-export const protectedProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(auditMiddlware);
-export const adminProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(isAdmin).use(auditMiddlware);
-export const posProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["secretaire", "secretaire", "superadmin", "directeur"])).use(auditMiddlware);
-export const caisseProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["secretaire", "secretaire", "comptable", "superadmin", "directeur"])).use(auditMiddlware);
-export const stockProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["magasinier", "superadmin", "directeur"])).use(auditMiddlware);
-export const financeProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["comptable", "superadmin", "directeur"])).use(auditMiddlware);
-export const rhProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(enforceRole(["rh", "superadmin", "directeur"])).use(auditMiddlware);
+export const protectedProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(licenceGuard).use(auditMiddlware);
+export const adminProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(isAdmin).use(licenceGuard).use(auditMiddlware);
+export const posProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(licenceGuard).use(enforceRole(["secretaire", "secretaire", "superadmin", "directeur"])).use(auditMiddlware);
+export const caisseProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(licenceGuard).use(enforceRole(["secretaire", "secretaire", "comptable", "superadmin", "directeur"])).use(auditMiddlware);
+export const stockProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(licenceGuard).use(enforceRole(["magasinier", "superadmin", "directeur"])).use(auditMiddlware);
+export const financeProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(licenceGuard).use(enforceRole(["comptable", "superadmin", "directeur"])).use(auditMiddlware);
+export const rhProcedure = t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(licenceGuard).use(enforceRole(["rh", "superadmin", "directeur"])).use(auditMiddlware);
 
 export function requirePermissionProcedure(...permissions: string[]) {
   const permissionCheck = t.middleware(async ({ ctx, next }) => {
@@ -133,5 +180,5 @@ export function requirePermissionProcedure(...permissions: string[]) {
     }
     throw new TRPCError({ code: "FORBIDDEN", message: `Permission manquante: ${permissions.join(" ou ")}` });
   });
-  return t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(permissionCheck).use(auditMiddlware);
+  return t.procedure.use(timingMiddleware).use(isAuthed).use(tenantMiddleware).use(licenceGuard).use(permissionCheck).use(auditMiddlware);
 }

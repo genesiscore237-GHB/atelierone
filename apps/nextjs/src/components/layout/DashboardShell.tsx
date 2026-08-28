@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { Home, Gauge, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { ThemeToggle } from "@atelierone/ui";
 import { AppSidebar } from "~/components/layout/AppSidebar";
+import { SaasStatusBar } from "~/components/layout/SaasStatusBar";
 import { ModuleGuard } from "~/hooks/usePermissions";
 import { MobileBottomNav } from "~/app/(dashboard)/dashboard/_components/MobileBottomNav";
 import { HelpButton } from "~/components/help/HelpButton";
@@ -138,6 +139,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* Contenu */}
         <main className="min-w-0 flex-1">
+          <SaasStatusBar />
           <ModuleGuard>{children}</ModuleGuard>
         </main>
       </div>
