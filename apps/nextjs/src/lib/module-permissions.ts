@@ -43,6 +43,8 @@ export const MODULE_PERMISSIONS: Record<string, string[]> = {
   sites: ["vehicules.consulter", "stock.consulter"],
   interventions: ["or.consulter", "or.creer"],
   factures: ["creances.consulter", "caisse.consulter"],
+  performance: ["or.consulter", "or.modifier"],
+  saas: ["admin.parametres", "admin.roles.gerer"],
 };
 
 export function canAccessModule(

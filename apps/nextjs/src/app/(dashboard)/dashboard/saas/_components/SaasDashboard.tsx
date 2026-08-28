@@ -4,7 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import {
-  Building2, CheckCircle2, CreditCard, Globe, KeyRound, RefreshCw, ShieldCheck, Wallet, Clock, UploadCloud,
+  AlertTriangle, Building2, CheckCircle2, CreditCard, Globe, KeyRound, RefreshCw, ShieldCheck, Wallet, Clock, UploadCloud, TrendingUp, WifiOff,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 
@@ -55,6 +55,10 @@ export function SaasDashboard() {
   const snapshots = (data.snapshots ?? []) as any[];
   const paiementsList = (paiements ?? []) as any[];
   const ingestsList = (ingests ?? []) as any[];
+  const alertes = (data.alertes ?? {}) as any;
+  const evolution = (data.evolutionRevenu ?? []) as any[];
+  const maxRevenu = Math.max(1, ...evolution.map((e) => e.montant));
+  const fmtDateHeure = (d: string | Date | null | undefined) => (d ? new Date(d).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "—");
 
   return (
     <div className="space-y-5">
@@ -65,14 +69,54 @@ export function SaasDashboard() {
         </p>
       </div>
 
+      {/* Alertes */}
+      {(alertes.licencesExpirant7j?.length > 0 || alertes.sitesHorsLigne?.length > 0 || alertes.sitesSansLicence?.length > 0) && (
+        <div className="space-y-1.5 rounded-xl border border-warning/30 bg-warning/5 p-3">
+          {alertes.licencesExpirant7j?.map((a: any) => (
+            <p key={a.codeSite + "exp" + a.dateFin} className="flex items-center gap-2 text-xs font-semibold text-warning-foreground">
+              <AlertTriangle size={13} /> {a.nomGarage} ({a.codeSite}) — licence expire dans {a.joursRestants} j ({new Date(a.dateFin).toLocaleDateString("fr-FR")}) → relancez le client
+            </p>
+          ))}
+          {alertes.sitesHorsLigne?.map((a: any) => (
+            <p key={a.codeSite + "off" + a.dernierHeartbeat} className="flex items-center gap-2 text-xs font-semibold text-warning-foreground">
+              <WifiOff size={13} /> {a.nomGarage} ({a.codeSite}) — hors-ligne depuis {fmtDateHeure(a.dernierHeartbeat)} ({">"} 7 j)
+            </p>
+          ))}
+          {alertes.sitesSansLicence?.map((a: any) => (
+            <p key={a.codeSite + "nol" + a.codeSite} className="flex items-center gap-2 text-xs font-semibold text-destructive">
+              <AlertTriangle size={13} /> {a.nomGarage} ({a.codeSite}) — sans licence → bloqué
+            </p>
+          ))}
+        </div>
+      )}
+
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <Kpi label="MRR (30 j)" value={`${fmtFCFA(stats.mrr)} F`} icon={<TrendingUp size={14} />} accent="text-primary" />
         <Kpi label="Garages enregistrés" value={stats.nbSites} icon={<Building2 size={14} />} />
         <Kpi label="Licences actives" value={stats.licencesActives} icon={<ShieldCheck size={14} />} accent="text-success-foreground" />
+        <Kpi label="Revenu total" value={`${fmtFCFA(stats.revenuTotal)} F`} icon={<Wallet size={14} />} />
         <Kpi label="Paiements confirmés" value={stats.paiementsConfirmes} icon={<CreditCard size={14} />} />
-        <Kpi label="Revenu total" value={`${fmtFCFA(stats.revenuTotal)} F`} icon={<Wallet size={14} />} accent="text-primary" />
         <Kpi label="Ingests (30 j)" value={stats.ingests30j} icon={<UploadCloud size={14} />} accent="text-sky-400" />
-        <Kpi label="Sites actifs" value={stats.sitesActifs} icon={<Globe size={14} />} />
+      </div>
+
+      {/* Évolution du revenu */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+          <TrendingUp size={14} className="text-primary" /> Revenu mensuel (6 derniers mois)
+        </h3>
+        <div className="flex h-32 items-end gap-3">
+          {evolution.map((e: any) => (
+            <div key={e.mois} className="flex flex-1 flex-col items-center gap-1">
+              <span className="text-[9px] font-bold text-foreground">{e.montant > 0 ? `${Math.round((e.montant / 1000) * 10) / 10}k` : ""}</span>
+              <div
+                className={`w-full rounded-t-lg ${e.montant > 0 ? "bg-primary/70" : "bg-muted"}`}
+                style={{ height: `${Math.max(4, (e.montant / maxRevenu) * 100)}%` }}
+              />
+              <span className="text-[9px] text-muted-foreground">{e.mois.slice(5)}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Garages */}

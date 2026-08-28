@@ -39,8 +39,37 @@ export const centralRouter = createTRPCRouter({
       ingests30j: ingests30?.[0]?.n ?? 0,
     };
 
+    // MRR : paiements confirmés des 30 derniers jours (abonnements actifs)
+    const paiements30j = paiements.filter((p) => p.statut === "CONFIRME" && new Date(p.payeLe ?? p.createdAt) >= new Date(Date.now() - 30 * 86400000));
+    const mrr = paiements30j.reduce((s, p) => s + p.montant, 0);
+
+    // Évolution du revenu sur 6 mois
+    const evolutionRevenu: { mois: string; montant: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(1);
+      d.setMonth(d.getMonth() - i);
+      const cle = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const montant = paiements
+        .filter((p) => p.statut === "CONFIRME" && p.payeLe)
+        .filter((p) => new Date(p.payeLe!).toISOString().slice(0, 7) === cle)
+        .reduce((s, p) => s + p.montant, 0);
+      evolutionRevenu.push({ mois: cle, montant });
+    }
+
     return {
-      stats,
+      stats: { ...stats, mrr },
+      evolutionRevenu,
+      alertes: {
+        licencesExpirant7j: sites
+          .map((s) => ({ site: s, licence: licenceParSite.get(s.id) }))
+          .filter((x) => x.licence && x.licence.statut === "ACTIVE" && Math.ceil((new Date(x.licence.dateFin).getTime() - Date.now()) / 86400000) <= 7)
+          .map((x) => ({ codeSite: x.site.codeSite, nomGarage: x.site.nomGarage, dateFin: x.licence.dateFin, joursRestants: Math.ceil((new Date(x.licence.dateFin).getTime() - Date.now()) / 86400000) })),
+        sitesHorsLigne: sites
+          .filter((s) => s.dernierHeartbeat && new Date(s.dernierHeartbeat) < new Date(Date.now() - 7 * 86400000))
+          .map((s) => ({ codeSite: s.codeSite, nomGarage: s.nomGarage, dernierHeartbeat: s.dernierHeartbeat })),
+        sitesSansLicence: sites.filter((s) => !licenceParSite.get(s.id)).map((s) => ({ codeSite: s.codeSite, nomGarage: s.nomGarage })),
+      },
       sites: sites.map((s) => {
         const licence = licenceParSite.get(s.id);
         const joursRestants = licence ? Math.ceil((new Date(licence.dateFin).getTime() - Date.now()) / 86400000) : null;
