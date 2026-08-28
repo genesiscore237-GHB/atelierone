@@ -8,6 +8,7 @@ import { auditRouter } from "~/server/api/routers/audit";
 import { analyticsRouter } from "~/server/api/routers/analytics";
 import { pricingRouter } from "~/server/api/routers/pricing";
 import { procurementRouter } from "~/server/api/routers/procurement";
+import { fournisseursRouter } from "~/server/api/routers/fournisseurs-router";
 import { customersRouter } from "~/server/api/routers/customers";
 import { clientsRouter } from "~/server/api/routers/clients-router";
 import { contratsRouter } from "~/server/api/routers/contrats-router";
@@ -54,6 +55,7 @@ export const appRouter = createTRPCRouter({
   analytics: analyticsRouter,
   pricing: pricingRouter,
   procurement: procurementRouter,
+  fournisseurs: fournisseursRouter,
   customers: customersRouter,
   clients: clientsRouter,
   contrats: contratsRouter,

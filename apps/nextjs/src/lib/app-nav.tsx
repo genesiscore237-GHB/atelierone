@@ -427,11 +427,19 @@ export const DOMAINS: AppDomain[] = [
       },
       {
         id: "stock-fournisseurs",
-        label: "Fournisseurs",
-        href: "/dashboard/suppliers",
+        label: "Fournisseurs & Prestataires",
+        href: "/dashboard/fournisseurs-factures",
         icon: Building2,
-        desc: "Fiches, délais, conditions",
-        moduleId: "suppliers",
+        desc: "Tous prestataires (pièces + services), conditions, NIU/RCCM",
+        moduleId: "procurement",
+      },
+      {
+        id: "stock-factures-fournisseurs",
+        label: "Factures & Archives",
+        href: "/dashboard/fournisseurs-factures?tab=factures",
+        icon: FileText,
+        desc: "Chaque facture payée avec scan, recherche intelligente",
+        moduleId: "procurement",
       },
       {
         id: "stock-inventaire",
