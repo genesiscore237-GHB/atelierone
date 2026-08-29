@@ -6,8 +6,43 @@ import { TRPCError } from "@trpc/server";
 import { inviteUserSchema } from "@atelierone/validators";
 import { inviteMemberAction, resendInviteAction } from "~/lib/auth-actions";
 import { RBACService } from "~/server/lib/rbac-service";
+import { genererSecretTOTP, verifierCodeTOTP, uriTOTP } from "@atelierone/auth/totp";
 
 export const userRouter = createTRPCRouter({
+  // ─── 2FA : état, activation (secret + QR), confirmation, désactivation ───
+  get2FA: protectedProcedure.query(async ({ ctx }) => {
+    const [u] = await db.select({ twoFactorEnabled: utilisateurs.twoFactorEnabled }).from(utilisateurs).where(eq(utilisateurs.id, Number(ctx.user.id))).limit(1);
+    return { activé: u?.twoFactorEnabled === true };
+  }),
+
+  activer2FA: protectedProcedure.query(async ({ ctx }) => {
+    const [u] = await db.select({ email: utilisateurs.email, twoFactorEnabled: utilisateurs.twoFactorEnabled }).from(utilisateurs).where(eq(utilisateurs.id, Number(ctx.user.id))).limit(1);
+    if (u?.twoFactorEnabled) throw new TRPCError({ code: "BAD_REQUEST", message: "Le 2FA est déjà activé." });
+    const secret = genererSecretTOTP();
+    await db.update(utilisateurs).set({ twoFactorSecret: secret } as any).where(eq(utilisateurs.id, Number(ctx.user.id)));
+    return { secret, uri: uriTOTP(secret, u?.email ?? "utilisateur") };
+  }),
+
+  confirmer2FA: protectedProcedure
+    .input(z.object({ code: z.string().min(6).max(6) }))
+    .mutation(async ({ ctx, input }) => {
+      const [u] = await db.select({ twoFactorSecret: utilisateurs.twoFactorSecret }).from(utilisateurs).where(eq(utilisateurs.id, Number(ctx.user.id))).limit(1);
+      if (!u?.twoFactorSecret) throw new TRPCError({ code: "BAD_REQUEST", message: "Aucun secret 2FA en attente." });
+      if (!verifierCodeTOTP(u.twoFactorSecret, input.code)) throw new TRPCError({ code: "BAD_REQUEST", message: "Code 2FA invalide." });
+      await db.update(utilisateurs).set({ twoFactorEnabled: true, updatedAt: new Date() } as any).where(eq(utilisateurs.id, Number(ctx.user.id)));
+      return { success: true };
+    }),
+
+  desactiver2FA: protectedProcedure
+    .input(z.object({ code: z.string().min(6).max(6) }))
+    .mutation(async ({ ctx, input }) => {
+      const [u] = await db.select({ twoFactorSecret: utilisateurs.twoFactorSecret, twoFactorEnabled: utilisateurs.twoFactorEnabled }).from(utilisateurs).where(eq(utilisateurs.id, Number(ctx.user.id))).limit(1);
+      if (!u?.twoFactorEnabled || !u?.twoFactorSecret) throw new TRPCError({ code: "BAD_REQUEST", message: "Le 2FA n'est pas activé." });
+      if (!verifierCodeTOTP(u.twoFactorSecret, input.code)) throw new TRPCError({ code: "BAD_REQUEST", message: "Code 2FA invalide." });
+      await db.update(utilisateurs).set({ twoFactorEnabled: false, twoFactorSecret: null, updatedAt: new Date() } as any).where(eq(utilisateurs.id, Number(ctx.user.id)));
+      return { success: true };
+    }),
+
   getMe: protectedProcedure.query(async ({ ctx }) => {
     const u = ctx.user;
     // Permissions relues depuis la matrice DB à chaque appel :

@@ -379,6 +379,23 @@ export const centralRouter = createTRPCRouter({
       return { success: true };
     }),
 
+  /** Rotation de la clé API d'un site (sécurité) — fenêtre de bascule 24 h. */
+  rotationCleApi: requirePermissionProcedure("central.gerer")
+    .input(z.object({ siteId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      const [site] = await db.select({ id: tenantSites.id, codeSite: tenantSites.codeSite, cleApi: tenantSites.cleApi }).from(tenantSites).where(eq(tenantSites.id, input.siteId)).limit(1);
+      if (!site) throw new TRPCError({ code: "NOT_FOUND", message: "Site introuvable." });
+      const nouvelle = `${site.codeSite}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      await db.update(tenantSites).set({
+        cleApi: nouvelle,
+        cleApiAncienne: site.cleApi,
+        cleApiChangeLe: new Date(),
+        updatedAt: new Date(),
+      } as any).where(eq(tenantSites.id, input.siteId));
+      await logAction(ctx, input.siteId, "CLE_API_ROTEE", { codeSite: site.codeSite });
+      return { success: true, cleApi: nouvelle };
+    }),
+
   // ─── Exports CSV (éditeur) ───
   exportGarages: requirePermissionProcedure("central.consulter").query(async () => {
     const sites = await db.select().from(tenantSites).orderBy(tenantSites.codeSite);

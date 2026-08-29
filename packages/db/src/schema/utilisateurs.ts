@@ -13,6 +13,8 @@ export const utilisateurs = pgTable("utilisateurs", {
   agenceId: integer("agence_id").notNull().references(() => agences.id),
   roleId: uuid("role_id").references(() => roles.id),
   employeId: integer("employe_id"),
+  twoFactorSecret: varchar("two_factor_secret", { length: 64 }),
+  twoFactorEnabled: boolean("two_factor_enabled").default(false),
   isActive: boolean("is_active").default(true),
   status: varchar("status", { length: 50 }).default("invited"),
   emailVerified: timestamp("email_verified"),

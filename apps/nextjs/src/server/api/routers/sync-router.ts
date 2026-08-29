@@ -119,7 +119,7 @@ export async function heartbeatCentral(): Promise<boolean> {
     if (!res.ok || !data.jeton) return false;
     const [existing] = await db.select({ id: licenceLocale.id }).from(licenceLocale).limit(1);
     if (existing) {
-      await db.update(licenceLocale).set({ jeton: data.jeton, dateFin: new Date(data.dateFin), mode: data.mode, cleApi, dernierHeartbeat: new Date(), miseAJourLe: new Date() } as any).where(eq(licenceLocale.id, existing.id));
+      await db.update(licenceLocale).set({ jeton: data.jeton, dateFin: new Date(data.dateFin), mode: data.mode, cleApi: data.nouvelleCleApi ?? cleApi, dernierHeartbeat: new Date(), miseAJourLe: new Date() } as any).where(eq(licenceLocale.id, existing.id));
     }
     return true;
   } catch {

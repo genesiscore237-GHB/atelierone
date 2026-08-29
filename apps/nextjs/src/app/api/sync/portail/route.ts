@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db, tenantSites, tenantLicences, tenantPaiements } from "@atelierone/db";
-import { and, eq, desc } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
+import { validerCleSite } from "~/server/lib/cle-sync";
 
 /**
  * Portail client : le garage interroge ses propres informations d'abonnement
@@ -19,11 +20,13 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "codeSite et cleApi requis." }, { status: 400 });
     }
     const [site] = await db
-      .select({ id: tenantSites.id, nomGarage: tenantSites.nomGarage, statut: tenantSites.statut, versionLogiciel: tenantSites.versionLogiciel })
+      .select({ id: tenantSites.id, nomGarage: tenantSites.nomGarage, statut: tenantSites.statut, versionLogiciel: tenantSites.versionLogiciel, cleApi: tenantSites.cleApi, cleApiAncienne: tenantSites.cleApiAncienne, cleApiChangeLe: tenantSites.cleApiChangeLe })
       .from(tenantSites)
-      .where(and(eq(tenantSites.codeSite, codeSite), eq(tenantSites.cleApi, cleApi)))
+      .where(eq(tenantSites.codeSite, codeSite))
       .limit(1);
-    if (!site) return NextResponse.json({ error: "Site inconnu ou clé invalide." }, { status: 401 });
+    if (!site) return NextResponse.json({ error: "Site inconnu." }, { status: 401 });
+    const validation = validerCleSite(site, cleApi);
+    if (!validation.valide) return NextResponse.json({ error: "Clé invalide." }, { status: 401 });
 
     const licences = await db
       .select({ id: tenantLicences.id, dateDebut: tenantLicences.dateDebut, dateFin: tenantLicences.dateFin, mode: tenantLicences.mode, statut: tenantLicences.statut, emitLe: tenantLicences.emitLe })
@@ -39,7 +42,7 @@ export async function GET(req: Request) {
       .orderBy(desc(tenantPaiements.createdAt))
       .limit(50);
 
-    return NextResponse.json({ success: true, site: { codeSite, nomGarage: site.nomGarage, statut: site.statut, versionLogiciel: site.versionLogiciel }, licences, paiements });
+    return NextResponse.json({ success: true, site: { codeSite, nomGarage: site.nomGarage, statut: site.statut, versionLogiciel: site.versionLogiciel }, licences, paiements, nouvelleCleApi: validation.nouvelleCleApi });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }

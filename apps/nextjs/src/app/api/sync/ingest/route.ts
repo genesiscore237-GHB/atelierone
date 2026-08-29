@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db, tenantSites, syncIngests, tenantSnapshots, tenantUsage } from "@atelierone/db";
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { validerCleSite } from "~/server/lib/cle-sync";
 
 /**
  * Ingestion de la synchronisation d'un garage (delta push).
@@ -19,11 +20,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "codeSite et cleApi requis." }, { status: 400 });
     }
     const [site] = await db
-      .select({ id: tenantSites.id })
+      .select({ id: tenantSites.id, cleApi: tenantSites.cleApi, cleApiAncienne: tenantSites.cleApiAncienne, cleApiChangeLe: tenantSites.cleApiChangeLe })
       .from(tenantSites)
-      .where(and(eq(tenantSites.codeSite, codeSite), eq(tenantSites.cleApi, cleApi)))
+      .where(eq(tenantSites.codeSite, codeSite))
       .limit(1);
-    if (!site) return NextResponse.json({ error: "Site inconnu ou clé invalide." }, { status: 401 });
+    if (!site) return NextResponse.json({ error: "Site inconnu." }, { status: 401 });
+    const validation = validerCleSite(site, cleApi);
+    if (!validation.valide) return NextResponse.json({ error: "Clé invalide." }, { status: 401 });
 
     const entites = (body.entites ?? []) as { entite: string; lignes: any[] }[];
     let total = 0;
@@ -64,7 +67,7 @@ export async function POST(req: Request) {
         });
     }
     await db.update(tenantSites).set({ derniereSync: new Date() } as any).where(eq(tenantSites.id, site.id));
-    return NextResponse.json({ success: true, reçu: total });
+    return NextResponse.json({ success: true, reçu: total, nouvelleCleApi: validation.nouvelleCleApi });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }

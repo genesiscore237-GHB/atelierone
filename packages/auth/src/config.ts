@@ -47,6 +47,11 @@ export const config: Omit<NextAuthConfig, "providers"> & {
   providers: ReturnType<typeof CredentialsProvider>[];
 } = {
   secret: process.env.AUTH_SECRET ?? doThrow("AUTH_SECRET is not set"),
+  session: {
+    strategy: "jwt",
+    maxAge: 7 * 24 * 60 * 60, // 7 jours d'inactivité maximum
+    updateAge: 24 * 60 * 60, // renouvellement de session toutes les 24 h d'activité
+  },
   providers: [
     CredentialsProvider({
       name: "credentials",
@@ -85,6 +90,8 @@ export const config: Omit<NextAuthConfig, "providers"> & {
             status: utilisateurs.status,
             agenceId: utilisateurs.agenceId,
             roleId: utilisateurs.roleId,
+            twoFactorEnabled: utilisateurs.twoFactorEnabled,
+            twoFactorSecret: utilisateurs.twoFactorSecret,
             agenceName: agences.nom,
           })
           .from(utilisateurs)
@@ -99,6 +106,15 @@ export const config: Omit<NextAuthConfig, "providers"> & {
 
         const isValidPassword = await bcrypt.compare(password, foundUser.motDePasse);
         if (!isValidPassword) return null;
+
+        // 2FA : si activé, le code TOTP est obligatoire
+        if (foundUser.twoFactorEnabled) {
+          const totpCode = (credentials as Record<string, unknown>)?.totp as string | undefined;
+          const { verifierCodeTOTP } = await import("./totp-service");
+          if (!totpCode || !foundUser.twoFactorSecret || !verifierCodeTOTP(foundUser.twoFactorSecret, totpCode)) {
+            return null;
+          }
+        }
 
         const roleId = foundUser.roleId ?? "9";
         const roleResult = await db

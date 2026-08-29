@@ -94,14 +94,15 @@ export const licenceRouter = createTRPCRouter({
         const v = verifierLicence(data.jeton, process.env.LICENCE_SECRET ?? "");
         if (!v.valide) throw new Error("Licence reçue invalide.");
         const [existing] = await db.select({ id: licenceLocale.id }).from(licenceLocale).limit(1);
+        const nouvelleCle = data.nouvelleCleApi ?? cleApi;
         if (existing) {
-          await db.update(licenceLocale).set({ jeton: data.jeton, dateFin: new Date(data.dateFin), mode: data.mode, cleApi, dernierHeartbeat: new Date(), derniereVerification: new Date(), miseAJourLe: new Date() } as any).where(eq(licenceLocale.id, existing.id));
+          await db.update(licenceLocale).set({ jeton: data.jeton, dateFin: new Date(data.dateFin), mode: data.mode, cleApi: nouvelleCle, dernierHeartbeat: new Date(), derniereVerification: new Date(), miseAJourLe: new Date() } as any).where(eq(licenceLocale.id, existing.id));
         } else {
-          await db.insert(licenceLocale).values({ siteId: siteCode, cleApi, jeton: data.jeton, dateFin: new Date(data.dateFin), graceJours: 7, mode: data.mode, dernierHeartbeat: new Date() } as any);
+          await db.insert(licenceLocale).values({ siteId: siteCode, cleApi: nouvelleCle, jeton: data.jeton, dateFin: new Date(data.dateFin), graceJours: 7, mode: data.mode, dernierHeartbeat: new Date() } as any);
         }
-        logger.info({ siteCode, dateFin: data.dateFin, renouvelee: data.renouvelee }, "Licence renouvelée");
+        logger.info({ siteCode, dateFin: data.dateFin, renouvelee: data.renouvelee, cleRotee: !!data.nouvelleCleApi }, "Licence renouvelée");
         invaliderLicenceCache();
-        return { success: true, dateFin: data.dateFin, renouvelee: data.renouvelee ?? false };
+        return { success: true, dateFin: data.dateFin, renouvelee: data.renouvelee ?? false, cleRotee: !!data.nouvelleCleApi };
       }
       return { success: true, renouvelee: false };
     }),

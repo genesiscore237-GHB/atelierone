@@ -15,6 +15,7 @@ export const passwordPolicySchema = z
 export const loginSchema = z.object({
   email: emailSchema,
   password: passwordSchema,
+  totp: z.string().optional(),
 });
 
 export const createUserSchema = z.object({

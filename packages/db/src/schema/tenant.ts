@@ -17,6 +17,8 @@ export const tenantSites = pgTable("tenant_sites", {
   statut: varchar("statut", { length: 30 }).default("ACTIF"), // ACTIF | SUSPENDU | RESILIE
   versionLogiciel: varchar("version_logiciel", { length: 30 }),
   cleApi: varchar("cle_api", { length: 100 }).notNull(), // token d'ingestion sync
+  cleApiAncienne: varchar("cle_api_ancienne", { length: 100 }), // clé précédente (fenêtre de bascule 24 h)
+  cleApiChangeLe: timestamp("cle_api_change_le"),
   dernierHeartbeat: timestamp("dernier_heartbeat"),
   derniereSync: timestamp("derniere_sync"),
   inscritLe: timestamp("inscrit_le").defaultNow(),

@@ -1,11 +1,14 @@
 "use client";
 
+import { useState } from "react";
+import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import {
-  BadgeCheck, CalendarClock, CreditCard, KeyRound, RefreshCw, ShieldCheck, UploadCloud, Wallet, WifiOff,
+  BadgeCheck, CalendarClock, CreditCard, KeyRound, RefreshCw, ShieldCheck, UploadCloud, Wallet, WifiOff, ShieldAlert, QrCode, Lock,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "~/components/ui/button";
+import { Input } from "~/components/ui/input";
 
 const fmtFCFA = (n: number | string | null | undefined) => new Intl.NumberFormat("fr-FR").format(Number(n ?? 0));
 const fmtDate = (d: string | Date | null | undefined) => (d ? new Date(d).toLocaleDateString("fr-FR") : "—");
@@ -23,6 +26,27 @@ export function MonAbonnement() {
   const { data, isLoading, refetch } = api.licence.portail.useQuery(undefined, { refetchInterval: 60_000 });
   const renouveler = api.licence.renouveler.useMutation({ onSuccess: () => { refetch(); } });
   const pousser = api.sync.pousser.useMutation({ onSuccess: () => { refetch(); } });
+  const [sec2fa, setSec2fa] = useState<null | { secret: string; uri: string }>(null);
+  const [code2fa, setCode2fa] = useState("");
+  const { data: etat2fa, refetch: refetch2fa } = api.user.get2FA.useQuery();
+  const activer2FA = api.user.activer2FA.useQuery(undefined, { enabled: false });
+  const genSecret = api.user.activer2FA.useQuery(undefined, { enabled: false });
+  const demarrerActivation = async () => {
+    try {
+      const r = await genSecret.refetch();
+      if (r.data) setSec2fa(r.data);
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+  const confirmer2FA = api.user.confirmer2FA.useMutation({
+    onSuccess: () => { toast.success("2FA activé — à chaque connexion, un code sera demandé"); setSec2fa(null); setCode2fa(""); refetch2fa(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const desactiver2FA = api.user.desactiver2FA.useMutation({
+    onSuccess: () => { toast.success("2FA désactivé"); setCode2fa(""); refetch2fa(); },
+    onError: (e) => toast.error(e.message),
+  });
 
   if (isLoading || !data) return <div className="h-64 animate-pulse rounded-xl bg-muted" />;
   const cfg = data.config as any;
@@ -152,6 +176,61 @@ export function MonAbonnement() {
                 </span>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* Sécurité du compte : 2FA */}
+      <div className="rounded-2xl border border-border bg-card p-6">
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+          <Lock size={14} className="text-primary" /> Sécurité du compte — double authentification (2FA)
+        </h3>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold uppercase ${etat2fa?.activé ? "bg-success/15 text-success-foreground" : "bg-muted text-muted-foreground"}`}>
+            <ShieldAlert size={12} /> {etat2fa?.activé ? "Activé" : "Désactivé"}
+          </span>
+          <p className="text-xs text-muted-foreground">
+            {etat2fa?.activé
+              ? "À chaque connexion, un code à 6 chiffres de votre application d'authentification sera demandé."
+              : "Protégez ce compte avec Google Authenticator, Aegis ou tout lecteur TOTP."}
+          </p>
+        </div>
+
+        {!etat2fa?.activé && !sec2fa && (
+          <Button size="sm" variant="outline" className="mt-3 gap-1.5" onClick={demarrerActivation}>
+            <QrCode size={13} /> Activer le 2FA
+          </Button>
+        )}
+
+        {sec2fa && (
+          <div className="mt-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
+            <p className="flex items-center gap-1.5 text-sm font-semibold"><QrCode size={14} className="text-primary" /> Configurez votre application</p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
+              <li>Scannez le lien ci-dessous (ou saisissez le secret manuellement) dans Google Authenticator / Aegis</li>
+              <li>Saisissez le code à 6 chiffres généré pour confirmer</li>
+            </ol>
+            <div className="mt-3 space-y-2">
+              <a href={sec2fa.uri} className="block truncate rounded-lg border border-border bg-background px-3 py-2 font-mono text-[10px] text-primary hover:underline" title="Ouvrir dans votre application">
+                {sec2fa.uri}
+              </a>
+              <p className="font-mono text-[10px] text-muted-foreground">Secret : {sec2fa.secret}</p>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <Input value={code2fa} onChange={(e) => setCode2fa(e.target.value)} placeholder="Code à 6 chiffres" maxLength={6} className="w-40" />
+              <Button size="sm" disabled={code2fa.length !== 6 || confirmer2FA.isPending} onClick={() => confirmer2FA.mutate({ code: code2fa })}>
+                Confirmer l'activation
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSec2fa(null)}>Annuler</Button>
+            </div>
+          </div>
+        )}
+
+        {etat2fa?.activé && (
+          <div className="mt-3 flex items-center gap-2">
+            <Input value={code2fa} onChange={(e) => setCode2fa(e.target.value)} placeholder="Code à 6 chiffres pour désactiver" maxLength={6} className="w-44" />
+            <Button size="sm" variant="outline" className="text-destructive" disabled={code2fa.length !== 6 || desactiver2FA.isPending} onClick={() => desactiver2FA.mutate({ code: code2fa })}>
+              Désactiver le 2FA
+            </Button>
           </div>
         )}
       </div>

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db, tenantSites, tenantLicences, tenantPaiements } from "@atelierone/db";
 import { and, eq, desc } from "drizzle-orm";
 import { signerLicence, etendrePeriode, type LicencePayload } from "~/server/lib/licence-service";
+import { validerCleSite } from "~/server/lib/cle-sync";
 
 /**
  * Heartbeat du garage : met à jour la dernière connexion + renvoie une licence
@@ -21,11 +22,13 @@ export async function POST(req: Request) {
     }
 
     const [site] = await db
-      .select({ id: tenantSites.id, nomGarage: tenantSites.nomGarage, statut: tenantSites.statut })
+      .select({ id: tenantSites.id, nomGarage: tenantSites.nomGarage, statut: tenantSites.statut, cleApi: tenantSites.cleApi, cleApiAncienne: tenantSites.cleApiAncienne, cleApiChangeLe: tenantSites.cleApiChangeLe })
       .from(tenantSites)
-      .where(and(eq(tenantSites.codeSite, codeSite), eq(tenantSites.cleApi, cleApi)))
+      .where(eq(tenantSites.codeSite, codeSite))
       .limit(1);
-    if (!site) return NextResponse.json({ error: "Site inconnu ou clé invalide." }, { status: 401 });
+    if (!site) return NextResponse.json({ error: "Site inconnu." }, { status: 401 });
+    const validation = validerCleSite(site, cleApi);
+    if (!validation.valide) return NextResponse.json({ error: "Clé invalide." }, { status: 401 });
     if (site.statut === "SUSPENDU") return NextResponse.json({ error: "Site suspendu : contactez le support." }, { status: 403 });
 
     await db.update(tenantSites).set({ dernierHeartbeat: new Date(), versionLogiciel: body.versionLogiciel ?? undefined } as any).where(eq(tenantSites.id, site.id));
@@ -75,10 +78,10 @@ export async function POST(req: Request) {
       dateFinActuelle = etendue.dateFin;
     } else if (licence) {
       // Pas de paiement récent : on renvoie la licence actuelle (le décompte continue)
-      return NextResponse.json({ success: true, jeton: licence.jeton, dateFin: licence.dateFin, mode: licence.mode ?? "ESSAI", renouvelee: false });
+      return NextResponse.json({ success: true, jeton: licence.jeton, dateFin: licence.dateFin, mode: licence.mode ?? "ESSAI", renouvelee: false, nouvelleCleApi: validation.nouvelleCleApi });
     }
 
-    return NextResponse.json({ success: true, jeton: licence?.jeton ?? "", dateFin: dateFinActuelle, mode: paiement ? "ABONNEMENT" : "ESSAI", renouvelee: !!paiement });
+    return NextResponse.json({ success: true, jeton: licence?.jeton ?? "", dateFin: dateFinActuelle, mode: paiement ? "ABONNEMENT" : "ESSAI", renouvelee: !!paiement, nouvelleCleApi: validation.nouvelleCleApi });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
