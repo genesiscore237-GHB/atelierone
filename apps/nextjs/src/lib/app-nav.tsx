@@ -39,7 +39,8 @@ import {
   ArrowLeftRight,
   Gauge,
   BarChart3,
-  ShieldCheck,
+ShieldCheck,
+  KeyRound,
   Warehouse,
   HandCoins,
   Network,
@@ -87,6 +88,14 @@ export const DOMAINS: AppDomain[] = [
     desc: "Paramétrage, utilisateurs & rôles, journal d'audit",
     href: "/dashboard/administration",
     modules: [
+      {
+        id: "mon-abonnement",
+        label: "Mon abonnement",
+        href: "/dashboard/mon-abonnement",
+        icon: KeyRound,
+        desc: "Licence, paiements, synchronisation, version du pack",
+        moduleId: "saas",
+      },
       {
         id: "parametrage",
         label: "Paramétrage général",

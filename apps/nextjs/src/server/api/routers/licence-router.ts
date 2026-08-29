@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, publicProcedure, requirePermissionProcedure, invaliderLicenceCache } from "~/server/api/trpc";
-import { db, licenceLocale } from "@atelierone/db";
+import { db, licenceLocale, syncEtat } from "@atelierone/db";
 import { eq } from "drizzle-orm";
 import { verifierLicence } from "~/server/lib/licence-service";
 import { logger } from "~/server/lib/logger";
@@ -30,6 +30,45 @@ export const licenceRouter = createTRPCRouter({
       dateFin: row.dateFin,
       mode: row.mode,
       siteCode: row.siteId,
+    };
+  }),
+
+  /** Portail client : licence + paiements + licences historisées + sync + version. */
+  portail: publicProcedure.query(async () => {
+    const centralUrl = process.env.CENTRAL_URL ?? "";
+    const siteCode = process.env.SITE_CODE ?? "";
+    const [local] = await db.select().from(licenceLocale).limit(1);
+    const cleApi = local?.cleApi ?? process.env.SITE_CLE_API ?? "";
+    const sync = await db.select().from(syncEtat).orderBy(syncEtat.table);
+
+    let central: { site?: any; licences: any[]; paiements: any[] } | null = null;
+    if (centralUrl && siteCode && cleApi) {
+      try {
+        const res = await fetch(`${centralUrl}/api/sync/portail?codeSite=${encodeURIComponent(siteCode)}&cleApi=${encodeURIComponent(cleApi)}`);
+        if (res.ok) central = await res.json();
+      } catch (e) {
+        logger.warn({ e }, "Portail central injoignable");
+      }
+    }
+
+    return {
+      config: {
+        actif: !!centralUrl && !!siteCode && !!cleApi,
+        centralUrl,
+        siteCode,
+        versionPack: process.env.npm_package_version ?? "simulation",
+        licenceMode: process.env.LICENCE_MODE ?? "off",
+      },
+      licenceLocale: local
+        ? (() => {
+            const v = verifierLicence(local.jeton, process.env.LICENCE_SECRET ?? "");
+            return { siteId: local.siteId, mode: local.mode, dateFin: local.dateFin, statut: v.statut, joursRestants: v.joursRestants, joursGrace: v.joursGrace, dernierHeartbeat: local.dernierHeartbeat, derniereVerification: local.derniereVerification };
+          })()
+        : null,
+      sync,
+      central: central
+        ? { site: central.site ?? null, licences: central.licences ?? [], paiements: central.paiements ?? [] }
+        : null,
     };
   }),
 
