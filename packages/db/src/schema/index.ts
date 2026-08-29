@@ -118,5 +118,5 @@ export {
   trainingParticipations,
 } from "./rh_competences";
 export { hrDocumentTypes } from "./rh_documents";
-export { tenantSites, tenantLicences, tenantPaiements, syncIngests, tenantSnapshots, tenantRelances, tenantAudit } from "./tenant";
+export { tenantSites, tenantLicences, tenantPaiements, syncIngests, tenantSnapshots, tenantRelances, tenantAudit, tenantUsage } from "./tenant";
 export { licenceLocale, syncEtat, syncOutbox } from "./saa_local";

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, requirePermissionProcedure, adminProcedure } from "~/server/api/trpc";
-import { db, tenantSites, tenantLicences, tenantPaiements, syncIngests, tenantSnapshots, tenantRelances, tenantAudit } from "@atelierone/db";
+import { db, tenantSites, tenantLicences, tenantPaiements, syncIngests, tenantSnapshots, tenantRelances, tenantAudit, tenantUsage } from "@atelierone/db";
 import { eq, and, desc, sql, gte, lt } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { signerLicence, etendrePeriode, type LicencePayload } from "~/server/lib/licence-service";
@@ -422,4 +422,31 @@ export const centralRouter = createTRPCRouter({
     );
     return `reference;code_site;garage;montant;mois;mode;fournisseur;statut;paye_le;cree_le\n${lignes.join("\n")}`;
   }),
+
+  // ─── Analytique d'usage : adoption des modules par garage ───
+  usage: requirePermissionProcedure("central.consulter")
+    .input(z.object({ periode: z.string().optional() }).optional())
+    .query(async ({ input }) => {
+      const periode = input?.periode ?? new Date().toISOString().slice(0, 7);
+      const rows = await db
+        .select({
+          siteId: tenantUsage.siteId,
+          entite: tenantUsage.entite,
+          nbLignes: tenantUsage.nbLignes,
+          siteCode: tenantSites.codeSite,
+          siteNom: tenantSites.nomGarage,
+        })
+        .from(tenantUsage)
+        .leftJoin(tenantSites, eq(tenantUsage.siteId, tenantSites.id))
+        .where(eq(tenantUsage.periode, periode))
+        .orderBy(tenantUsage.siteId, tenantUsage.entite);
+      const parSite = new Map<number, { siteCode: string; siteNom: string; modules: { entite: string; nbLignes: number }[] }>();
+      for (const r of rows) {
+        const s = parSite.get(r.siteId) ?? { siteCode: r.siteCode ?? "", siteNom: r.siteNom ?? "", modules: [] };
+        s.modules.push({ entite: r.entite, nbLignes: r.nbLignes ?? 0 });
+        parSite.set(r.siteId, s);
+      }
+      const sitesUsage = [...parSite.values()].map((s) => ({ ...s, nbModules: s.modules.length })).sort((a, b) => b.nbModules - a.nbModules);
+      return { periode, sites: sitesUsage };
+    }),
 });

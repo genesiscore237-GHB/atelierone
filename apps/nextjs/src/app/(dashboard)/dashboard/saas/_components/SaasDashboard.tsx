@@ -25,6 +25,7 @@ export function SaasDashboard() {
   const { data: paiements } = api.central.paiements.useQuery({});
   const { data: ingests } = api.central.ingests.useQuery({ limit: 20 });
   const { data: ficheTenant } = api.central.ficheTenant.useQuery({ siteId: tenantId ?? 0 }, { enabled: tenantId !== null });
+  const { data: usageData } = api.central.usage.useQuery({});
 
   const suspendre = api.central.suspendreSite.useMutation({
     onSuccess: () => { toast.success("Statut du site mis à jour"); utils.central.dashboard.invalidate(); },
@@ -254,6 +255,36 @@ export function SaasDashboard() {
                 <span className="font-bold uppercase text-[10px]">{a.action}</span>
                 <span className="text-muted-foreground">{a.acteurEmail ?? "—"}</span>
                 <span className="ml-auto text-muted-foreground">{fmtDateHeure(a.creeLe)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Adoption des modules */}
+      {(usageData?.sites ?? []).length > 0 && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+            <TrendingUp size={14} className="text-primary" /> Adoption des modules ({usageData.periode})
+          </h3>
+          <p className="mb-3 text-xs text-muted-foreground">Combien de modules chaque garage utilise réellement — base de l'upsell.</p>
+          <div className="space-y-2">
+            {(usageData.sites ?? []).map((u: any) => (
+              <div key={u.siteCode} className="rounded-lg border border-border/60 bg-muted/10 p-3">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-semibold">{u.siteNom}</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">{u.siteCode}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${u.nbModules >= 5 ? "bg-success/15 text-success-foreground" : u.nbModules >= 3 ? "bg-warning/15 text-warning-foreground" : "bg-destructive/15 text-destructive"}`}>
+                    {u.nbModules} module(s)
+                  </span>
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {u.modules.map((m: any) => (
+                    <span key={m.entite} className="rounded-full bg-background px-2 py-0.5 text-[9px] font-semibold text-muted-foreground ring-1 ring-border">
+                      {m.entite} · {m.nbLignes}
+                    </span>
+                  ))}
+                </div>
               </div>
             ))}
           </div>

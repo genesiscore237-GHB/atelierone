@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { db, tenantSites, syncIngests, tenantSnapshots } from "@atelierone/db";
+import { db, tenantSites, syncIngests, tenantSnapshots, tenantUsage } from "@atelierone/db";
 import { and, eq, sql } from "drizzle-orm";
 
 /**
@@ -53,6 +53,15 @@ export async function POST(req: Request) {
           .values({ siteId: site.id, type: "OR", montant: Math.round(e.lignes.reduce((s: number, l: any) => s + Number(l.total_ttc ?? l.totalTTC ?? 0), 0)), nb: e.lignes.length, periode } as any)
           .onConflictDoNothing();
       }
+      // Analytique d'usage : upsert par site + entité + mois
+      const periodeU = new Date().toISOString().slice(0, 7);
+      await db
+        .insert(tenantUsage)
+        .values({ siteId: site.id, entite: e.entite, periode: periodeU, nbLignes: e.lignes.length } as any)
+        .onConflictDoUpdate({
+          target: [tenantUsage.siteId, tenantUsage.entite, tenantUsage.periode],
+          set: { nbLignes: sql`${tenantUsage.nbLignes} + ${e.lignes.length}`, majLe: new Date() } as any,
+        });
     }
     await db.update(tenantSites).set({ derniereSync: new Date() } as any).where(eq(tenantSites.id, site.id));
     return NextResponse.json({ success: true, reçu: total });

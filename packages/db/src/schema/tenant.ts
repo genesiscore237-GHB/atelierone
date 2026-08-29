@@ -97,3 +97,13 @@ export const tenantAudit = pgTable("tenant_audit", {
   acteurEmail: varchar("acteur_email", { length: 255 }),
   creeLe: timestamp("cree_le").defaultNow(),
 });
+
+/** Usage des modules par site et période (analytique d'adoption → upsell). */
+export const tenantUsage = pgTable("tenant_usage", {
+  id: serial("id").primaryKey(),
+  siteId: integer("site_id").notNull().references(() => tenantSites.id, { onDelete: "cascade" }),
+  entite: varchar("entite", { length: 80 }).notNull(), // clients, ventes, ordres_reparation…
+  periode: varchar("periode", { length: 10 }).notNull(), // YYYY-MM
+  nbLignes: integer("nb_lignes").default(0),
+  majLe: timestamp("maj_le").defaultNow(),
+});
