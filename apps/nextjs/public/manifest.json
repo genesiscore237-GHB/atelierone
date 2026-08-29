@@ -1,7 +1,7 @@
 {
   "name": "AtelierOne",
   "short_name": "AtelierOne",
-  "description": "Système de gestion pour librairies et papeteries",
+  "description": "ERP pour garage automobile : véhicules, ordres de réparation, clients, facturation, stock, RH — hors-ligne first",
   "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#020617",

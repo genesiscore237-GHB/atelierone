@@ -48,6 +48,37 @@ export function MonAbonnement() {
     onError: (e) => toast.error(e.message),
   });
 
+  const telechargerQuittance = async () => {
+    if (!data) return;
+    const central = data.central as any;
+    const paiements = (central?.paiements ?? []) as any[];
+    const confirmes = paiements.filter((p) => p.statut === "CONFIRME");
+    const totalPaye = confirmes.reduce((s, p) => s + p.montant, 0);
+    try {
+      const { jsPDF } = await import("jspdf");
+      const doc = new jsPDF();
+      doc.setFontSize(16);
+      doc.text("AtelierOne — Quittance d'abonnement", 15, 20);
+      doc.setFontSize(10);
+      doc.text(`Garage : ${cfg.siteCode} (pack v${cfg.versionPack})`, 15, 32);
+      doc.text(`Licence : ${loc?.mode ?? "—"} — échéance ${loc ? fmtDate(loc.dateFin) : "—"}`, 15, 39);
+      doc.text(`Site : ${cfg.siteCode} — ${cfg.centralUrl}`, 15, 46);
+      doc.text(`Total réglé (abonnements confirmés) : ${fmtFCFA(totalPaye)} FCFA`, 15, 53);
+      doc.text(`Édité le ${new Date().toLocaleDateString("fr-FR")}`, 15, 60);
+      let y = 70;
+      doc.setFontSize(9);
+      doc.text("Références :", 15, y);
+      for (const p of confirmes.slice(0, 12)) {
+        y += 6;
+        doc.text(`${p.reference} — ${fmtFCFA(p.montant)} F (${p.periodeMois} mois, ${p.fournisseur ?? p.modePaiement}) — ${fmtDate(p.payeLe ?? p.createdAt)}`, 15, y);
+      }
+      doc.save(`quittance-${cfg.siteCode}.pdf`);
+      toast.success("Quittance téléchargée");
+    } catch (e: any) {
+      toast.error(e.message ?? "Génération impossible");
+    }
+  };
+
   if (isLoading || !data) return <div className="h-64 animate-pulse rounded-xl bg-muted" />;
   const cfg = data.config as any;
   const loc = data.licenceLocale as any;
@@ -109,6 +140,9 @@ export function MonAbonnement() {
               <CreditCard size={13} /> Payer / renouveler
             </Link>
           )}
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={telechargerQuittance}>
+            <QrCode size={13} className="hidden" /> Télécharger ma quittance (PDF)
+          </Button>
         </div>
       </div>
 

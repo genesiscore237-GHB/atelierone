@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { auth } from "~/lib/auth";
 import { LayoutDashboard } from "lucide-react";
 import { BentoGrid } from "./_components/BentoGrid";
+import { OnboardingGuide } from "./_components/OnboardingGuide";
 import { ThemeToggle } from "~/components/ui/theme-toggle";
 import LogoutButton from "./_components/LogoutButton";
 
@@ -92,6 +93,7 @@ export default async function DashboardPage() {
         </header>
 
         <BentoGrid />
+        <OnboardingGuide />
       </main>
 
       {/* SYSTEM BAR */}
