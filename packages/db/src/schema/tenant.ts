@@ -74,3 +74,26 @@ export const tenantSnapshots = pgTable("tenant_snapshots", {
   periode: varchar("periode", { length: 10 }), // YYYY-MM
   majLe: timestamp("maj_le").defaultNow(),
 });
+
+/** Actions de relance générées pour l'éditeur (licence expirant, hors-ligne, paiement échoué). */
+export const tenantRelances = pgTable("tenant_relances", {
+  id: serial("id").primaryKey(),
+  siteId: integer("site_id").notNull().references(() => tenantSites.id, { onDelete: "cascade" }),
+  type: varchar("type", { length: 40 }).notNull(), // LICENCE_EXPIRANT | HORS_LIGNE | SANS_LICENCE
+  message: varchar("message", { length: 500 }).notNull(),
+  statut: varchar("statut", { length: 20 }).default("A_FAIRE"), // A_FAIRE | FAITE | IGNOREE
+  creeLe: timestamp("cree_le").defaultNow(),
+  faiteLe: timestamp("faite_le"),
+  faitePar: integer("faite_par"),
+});
+
+/** Journal des actions de l'éditeur (audit SaaS). */
+export const tenantAudit = pgTable("tenant_audit", {
+  id: serial("id").primaryKey(),
+  siteId: integer("site_id").references(() => tenantSites.id, { onDelete: "set null" }),
+  action: varchar("action", { length: 80 }).notNull(),
+  details: jsonb("details"),
+  acteurId: integer("acteur_id"),
+  acteurEmail: varchar("acteur_email", { length: 255 }),
+  creeLe: timestamp("cree_le").defaultNow(),
+});
