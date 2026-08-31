@@ -9,6 +9,7 @@ import { analyticsRouter } from "~/server/api/routers/analytics";
 import { pricingRouter } from "~/server/api/routers/pricing";
 import { procurementRouter } from "~/server/api/routers/procurement";
 import { fournisseursRouter } from "~/server/api/routers/fournisseurs-router";
+import { outillageRouter } from "~/server/api/routers/outillage-router";
 import { licenceRouter } from "~/server/api/routers/licence-router";
 import { syncRouter } from "~/server/api/routers/sync-router";
 import { centralRouter } from "~/server/api/routers/central-router";
@@ -35,6 +36,7 @@ import { rhCompetencesRouter } from "~/server/api/routers/rh-competences";
 import { rhDisciplineRouter } from "~/server/api/routers/rh-discipline";
 import { rhDocumentsRouter } from "~/server/api/routers/rh-documents";
 import { rhDashboardRouter } from "~/server/api/routers/rh-dashboard";
+import { rhPostureRouter } from "~/server/api/routers/rh-posture";
 import { rhPlanningRouter } from "~/server/api/routers/rh-planning";
 import { partnerRouter } from "~/server/api/routers/partner";
 import { stockRouter } from "~/server/api/routers/stock";
@@ -63,6 +65,7 @@ export const appRouter = createTRPCRouter({
   pricing: pricingRouter,
   procurement: procurementRouter,
   fournisseurs: fournisseursRouter,
+  outillage: outillageRouter,
   customers: customersRouter,
   clients: clientsRouter,
   contrats: contratsRouter,
@@ -79,6 +82,7 @@ export const appRouter = createTRPCRouter({
   rh: rhRouter,
   rhSettings: rhSettingsRouter,
   rhPresence: rhPresenceRouter,
+  rhPosture: rhPostureRouter,
   rhLeave: rhLeaveRouter,
   rhPayroll: rhPayrollRouter,
   rhEvaluation: rhEvaluationRouter,

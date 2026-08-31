@@ -20,6 +20,7 @@ const scheduleSchema = z.object({
   breakStart: z.string().nullable().optional(),
   breakEnd: z.string().nullable().optional(),
   expectedHours: z.string().nullable().optional(),
+  overtimeThreshold: z.string().nullable().optional(), // seuil HS journalier (ex. "9.5")
   isWorkingDay: z.boolean().default(true),
 });
 

@@ -22,6 +22,8 @@ export const attendanceEntries = pgTable("attendance_entries", {
   employeeId: integer("employee_id").notNull().references(() => employes.id, { onDelete: "cascade" }),
   date: date("date").notNull(),
   timeIn: time("time_in"),
+  timeInBreak: time("time_in_break"), // départ à la pause (pointage en direct)
+  timeOutBreak: time("time_out_break"), // retour de pause (pointage en direct)
   timeOut: time("time_out"),
   source: varchar("source", { length: 20 }).default("manual"), // manual | biometric | import
   status: varchar("status", { length: 20 }).default("present"), // present | absent | conge | maladie | mission

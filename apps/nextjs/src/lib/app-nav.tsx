@@ -41,6 +41,8 @@ import {
   BarChart3,
 ShieldCheck,
   KeyRound,
+  Hammer,
+  Clock,
   Warehouse,
   HandCoins,
   Network,
@@ -160,6 +162,14 @@ export const DOMAINS: AppDomain[] = [
         href: "/dashboard/rh/employes",
         icon: UserRound,
         desc: "Identité, contrat, poste, historique",
+        moduleId: "rh",
+      },
+      {
+        id: "rh-pointage-direct",
+        label: "Pointage en direct",
+        href: "/dashboard/rh/pointage-en-direct",
+        icon: Clock,
+        desc: "Qui travaille, en pause, en mission — posture temps réel + salaire sur période",
         moduleId: "rh",
       },
       {
@@ -441,6 +451,14 @@ export const DOMAINS: AppDomain[] = [
         icon: Building2,
         desc: "Tous prestataires (pièces + services), conditions, NIU/RCCM",
         moduleId: "procurement",
+      },
+      {
+        id: "stock-outillage",
+        label: "Outillage & Matériel",
+        href: "/dashboard/stock/outillage",
+        icon: Hammer,
+        desc: "Outils prêtés aux techniciens, consommables, EPI — recherche & inventaire",
+        moduleId: "outillage",
       },
       {
         id: "stock-factures-fournisseurs",

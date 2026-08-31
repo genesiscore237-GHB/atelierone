@@ -38,6 +38,8 @@ export interface PresenceSettings {
   autoDeductLate: boolean | null;
   autoDeductEarlyDeparture: boolean | null;
   maxNormalHoursPerDay: string | null;
+  /** Paramètre global (rh_general_settings.default_overtime_threshold) */
+  defaultOvertimeThreshold?: string | null;
 }
 
 export interface OvertimeAuthInput {
@@ -48,6 +50,9 @@ export interface OvertimeAuthInput {
 export interface CalcInput {
   timeIn: string | null; // "HH:MM"
   timeOut: string | null;
+  /** Pointage en direct : pause réelle (départ / retour) — remplace la pause théorique si fournie */
+  timeInBreak?: string | null;
+  timeOutBreak?: string | null;
   schedule: DaySchedule | null;
   settings: PresenceSettings;
   overtimeAuth: OvertimeAuthInput | null;
@@ -94,12 +99,13 @@ function overlapMinutes(
 const AUTH_APPROVED = new Set(["approuvee", "approved", "validee", "valide"]);
 const AUTH_REJECTED = new Set(["refusee", "rejected", "refuse"]);
 
-/** Seuil HS du jour : overtimeThreshold du cycle → plafond normal → heures attendues → défaut 9,5h */
+/** Seuil HS du jour : overtimeThreshold du cycle → plafond normal → heures attendues → paramètre global → défaut 9,5h */
 export function dayThreshold(schedule: DaySchedule | null, settings: PresenceSettings): number {
   const raw =
     schedule?.overtimeThreshold ??
     settings.maxNormalHoursPerDay ??
     schedule?.expectedHours ??
+    settings.defaultOvertimeThreshold ??
     "9.5";
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n * 60 : 570;
@@ -161,9 +167,14 @@ export function calculateAttendance(input: CalcInput): CalcResult {
   // Durée brute (règle 5 : minutes d'abord)
   const rawMinutes = Math.max(0, effectiveOut - effectiveIn);
 
-  // 2. Pause déduite = recouvrement avec la plage de pause (règle 6)
+  // 2. Pause déduite = pause RÉELLE pointée (timeInBreak/timeOutBreak) si disponible,
+  //    sinon recouvrement avec la plage de pause théorique (règle 6)
   let breakMinutes = 0;
-  if (autoDeductBreak && breakStart !== null && breakEnd !== null) {
+  const inBreak = toMinutes(input.timeInBreak ?? null);
+  const outBreak = toMinutes(input.timeOutBreak ?? null);
+  if (inBreak !== null && outBreak !== null && outBreak > inBreak) {
+    breakMinutes = outBreak - inBreak;
+  } else if (autoDeductBreak && breakStart !== null && breakEnd !== null) {
     breakMinutes = overlapMinutes(effectiveIn, effectiveOut, breakStart, breakEnd);
   }
 

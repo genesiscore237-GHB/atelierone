@@ -31,15 +31,17 @@ export function calculateBalance(
 export function countWorkingDays(
   start: string, // YYYY-MM-DD
   end: string,
-  isWorkingDay: (dayOfWeek: number) => boolean
+  isWorkingDay: (dayOfWeek: number) => boolean,
+  publicHolidays: string[] = [] // dates "YYYY-MM-DD" exclues (jours fériés)
 ): number {
   const s = new Date(`${start}T12:00:00`);
   const e = new Date(`${end}T12:00:00`);
   if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime()) || e < s) return 0;
+  const holidays = new Set(publicHolidays);
   let count = 0;
   const cursor = new Date(s);
   while (cursor <= e) {
-    if (isWorkingDay(cursor.getDay())) count++;
+    if (isWorkingDay(cursor.getDay()) && !holidays.has(cursor.toISOString().slice(0, 10))) count++;
     cursor.setDate(cursor.getDate() + 1);
   }
   return count;

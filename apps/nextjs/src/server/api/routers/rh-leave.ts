@@ -5,6 +5,7 @@ import {
   employes,
   hrLeaveTypes,
   hrGeneralSettings,
+  hrPublicHolidays,
   leaveBalances,
   leaveRequests,
   leaveBalanceAdjustments,
@@ -161,7 +162,9 @@ export const rhLeaveRouter = createTRPCRouter({
       if (input.endDate < input.startDate) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "La date de fin doit suivre la date de début." });
       }
-      const daysCount = countWorkingDays(input.startDate, input.endDate, garageWorkingDay);
+      // Jours fériés paramétrés exclus du décompte (M8)
+      const feries = await db.select({ date: hrPublicHolidays.date }).from(hrPublicHolidays).where(eq(hrPublicHolidays.agenceId, ctx.user.agenceId));
+      const daysCount = countWorkingDays(input.startDate, input.endDate, garageWorkingDay, feries.map((f) => f.date));
       if (daysCount <= 0) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "La période ne contient aucun jour ouvré." });
       }

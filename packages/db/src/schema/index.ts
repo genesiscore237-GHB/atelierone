@@ -90,6 +90,7 @@ export {
   attendanceMonthlySummaries,
 } from "./rh_presences";
 export { planningAffectations } from "./rh_planning";
+export { employeePostures, TYPES_MISSION } from "./rh_postures";
 export {
   leaveBalances,
   leaveRequests,
@@ -120,3 +121,4 @@ export {
 export { hrDocumentTypes } from "./rh_documents";
 export { tenantSites, tenantLicences, tenantPaiements, syncIngests, tenantSnapshots, tenantRelances, tenantAudit, tenantUsage } from "./tenant";
 export { licenceLocale, syncEtat, syncOutbox } from "./saa_local";
+export { pretsOutils } from "./prets_outils";
