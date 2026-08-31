@@ -160,6 +160,8 @@ export const vehiculesRouter = createTRPCRouter({
           raisonBlocage: ordresReparation.raisonBlocage,
           clientAttendSurPlace: ordresReparation.clientAttendSurPlace,
           devisAccepte: ordresReparation.devisAccepte,
+          factureTransmiseLe: ordresReparation.factureTransmiseLe,
+          attenteBonCommande: ordresReparation.attenteBonCommande,
           venteId: ordresReparation.venteId,
           totalTTC: ordresReparation.totalTTC,
           createdAt: ordresReparation.createdAt,
@@ -287,6 +289,7 @@ export const vehiculesRouter = createTRPCRouter({
               id: ventes.id,
               reference: ventes.reference,
               montantTotal: ventes.montantTotal,
+              montantPaye: ventes.montantPaye,
               statut: ventes.statut,
               createdAt: ventes.createdAt,
             })
@@ -294,7 +297,10 @@ export const vehiculesRouter = createTRPCRouter({
             .where(eq(ventes.id, orCourant.venteId))
             .limit(1);
           if (v) {
-            facture = v;
+            const paye = Number(v.montantPaye ?? 0);
+            const total = Number(v.montantTotal ?? 0);
+            const etat = paye >= total && total > 0 ? "PAYEE" : paye > 0 ? "AVANCE" : orCourant.attenteBonCommande ? "ATTENTE_BON_COMMANDE" : orCourant.factureTransmiseLe ? "ATTENTE_PAIEMENT" : "NON_TRANSMISE";
+            facture = { ...v, etat, montant: v.montantTotal, transmiseLe: orCourant.factureTransmiseLe, attenteBonCommande: orCourant.attenteBonCommande };
             factureLignes = await db
               .select({
                 id: ventesLignes.id,

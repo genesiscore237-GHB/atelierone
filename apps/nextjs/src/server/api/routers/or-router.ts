@@ -4,6 +4,7 @@ import { db } from "~/server/db";
 import {
   ordresReparation,
   lignesOrdreReparation,
+  interventionsTechniciens,
   vehicules,
   clients,
   produits,
@@ -341,6 +342,10 @@ export const orRouter = createTRPCRouter({
       clientAttendSurPlace: z.boolean().optional(),
       courtoisieDemandee: z.boolean().optional(),
       notes: z.string().optional(),
+      // Performance & Qualité (specs V2)
+      familleService: z.string().optional(),
+      savOrigineOrId: z.number().int().optional(),
+      motifRetourSAV: z.enum(["CONSIGNE_NON_RESPECTEE", "MALFACON", "DIAGNOSTIC_ERRONE", "PIECE_DEFAILLANTE", "AUTRE"]).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const [vehicule] = await db
@@ -393,6 +398,9 @@ export const orRouter = createTRPCRouter({
           diagnostic: input.diagnostic ?? null,
           priorite: input.priorite,
           motEntree: input.motEntree,
+          familleService: input.familleService ?? null,
+          savOrigineOrId: input.savOrigineOrId ?? null,
+          motifRetourSAV: input.motifRetourSAV ?? null,
           datePromesse: input.datePromesse ?? null,
           dateFinPrevue: input.dateFinPrevue ?? null,
           emplacement: input.emplacement ?? "Réception",
@@ -406,11 +414,16 @@ export const orRouter = createTRPCRouter({
         .returning();
 
       // Historique de création (traçabilité complète)
+      const creationCommentaire = [
+        `Réception ${input.motEntree} — ${input.plainte ?? "sans consigne"}`,
+        input.savOrigineOrId ? `RETOUR SAV lié à l'OR #${input.savOrigineOrId} (${input.motifRetourSAV})` : null,
+        input.datePromesse ? `promesse ${input.datePromesse}` : null,
+      ].filter(Boolean).join(" · ");
       await db.insert(orHistorique).values({
         orId: row.id,
         type: "CREATION",
         nouvelleValeur: "EN_ATTENTE_DIAGNOSTIC",
-        commentaire: `Réception ${input.motEntree} — ${input.plainte ?? "sans consigne"}${input.datePromesse ? `, promesse ${input.datePromesse}` : ""}`,
+        commentaire: creationCommentaire,
         changePar: Number(ctx.user.id),
       } as any);
 
@@ -1333,6 +1346,7 @@ export const orRouter = createTRPCRouter({
       const rows = await db
         .select({
           id: ordresReparation.id,
+          vehiculeId: ordresReparation.vehiculeId,
           numero: ordresReparation.numero,
           statut: ordresReparation.statut,
           priorite: ordresReparation.priorite,
@@ -1346,6 +1360,9 @@ export const orRouter = createTRPCRouter({
           responsableNom: employes.nom,
           responsablePrenom: employes.prenom,
           venteId: ordresReparation.venteId,
+          factureTransmiseLe: ordresReparation.factureTransmiseLe,
+          attenteBonCommande: ordresReparation.attenteBonCommande,
+          devisAccepte: ordresReparation.devisAccepte,
           immatriculation: vehicules.immatriculation,
           marque: vehicules.marque,
           modele: vehicules.modele,
@@ -1364,6 +1381,78 @@ export const orRouter = createTRPCRouter({
         .where(eq(ordresReparation.agenceId, ctx.user.agenceId))
         .orderBy(desc(ordresReparation.dateOuverture));
 
+      const orIds = rows.map((r) => r.id);
+      const orIdSet = orIds.length ? orIds : [-1];
+
+      // Diagnostics (dernier rapport par OR)
+      const rapports = await db
+        .select({ orId: orRapportsDiagnostic.orId, id: orRapportsDiagnostic.id, statut: orRapportsDiagnostic.statut, constat: orRapportsDiagnostic.constat })
+        .from(orRapportsDiagnostic)
+        .where(inArray(orRapportsDiagnostic.orId, orIdSet))
+        .orderBy(desc(orRapportsDiagnostic.id));
+      const diagParOr = new Map<number, { statut: string; constat: string | null }>();
+      for (const r of rapports) if (!diagParOr.has(r.orId)) diagParOr.set(r.orId, { statut: r.statut, constat: r.constat });
+
+      // Interventions (techniciens + nb + heures)
+      const interv = await db
+        .select({
+          ordreId: interventionsTechniciens.ordreId,
+          technicienNom: employes.nom,
+          technicienPrenom: employes.prenom,
+          duree: interventionsTechniciens.dureeHeures,
+        })
+        .from(interventionsTechniciens)
+        .leftJoin(employes, eq(interventionsTechniciens.technicienId, employes.id))
+        .where(inArray(interventionsTechniciens.ordreId, orIdSet));
+      const interParOr = new Map<number, { techniciens: string[]; nb: number; heures: number }>();
+      for (const i of interv) {
+        const cur = interParOr.get(i.ordreId) ?? { techniciens: [], nb: 0, heures: 0 };
+        const nom = `${i.technicienPrenom ?? ""} ${i.technicienNom ?? ""}`.trim();
+        if (nom && !cur.techniciens.includes(nom)) cur.techniciens.push(nom);
+        cur.nb++;
+        cur.heures += Number(i.duree ?? 0);
+        interParOr.set(i.ordreId, cur);
+      }
+
+      // Demandes de pièces (statuts + lignes par OR)
+      const demandes = await db
+        .select({ id: orDemandesPieces.id, orId: orDemandesPieces.orId, statut: orDemandesPieces.statut })
+        .from(orDemandesPieces)
+        .where(inArray(orDemandesPieces.orId, orIdSet));
+      const piecesParOr = new Map<number, { statuts: string[]; nbDemandes: number; enAttente: number; manquantes: number; servies: number }>();
+      for (const d of demandes) {
+        const cur = piecesParOr.get(d.orId) ?? { statuts: [], nbDemandes: 0, enAttente: 0, manquantes: 0, servies: 0 };
+        cur.nbDemandes++;
+        cur.statuts.push(d.statut);
+        if (d.statut === "EN_ATTENTE" || d.statut === "PARTIELLE") cur.enAttente++;
+        if (d.statut === "MANQUANTE") cur.manquantes++;
+        if (d.statut === "SERVIE") cur.servies++;
+        piecesParOr.set(d.orId, cur);
+      }
+
+      // Commandes fournisseur liées (BC)
+      const cmds = await db
+        .select({ orId: achats.orId, reference: achats.reference, statut: achats.statut })
+        .from(achats)
+        .where(and(sql`${achats.orId} IS NOT NULL`, inArray(achats.orId, orIdSet)));
+      const bcParOr = new Map<number, string[]>();
+      for (const c of cmds) {
+        const cur = bcParOr.get(c.orId ?? 0) ?? [];
+        cur.push(c.reference);
+        bcParOr.set(c.orId ?? 0, cur);
+      }
+
+      // Factures des OR
+      const venteIds = [...new Set(rows.map((r) => r.venteId).filter(Boolean))] as number[];
+      const ventesMap = new Map<number, { reference: string; montantTotal: number; montantPaye: number }>();
+      if (venteIds.length) {
+        const vRows = await db
+          .select({ id: ventes.id, reference: ventes.reference, montantTotal: ventes.montantTotal, montantPaye: ventes.montantPaye })
+          .from(ventes)
+          .where(inArray(ventes.id, venteIds));
+        for (const v of vRows) ventesMap.set(v.id, { reference: v.reference, montantTotal: Number(v.montantTotal ?? 0), montantPaye: Number(v.montantPaye ?? 0) });
+      }
+
       const parc = rows
         .filter((r) => r.statut !== "LIVRE" && r.statut !== "ANNULE")
         .map((r) => {
@@ -1374,6 +1463,25 @@ export const orRouter = createTRPCRouter({
             dateEntree: r.dateOuverture ?? new Date(),
             seuils,
           });
+          // État de facturation (logique alignée clients.getActivite)
+          let factureEtat: string | null = null;
+          let factureMontant: number | null = null;
+          let factureReference: string | null = null;
+          if (r.venteId && ventesMap.has(r.venteId)) {
+            const v = ventesMap.get(r.venteId)!;
+            factureMontant = v.montantTotal;
+            factureReference = v.reference;
+            if (v.montantPaye >= v.montantTotal && v.montantTotal > 0) factureEtat = "PAYEE";
+            else if (v.montantPaye > 0) factureEtat = "AVANCE";
+            else if (r.attenteBonCommande) factureEtat = "ATTENTE_BON_COMMANDE";
+            else if (r.factureTransmiseLe) factureEtat = "ATTENTE_PAIEMENT";
+            else factureEtat = "NON_TRANSMISE";
+          } else if (r.statut === "PRET_A_LIVRER") {
+            factureEtat = "A_FACTURER";
+          }
+          const diag = diagParOr.get(r.id);
+          const inter = interParOr.get(r.id);
+          const pieces = piecesParOr.get(r.id);
           return {
             ...r,
             joursImmobilisation: joursImmobilisation(r.dateOuverture ?? new Date()),
@@ -1381,6 +1489,14 @@ export const orRouter = createTRPCRouter({
             alerte: alerte.principale,
             alertes: alerte.alertes,
             clientDisplay: r.clientRaisonSociale ?? `${r.clientPrenom ?? ""} ${r.clientNom ?? ""}`.trim(),
+            diagnostic: diag ? { statut: diag.statut, constat: diag.constat ?? null } : null,
+            devis: r.devisAccepte ? "ACCEPTE" : r.statut === "EN_ATTENTE_VALIDATION" ? "EN_ATTENTE" : null,
+            techniciens: inter?.techniciens ?? [],
+            interventions: inter ? { nb: inter.nb, heures: Math.round(inter.heures * 100) / 100 } : null,
+            pieces: pieces
+              ? { nbDemandes: pieces.nbDemandes, enAttente: pieces.enAttente, manquantes: pieces.manquantes, servies: pieces.servies, bc: bcParOr.get(r.id) ?? [] }
+              : null,
+            facture: factureEtat ? { etat: factureEtat, montant: factureMontant, reference: factureReference } : null,
           };
         });
 
@@ -1405,6 +1521,39 @@ export const orRouter = createTRPCRouter({
       const topAnciens = [...parc].sort((a, b) => b.joursImmobilisation - a.joursImmobilisation).slice(0, 5);
 
       return { kpis, repPriorite, repStatut, topAnciens, parc, seuils };
+    }),
+
+  // ─── Pointage d'une intervention technicien sur un OR ───
+  pointageIntervention: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      technicienId: z.number().int(),
+      dateIntervention: z.string(),
+      dureeHeures: z.number().min(0).max(24).optional(),
+      description: z.string().optional(),
+      ligneId: z.number().int().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      const [row] = await db
+        .insert(interventionsTechniciens)
+        .values({
+          agenceId: ctx.user.agenceId,
+          ordreId: input.orId,
+          ligneId: input.ligneId ?? null,
+          technicienId: input.technicienId,
+          dateIntervention: input.dateIntervention,
+          dureeHeures: input.dureeHeures != null ? String(input.dureeHeures) : null,
+          description: input.description ?? null,
+          heureDebut: new Date(),
+        } as any)
+        .returning();
+      return row;
     }),
 
   // ─── Vue Alertes actives (retard, bloqués, P1, proches) ───
