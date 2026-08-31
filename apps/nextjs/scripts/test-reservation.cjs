@@ -28,11 +28,27 @@ const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PAS
     body: new URLSearchParams({ csrfToken: csrf.csrfToken, email: "admin@gpj.cm", password: "admin123", callbackUrl: BASE + "/dashboard" }),
   });
 
-  // Données de test : client, véhicule, OR
+  // Re-seed des pré-conditions (stock produit 1 = 24, réservations 0, équivalences nettoyées)
+  const { Client } = require("pg");
+  const seed = new Client({ connectionString: "postgresql://postgres:postgres@127.0.0.1:5432/atelierone_erp" });
+  await seed.connect();
+  await seed.query("UPDATE stocks SET quantite=24, quantite_reservee=0 WHERE produit_id=1 AND agence_id=1;");
+  await seed.query("DELETE FROM article_equivalences WHERE article_id=1 OR article_equivalent_id=1 OR article_id=2 OR article_equivalent_id=2;").catch(() => {});
+  await seed.end();
+
+  // Données de test : client, véhicule, OR (idempotent)
   const client = await trpcPost("customers.create", { nom: "Test Res", prenom: "A", telephone: "611111111", email: "res@x.cm" });
   const clientId = client[0]?.result?.data?.json?.id;
-  const veh = await trpcPost("or.createVehicule", { immatriculation: "LT-RES-01", marque: "Toyota", modele: "Rav4", annee: 2021, clientId: Number(clientId) });
-  const vehId = veh[0]?.result?.data?.json?.id;
+  const exVeh = await trpcGet("vehicules.list", { search: "LT-RES-01", limit: 10 });
+  let vehId = (exVeh[0]?.result?.data?.json?.vehicules ?? []).find((v) => v.immatriculation === "LT-RES-01")?.id;
+  if (!vehId) {
+    const veh = await trpcPost("vehicules.create", { immatriculation: "LT-RES-01", marque: "Toyota", modele: "Rav4", annee: 2021, clientId: Number(clientId) });
+    vehId = veh[0]?.result?.data?.json?.id;
+  } else {
+    // Réutilisé : remettre le véhicule en état réception (si sorti)
+    await trpcPost("vehicules.changerStatut", { id: Number(vehId), nouveauStatut: "sorti", motif: "Reset test" }).catch(() => {});
+    await trpcPost("vehicules.changerStatut", { id: Number(vehId), nouveauStatut: "en_reception", motif: "Reset test" }).catch(() => {});
+  }
   const or = await trpcPost("or.create", { vehiculeId: Number(vehId), plainte: "Test réservation" });
   const orId = or[0]?.result?.data?.json?.id;
   const orNum = or[0]?.result?.data?.json?.numero;

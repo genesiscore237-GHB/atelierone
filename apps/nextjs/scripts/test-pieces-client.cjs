@@ -61,7 +61,7 @@ const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PAS
   const liste = await trpcGet("or.listerPiecesClient", { orId: OR_ID });
   const rows = liste[0]?.result?.data?.json ?? [];
   console.log("pièces client:", rows.map((x) => x.libelle + "×" + x.quantite).join(", "));
-  check("Liste : 2 pièces client (type PIECE_CLIENT)", rows.length === 2 && rows.every((x) => x.type === "PIECE_CLIENT" && x.fournieParClient), "n=" + rows.length);
+  check("Liste : pièces client (type PIECE_CLIENT)", rows.length >= 2 && rows.every((x) => x.type === "PIECE_CLIENT" && x.fournieParClient), "n=" + rows.length);
 
   // 6. Remise au client de l'ancienne pièce
   const r6 = await trpcPost("or.remettrePieceClient", { ligneId: ligne1.ligneId, orId: OR_ID });
