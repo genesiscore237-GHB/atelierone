@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db, tenantSites, tenantLicences } from "@atelierone/db";
 import { eq } from "drizzle-orm";
 import { signerLicence, etendrePeriode, type LicencePayload } from "~/server/lib/licence-service";
+import { notifierSite, corpsMail } from "~/server/lib/mailer-saas";
 
 /** Enregistrement d'un garage : crée le site + licence d'essai 30 jours. */
 export async function POST(req: Request) {
@@ -63,6 +64,13 @@ export async function POST(req: Request) {
         mode: "ESSAI",
       } as any)
       .returning();
+
+    // Email de bienvenue (file boite_envoi)
+    await notifierSite("SAAS_BIENVENUE_ESSAI", {
+      destinataire: email,
+      ...corpsMail.bienvenueEssai(nom, payload.dateFin),
+      codeSite: code,
+    } as any);
 
     return NextResponse.json({ success: true, siteId: code, cleApi, jeton, dateFin: payload.dateFin, mode: "ESSAI" });
   } catch (e: any) {

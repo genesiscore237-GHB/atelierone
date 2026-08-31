@@ -4,6 +4,7 @@ import { db, tenantSites, tenantLicences, tenantPaiements, syncIngests, tenantSn
 import { eq, and, desc, sql, gte, lt } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { signerLicence, etendrePeriode, type LicencePayload } from "~/server/lib/licence-service";
+import { notifierSite, corpsMail } from "~/server/lib/mailer-saas";
 import type { ExtendedUser } from "@atelierone/auth/types";
 
 /**
@@ -56,6 +57,11 @@ async function regenererRelances() {
     const jours = Math.ceil((new Date(l.dateFin).getTime() - Date.now()) / 86400000);
     if (l.statut === "ACTIVE" && jours <= 7) {
       await ajouter(s.id, "LICENCE_EXPIRANT", `${s.nomGarage} (${s.codeSite}) — licence expire dans ${Math.max(0, jours)} j (${l.dateFin}) → relancer le client`);
+      // Email de relance automatique (file boite_envoi)
+      if (s.email && jours >= 0 && !deja.has(clef(s.id, "MAIL_LICENCE_EXPIRANT"))) {
+        await notifierSite("SAAS_LICENCE_EXPIRANT", { destinataire: s.email, ...corpsMail.licenceExpirant(s.nomGarage, l.dateFin, jours), codeSite: s.codeSite } as any);
+        deja.add(clef(s.id, "MAIL_LICENCE_EXPIRANT"));
+      }
     }
     if (s.dernierHeartbeat && new Date(s.dernierHeartbeat) < new Date(Date.now() - 7 * 86400000)) {
       await ajouter(s.id, "HORS_LIGNE", `${s.nomGarage} (${s.codeSite}) — hors-ligne depuis ${new Date(s.dernierHeartbeat).toLocaleDateString("fr-FR")} (> 7 j)`);
@@ -183,10 +189,13 @@ export const centralRouter = createTRPCRouter({
   suspendreSite: requirePermissionProcedure("central.gerer")
     .input(z.object({ id: z.number().int(), suspendu: z.boolean() }))
     .mutation(async ({ ctx, input }) => {
-      const [site] = await db.select({ id: tenantSites.id, codeSite: tenantSites.codeSite }).from(tenantSites).where(eq(tenantSites.id, input.id)).limit(1);
+      const [site] = await db.select({ id: tenantSites.id, codeSite: tenantSites.codeSite, nomGarage: tenantSites.nomGarage, email: tenantSites.email }).from(tenantSites).where(eq(tenantSites.id, input.id)).limit(1);
       if (!site) throw new TRPCError({ code: "NOT_FOUND", message: "Site introuvable." });
       await db.update(tenantSites).set({ statut: input.suspendu ? "SUSPENDU" : "ACTIF", updatedAt: new Date() } as any).where(eq(tenantSites.id, input.id));
       await logAction(ctx, input.id, input.suspendu ? "SITE_SUSPENDU" : "SITE_REACTIVE", { codeSite: site.codeSite });
+      if (input.suspendu && site.email) {
+        await notifierSite("SAAS_SITE_SUSPENDU", { destinataire: site.email, ...corpsMail.suspendu(site.nomGarage), codeSite: site.codeSite } as any);
+      }
       return { success: true };
     }),
 
@@ -297,6 +306,11 @@ export const centralRouter = createTRPCRouter({
       if (p.statut === "CONFIRME") throw new TRPCError({ code: "BAD_REQUEST", message: "Déjà confirmé." });
       await db.update(tenantPaiements).set({ statut: "CONFIRME", payeLe: new Date() } as any).where(eq(tenantPaiements.id, input.id));
       await logAction(ctx, p.siteId, "PAIEMENT_CONFIRME", { reference: p.reference, montant: p.montant });
+      // Quittance par email (file boite_envoi)
+      const [siteMail] = await db.select({ email: tenantSites.email, nomGarage: tenantSites.nomGarage }).from(tenantSites).where(eq(tenantSites.id, p.siteId)).limit(1);
+      if (siteMail?.email) {
+        await notifierSite("SAAS_QUITTANCE_PAIEMENT", { destinataire: siteMail.email, ...corpsMail.quittance(siteMail.nomGarage, p.reference, p.montant, p.periodeMois ?? 1), reference: p.reference } as any);
+      }
       return { success: true };
     }),
 

@@ -37,7 +37,7 @@ export default auth((req) => {
     return NextResponse.json({ error: "Trop de requêtes — veuillez patienter." }, { status: 429 });
   }
 
-  if (nextUrl.pathname.startsWith("/_next") || nextUrl.pathname.startsWith("/api/auth") || nextUrl.pathname.startsWith("/api/sync") || nextUrl.pathname.startsWith("/api/uploads") || nextUrl.pathname.startsWith("/favicon") || nextUrl.pathname.startsWith("/public") || nextUrl.pathname.startsWith("/auth") || nextUrl.pathname === "/") {
+  if (nextUrl.pathname.startsWith("/_next") || nextUrl.pathname.startsWith("/api/auth") || nextUrl.pathname.startsWith("/api/sync") || nextUrl.pathname.startsWith("/api/uploads") || nextUrl.pathname.startsWith("/api/health") || nextUrl.pathname.startsWith("/favicon") || nextUrl.pathname.startsWith("/public") || nextUrl.pathname.startsWith("/auth") || nextUrl.pathname === "/") {
     const response = NextResponse.next();
     response.headers.set("X-Content-Type-Options", "nosniff");
     response.headers.set("X-Frame-Options", "DENY");
