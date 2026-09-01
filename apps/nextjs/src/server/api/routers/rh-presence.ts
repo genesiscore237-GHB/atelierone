@@ -11,6 +11,8 @@ import {
   hrWorkSchedules,
   hrAttendanceSettings,
   hrPublicHolidays,
+  hrGeneralSettings,
+  employeePostures,
 } from "@atelierone/db";
 import { eq, and, desc, gte, lte, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -18,6 +20,48 @@ import { calculateAttendance } from "~/server/lib/presence-engine";
 
 const ENTRY_STATUS = ["present", "absent", "conge", "maladie", "mission"] as const;
 const OT_STATUS = ["en_attente", "approuvee", "refusee"] as const;
+
+/** Garde de clôture : le mois de la date est-il verrouillé (résumé clôturé pour l'agence) ? */
+export async function moisCloture(agenceId: number, date: string): Promise<boolean> {
+  const [locked] = await db
+    .select({ id: attendanceMonthlySummaries.id })
+    .from(attendanceMonthlySummaries)
+    .innerJoin(employes, eq(attendanceMonthlySummaries.employeeId, employes.id))
+    .where(and(
+      eq(employes.agenceId, agenceId),
+      eq(attendanceMonthlySummaries.year, Number(date.slice(0, 4))),
+      eq(attendanceMonthlySummaries.month, Number(date.slice(5, 7))),
+      eq(attendanceMonthlySummaries.locked, true),
+    ))
+    .limit(1);
+  return !!locked;
+}
+
+/** Synchronisation statut de présence → événement de posture (unification pointage/présence). */
+async function syncPostureStatut(employeId: number, date: string, statut: string, motifMission?: string | null, reference?: string | null, par?: number) {
+  const POSTURE_STATUT: Record<string, string> = {
+    mission: "EN_MISSION",
+    conge: "CONGE",
+    maladie: "MALADIE",
+    absent: "ABSENT",
+  };
+  const posture = POSTURE_STATUT[statut];
+  if (!posture) return; // present = pas d'événement (le pointage en direct gère)
+  const today = date;
+  await db.update(employeePostures).set({ actif: false } as any).where(and(eq(employeePostures.employeeId, employeId), eq(employeePostures.date, today), eq(employeePostures.actif, true)));
+  await db.insert(employeePostures).values({
+    employeeId: employeId,
+    date: today,
+    action: statut === "mission" ? "MISSION_DEBUT" : "STATUT",
+    posture,
+    motifMission: statut === "mission" ? (motifMission ?? "AUTRE") : null,
+    reference: reference ?? null,
+    notes: `Statut saisi en présence : ${statut}`,
+    horodatage: new Date(),
+    pointePar: par ?? null,
+    actif: true,
+  } as any);
+}
 
 /** RH-02 — Présences & temps de travail */
 export const rhPresenceRouter = createTRPCRouter({
@@ -29,8 +73,13 @@ saveEntry: requirePermissionProcedure("rh.utilisateur.modifier")
         date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         timeIn: z.string().nullable().optional(),
         timeOut: z.string().nullable().optional(),
+        // Pointage en direct : pause réelle (départ/retour) — corrections possibles ici aussi
+        timeInBreak: z.string().nullable().optional(),
+        timeOutBreak: z.string().nullable().optional(),
         status: z.enum(ENTRY_STATUS).default("present"),
         notes: z.string().optional(),
+        motifMission: z.string().max(40).optional(),
+        reference: z.string().max(120).optional(),
         // specs MVP — validation admin par ligne + prime de tâche
         validateEarlyArrival: z.boolean().optional(),
         validateLateDeparture: z.boolean().optional(),
@@ -39,6 +88,9 @@ saveEntry: requirePermissionProcedure("rh.utilisateur.modifier")
     )
     .mutation(async ({ ctx, input }) => {
       const agenceId = ctx.user.agenceId;
+      if (await moisCloture(agenceId, input.date)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Ce mois est clôturé — le pointage est verrouillé." });
+      }
       const [emp] = await db
         .select({ id: employes.id, workCycleId: employes.workCycleId })
         .from(employes)
@@ -49,7 +101,7 @@ saveEntry: requirePermissionProcedure("rh.utilisateur.modifier")
         throw new TRPCError({ code: "BAD_REQUEST", message: "Aucun cycle de travail affecté à cet employé (voir sa fiche)." });
       }
 
-      // Écrire (upsert) la saisie
+      // Écrire (merge — n'écrase pas les champs non fournis)
       const [existing] = await db
         .select({ id: attendanceEntries.id })
         .from(attendanceEntries)
@@ -58,19 +110,20 @@ saveEntry: requirePermissionProcedure("rh.utilisateur.modifier")
 
       let entryId: number;
       if (existing) {
-        await db
-          .update(attendanceEntries)
-          .set({
-            timeIn: input.timeIn ?? null,
-            timeOut: input.timeOut ?? null,
-            status: input.status,
-            notes: input.notes ?? null,
-            validateEarlyArrival: input.validateEarlyArrival ?? false,
-            validateLateDeparture: input.validateLateDeparture ?? false,
-            taskBonus: input.taskBonus != null ? String(input.taskBonus) : undefined,
-            updatedAt: new Date(),
-          } as any)
-          .where(eq(attendanceEntries.id, existing.id));
+        const values: Record<string, unknown> = {
+          status: input.status,
+          notes: input.notes ?? null,
+          validateEarlyArrival: input.validateEarlyArrival ?? false,
+          validateLateDeparture: input.validateLateDeparture ?? false,
+          taskBonus: input.taskBonus != null ? String(input.taskBonus) : undefined,
+          updatedAt: new Date(),
+        };
+        // Merge : seul un champ fourni est modifié (undefined = ne pas toucher, null = effacer)
+        if (input.timeIn !== undefined) values.timeIn = input.timeIn ?? null;
+        if (input.timeOut !== undefined) values.timeOut = input.timeOut ?? null;
+        if (input.timeInBreak !== undefined) values.timeInBreak = input.timeInBreak ?? null;
+        if (input.timeOutBreak !== undefined) values.timeOutBreak = input.timeOutBreak ?? null;
+        await db.update(attendanceEntries).set(values as any).where(eq(attendanceEntries.id, existing.id));
         entryId = existing.id;
       } else {
         const [row] = await db
@@ -80,6 +133,8 @@ saveEntry: requirePermissionProcedure("rh.utilisateur.modifier")
             date: input.date,
             timeIn: input.timeIn ?? null,
             timeOut: input.timeOut ?? null,
+            timeInBreak: input.timeInBreak ?? null,
+            timeOutBreak: input.timeOutBreak ?? null,
             status: input.status,
             notes: input.notes ?? null,
             validateEarlyArrival: input.validateEarlyArrival ?? false,
@@ -90,6 +145,9 @@ saveEntry: requirePermissionProcedure("rh.utilisateur.modifier")
           .returning();
         entryId = row.id;
       }
+
+      // Synchronisation statut → posture (mission/congé/maladie/absent)
+      await syncPostureStatut(input.employeeId, input.date, input.status, input.motifMission ?? null, input.reference ?? null, Number(ctx.user.id));
 
       // Moteur de calcul
       await runCalculation(entryId, input.employeeId, input.date);
@@ -114,6 +172,9 @@ saveEntry: requirePermissionProcedure("rh.utilisateur.modifier")
       })
     )
     .mutation(async ({ ctx, input }) => {
+      if (await moisCloture(ctx.user.agenceId, input.date)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Ce mois est clôturé — le pointage est verrouillé." });
+      }
       const results: { employeeId: number; ok: boolean; error?: string }[] = [];
       for (const row of input.rows) {
         try {
@@ -359,7 +420,7 @@ totalNormalMinutes: attendanceMonthlySummaries.totalNormalMinutes,
 });
 
 // ─── Moteur : calcul + persistance du résultat ───
-async function runCalculation(entryId: number, employeeId: number, date: string) {
+export async function runCalculation(entryId: number, employeeId: number, date: string) {
   const [entry] = await db
     .select()
     .from(attendanceEntries)
@@ -367,12 +428,13 @@ async function runCalculation(entryId: number, employeeId: number, date: string)
     .limit(1);
   if (!entry) return;
 
-  const [emp] = await db
-    .select({ workCycleId: employes.workCycleId })
+const [emp] = await db
+    .select({ workCycleId: employes.workCycleId, agenceId: employes.agenceId })
     .from(employes)
     .where(eq(employes.id, employeeId))
     .limit(1);
   if (!emp?.workCycleId) return;
+  const entryAgenceId = emp.agenceId ?? 0;
 
   const dayOfWeek = new Date(`${date}T12:00:00`).getDay();
 
@@ -382,10 +444,10 @@ async function runCalculation(entryId: number, employeeId: number, date: string)
     .where(and(eq(hrWorkSchedules.cycleId, emp.workCycleId), eq(hrWorkSchedules.dayOfWeek, dayOfWeek)))
     .limit(1);
 
-  const [settingsRow] = await db
+const [settingsRow] = await db
     .select()
     .from(hrAttendanceSettings)
-    .where(eq(hrAttendanceSettings.agenceId, (await db.select({ agenceId: employes.agenceId }).from(employes).where(eq(employes.id, employeeId)).limit(1))[0]?.agenceId ?? 0))
+    .where(eq(hrAttendanceSettings.agenceId, entryAgenceId))
     .limit(1);
 
   const [holiday] = await db
@@ -406,8 +468,16 @@ async function runCalculation(entryId: number, employeeId: number, date: string)
     )
     .limit(1);
 
-const result = calculateAttendance({
+const [generalRow] = await db
+    .select({ defaultOvertimeThreshold: hrGeneralSettings.defaultOvertimeThreshold })
+    .from(hrGeneralSettings)
+    .where(eq(hrGeneralSettings.agenceId, entryAgenceId))
+    .limit(1);
+
+  const result = calculateAttendance({
     timeIn: entry.timeIn,
+    timeInBreak: entry.timeInBreak ?? null,
+    timeOutBreak: entry.timeOutBreak ?? null,
     timeOut: entry.timeOut,
     schedule: schedule ?? null,
     settings: {
@@ -419,6 +489,7 @@ const result = calculateAttendance({
       autoDeductLate: settingsRow?.autoDeductLate ?? true,
       autoDeductEarlyDeparture: settingsRow?.autoDeductEarlyDeparture ?? true,
       maxNormalHoursPerDay: settingsRow?.maxNormalHoursPerDay ?? null,
+      defaultOvertimeThreshold: generalRow?.defaultOvertimeThreshold ?? null,
     },
     overtimeAuth: ot ? { maxHours: ot.maxHours, status: ot.status } : null,
     isPublicHoliday: !!holiday,
@@ -479,18 +550,17 @@ async function saveSingle(user: { agenceId: number; id: string }, date: string, 
 
   let entryId: number;
   if (existing) {
-    await db
-      .update(attendanceEntries)
-      .set({
-        timeIn: row.timeIn ?? null,
-        timeOut: row.timeOut ?? null,
-        status: row.status ?? "present",
-        validateEarlyArrival: row.validateEarlyArrival ?? false,
-        validateLateDeparture: row.validateLateDeparture ?? false,
-        taskBonus: row.taskBonus != null ? String(row.taskBonus) : undefined,
-        updatedAt: new Date(),
-      } as any)
-      .where(eq(attendanceEntries.id, existing.id));
+    const values: Record<string, unknown> = {
+      status: row.status ?? "present",
+      validateEarlyArrival: row.validateEarlyArrival ?? false,
+      validateLateDeparture: row.validateLateDeparture ?? false,
+      taskBonus: row.taskBonus != null ? String(row.taskBonus) : undefined,
+      updatedAt: new Date(),
+    };
+    // Merge : seul un champ fourni est modifié
+    if (row.timeIn !== undefined) values.timeIn = row.timeIn ?? null;
+    if (row.timeOut !== undefined) values.timeOut = row.timeOut ?? null;
+    await db.update(attendanceEntries).set(values as any).where(eq(attendanceEntries.id, existing.id));
     entryId = existing.id;
   } else {
     const [created] = await db
@@ -510,6 +580,7 @@ async function saveSingle(user: { agenceId: number; id: string }, date: string, 
     entryId = created.id;
   }
 
+  await syncPostureStatut(row.employeeId, date, row.status ?? "present", null, null, Number(user.id));
   await runCalculation(entryId, row.employeeId, date);
 }
 

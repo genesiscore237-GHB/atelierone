@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { createTRPCRouter, rhProcedure, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, employes, attendanceEntries, attendanceCalculations, employeePostures, TYPES_MISSION, hrWorkSchedules, hrGeneralSettings, hrAttendanceSettings } from "@atelierone/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { db, employes, attendanceEntries, attendanceCalculations, employeePostures, TYPES_MISSION, hrWorkSchedules, hrGeneralSettings, hrAttendanceSettings, employeeSalaryHistory } from "@atelierone/db";
+import { eq, and, desc, sql, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { calculateAttendance, dayThreshold, type DaySchedule } from "~/server/lib/presence-engine";
 import { calculerSalaireIntervalle, gainJour, tauxHoraire } from "~/server/lib/rh-posture-engine";
+import { runCalculation, moisCloture } from "~/server/api/routers/rh-presence";
 
 /**
  * RH — POSTURE DES EMPLOYÉS EN TEMPS RÉEL.
@@ -39,6 +39,10 @@ export const rhPostureRouter = createTRPCRouter({
       notes: z.string().max(500).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      const today = dateAujourdhui();
+      if (await moisCloture(ctx.user.agenceId, today)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Le mois courant est clôturé — le pointage en direct est verrouillé." });
+      }
       const [emp] = await db
         .select({ id: employes.id, nom: employes.nom, prenom: employes.prenom, workCycleId: employes.workCycleId, salaireBase: employes.salaireBase, modePaie: employes.modePaie, statut: employes.statut })
         .from(employes)
@@ -49,12 +53,11 @@ export const rhPostureRouter = createTRPCRouter({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Le motif de mission est obligatoire." });
       }
 
-      const today = dateAujourdhui();
       const now = heureMaintenant();
 
-      // Entrée de présence du jour (upsert) + 4 moments
+      // Entrée de présence du jour (upsert) + 4 moments — source tracée "direct"
       const [entry] = await db.select().from(attendanceEntries).where(and(eq(attendanceEntries.employeeId, input.employeId), eq(attendanceEntries.date, today))).limit(1);
-      const valeurs: Record<string, unknown> = {};
+      const valeurs: Record<string, unknown> = { source: "direct" };
       if (input.action === "ARRIVEE") valeurs.timeIn = now;
       if (input.action === "DEPART_PAUSE") valeurs.timeInBreak = now;
       if (input.action === "RETOUR_PAUSE") valeurs.timeOutBreak = now;
@@ -86,49 +89,10 @@ export const rhPostureRouter = createTRPCRouter({
         } as any)
         .returning();
 
-      // Recalcul de la journée (pause réelle incluse)
+      // Recalcul de la journée (pause réelle incluse) — moteur partagé avec la présence
       const [entryFinal] = await db.select().from(attendanceEntries).where(and(eq(attendanceEntries.employeeId, input.employeId), eq(attendanceEntries.date, today))).limit(1);
-      const [schedule] = emp.workCycleId
-        ? await db.select().from(hrWorkSchedules).where(and(eq(hrWorkSchedules.cycleId, emp.workCycleId), eq(hrWorkSchedules.dayOfWeek, new Date().getDay()))).limit(1)
-        : [];
-      const [settings] = await db.select().from(hrAttendanceSettings).where(eq(hrAttendanceSettings.agenceId, ctx.user.agenceId)).limit(1);
-      if (entryFinal && settings) {
-        const calc = calculateAttendance({
-          timeIn: entryFinal.timeIn ?? null,
-          timeOut: entryFinal.timeOut ?? null,
-          timeInBreak: entryFinal.timeInBreak ?? null,
-          timeOutBreak: entryFinal.timeOutBreak ?? null,
-          schedule: (schedule ? {
-            startTime: schedule.startTime, endTime: schedule.endTime, breakStart: schedule.breakStart, breakEnd: schedule.breakEnd,
-            expectedHours: schedule.expectedHours, overtimeThreshold: schedule.overtimeThreshold, isWorkingDay: schedule.isWorkingDay ?? true,
-          } : null) as DaySchedule | null,
-          settings: {
-            lateToleranceMinutes: settings.lateToleranceMinutes, roundToMinutes: settings.roundToMinutes, autoDeductBreak: settings.autoDeductBreak,
-            countEarlyArrival: settings.countEarlyArrival, countLateDeparture: settings.countLateDeparture, autoDeductLate: settings.autoDeductLate,
-            autoDeductEarlyDeparture: settings.autoDeductEarlyDeparture, maxNormalHoursPerDay: settings.maxNormalHoursPerDay,
-          },
-          overtimeAuth: null,
-        });
-        const [existingCalc] = await db.select({ id: attendanceCalculations.id }).from(attendanceCalculations).where(eq(attendanceCalculations.attendanceEntryId, entryFinal.id)).limit(1);
-        const calcValues = {
-          employeeId: input.employeId,
-          date: today,
-          rawMinutes: calc.rawMinutes,
-          breakMinutes: calc.breakMinutes,
-          workedMinutes: calc.workedMinutes,
-          normalMinutes: calc.normalMinutes,
-          overtimeMinutes: calc.overtimeMinutes,
-          lateMinutes: calc.lateMinutes,
-          earlyDepartureMinutes: calc.earlyDepartureMinutes,
-          isAbsent: calc.isAbsent,
-          codePresence: calc.codePresence,
-          calculationDetails: calc.details,
-        } as any;
-        if (existingCalc) {
-          await db.update(attendanceCalculations).set(calcValues).where(eq(attendanceCalculations.id, existingCalc.id));
-        } else {
-          await db.insert(attendanceCalculations).values({ attendanceEntryId: entryFinal.id, ...calcValues } as any);
-        }
+      if (entryFinal) {
+        await runCalculation(entryFinal.id, input.employeId, today);
       }
 
       return { success: true, posture, event: evt, entryId: entryFinal?.id };
@@ -252,6 +216,15 @@ export const rhPostureRouter = createTRPCRouter({
       const heuresStd = general?.standardMonthlyHours ? Number(general.standardMonthlyHours) : 225.3;
       const mult = general?.overtimeMultiplier ? Number(general.overtimeMultiplier) : 1.5;
 
+      // Salaire en vigueur pendant la période : dernière entrée d'historique débutée avant la fin de l'intervalle
+      const [histo] = await db
+        .select({ baseSalary: employeeSalaryHistory.baseSalary })
+        .from(employeeSalaryHistory)
+        .where(and(eq(employeeSalaryHistory.employeeId, input.employeId), lte(employeeSalaryHistory.startDate, input.dateFin)))
+        .orderBy(desc(employeeSalaryHistory.startDate))
+        .limit(1);
+      const salairePeriode = histo?.baseSalary != null ? Number(histo.baseSalary) : Number(emp.salaireBase ?? 0);
+
       const calcs = await db
         .select()
         .from(attendanceCalculations)
@@ -271,13 +244,13 @@ export const rhPostureRouter = createTRPCRouter({
       }));
 
       const resultat = calculerSalaireIntervalle({
-        salaireBase: Number(emp.salaireBase ?? 0),
+        salaireBase: salairePeriode,
         standardMonthlyHours: heuresStd,
         overtimeMultiplier: mult,
         joursOuvresMois: 26,
         entries,
       });
-      return { employe: { id: emp.id, nom: `${emp.prenom ?? ""} ${emp.nom}`.trim() }, dateDebut: input.dateDebut, dateFin: input.dateFin, resultat, nbJours: calcs.length };
+      return { employe: { id: emp.id, nom: `${emp.prenom ?? ""} ${emp.nom}`.trim() }, dateDebut: input.dateDebut, dateFin: input.dateFin, salaireBase: salairePeriode, salaireHistorique: histo?.baseSalary != null, resultat, nbJours: calcs.length };
     }),
 
   // ─── Historique des postures ───

@@ -3,6 +3,12 @@ let pass = 0, fail = 0;
 const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PASS]", label); } else { fail++; console.log("  [FAIL]", label, extra); } };
 const fmt = (n) => Math.round(Number(n ?? 0) * 100) / 100;
 (async () => {
+  const { Client } = require("pg");
+  const pre = new Client({ connectionString: "postgresql://postgres:postgres@127.0.0.1:5432/atelierone_erp" });
+  await pre.connect();
+  const preNow = new Date();
+  await pre.query("UPDATE attendance_monthly_summaries SET locked=false WHERE year=$1 AND month=$2;", [preNow.getFullYear(), preNow.getMonth() + 1]);
+  await pre.end();
   const jar = new Map();
   async function http(path, opts = {}) {
     const headers = { ...(opts.headers || {}) };

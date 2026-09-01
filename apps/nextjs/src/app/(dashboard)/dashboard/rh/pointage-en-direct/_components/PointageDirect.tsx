@@ -13,6 +13,8 @@ const POSTURE_META: Record<string, { label: string; badge: string }> = {
   EN_PAUSE: { label: "En pause", badge: "bg-warning/15 text-warning-foreground" },
   EN_MISSION: { label: "En mission", badge: "bg-sky-500/15 text-sky-400" },
   HORS_SITE: { label: "Hors site", badge: "bg-violet-500/15 text-violet-400" },
+  CONGE: { label: "En congé", badge: "bg-muted text-muted-foreground" },
+  MALADIE: { label: "Maladie", badge: "bg-destructive/15 text-destructive" },
   EN_RETARD: { label: "En retard", badge: "bg-destructive/15 text-destructive" },
   ABSENT: { label: "Absent", badge: "bg-muted text-muted-foreground" },
 };
