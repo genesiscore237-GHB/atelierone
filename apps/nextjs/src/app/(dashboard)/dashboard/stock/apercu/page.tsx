@@ -3,7 +3,7 @@
 import { api } from "~/trpc/react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { Package, AlertTriangle, Activity, TrendingUp, ArrowRight, Repeat, ClipboardList, ListOrdered, RefreshCw, ShieldAlert, Snowflake, Store, CalendarClock } from "lucide-react";
+import { Package, AlertTriangle, Activity, TrendingUp, ArrowRight, Repeat, ClipboardList, ListOrdered, RefreshCw, ShieldAlert, Snowflake, Store, CalendarClock, SearchCheck, BellRing, Hammer, Wrench, ShoppingCart } from "lucide-react";
 
 const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } };
 const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
@@ -24,11 +24,16 @@ export default function StockDashboardPage() {
     { label: "Mouvements du jour", value: dashboard?.mouvementsJour ?? 0, icon: Activity, color: "text-primary", bg: "bg-primary/10" },
   ];
 
-  const quickActions = [
+const quickActions = [
+    { label: "Chercher avant de commander", href: "/dashboard/stock/chercher-avant-commander", icon: SearchCheck, color: "text-success-foreground", bg: "bg-success/10" },
+    { label: "Alertes", href: "/dashboard/stock/alertes", icon: BellRing, color: "text-destructive", bg: "bg-destructive/10" },
+    { label: "Outillage", href: "/dashboard/stock/outillage", icon: Hammer, color: "text-primary", bg: "bg-primary/10" },
     { label: "Mouvements", href: "/dashboard/stock/mouvements", icon: ListOrdered, color: "text-primary", bg: "bg-primary/10" },
     { label: "Déconditionner", href: "/dashboard/stock/deconditionnement", icon: Repeat, color: "text-warning-foreground", bg: "bg-warning/10" },
     { label: "Inventaire", href: "/dashboard/stock/inventaire", icon: ClipboardList, color: "text-primary", bg: "bg-primary/10" },
     { label: "Ajuster stock", href: "/dashboard/stock/ajustement-manuel", icon: RefreshCw, color: "text-destructive", bg: "bg-destructive/10" },
+    { label: "Pièces pour réparation (OR)", href: "/dashboard/ordres-reparation", icon: Wrench, color: "text-info-foreground", bg: "bg-info/10" },
+    { label: "Commandes & réceptions", href: "/dashboard/procurement", icon: ShoppingCart, color: "text-primary", bg: "bg-primary/10" },
   ];
 
   return (

@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
 import { db, stocks, produits, categories, unitesMesure, mouvementsStock, inventaires, inventairesSessions, deconditionnements, reconditionnements, emplacements, stocksUnites, ventesLignes, ventes } from "@atelierone/db";
 import { eq, and, desc, sql, lt, lte, gte, isNotNull, isNull, count, sum, avg, asc, inArray } from "drizzle-orm";
@@ -1480,6 +1480,128 @@ export const stockRouter = createTRPCRouter({
 
         return { stockAvant: res.stockAvant, stockApres: res.stockApres, orId: or.id, numeroOR: or.numero, produitTitre: prod.titre };
       }) as any;
+    }),
+
+  // ─── Sortie pour utilisation (hors OR) : « chercher avant de commander » ───
+  sortirPourUsage: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      produitId: z.number().int(),
+      quantite: z.number().positive(),
+      uniteId: z.string().optional(),
+      emplacementId: z.number().int().optional(),
+      motif: z.string().min(3),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [prod] = await tx
+          .select({ titre: produitsTable.titre, typeProduit: produitsTable.typeProduit })
+          .from(produitsTable)
+          .where(eq(produitsTable.id, input.produitId))
+          .limit(1);
+        if (!prod) throw new TRPCError({ code: "BAD_REQUEST", message: "Produit introuvable." });
+        if (prod.typeProduit === "SERVICE") throw new TRPCError({ code: "BAD_REQUEST", message: "Un service ne peut pas être sorti du stock." });
+
+        await verifierDispoNonPerimee(tx as any, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+        });
+
+        const res = await sortirPourOR(tx as any, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+          uniteId: input.uniteId,
+          emplacementId: input.emplacementId,
+          motif: input.motif,
+          effectuePar: Number(ctx.user.id),
+        });
+        return { stockAvant: res.stockAvant, stockApres: res.stockApres, produitTitre: prod.titre };
+      }) as any;
+    }),
+
+  // ─── Recherche « chercher avant de commander » : produit + stock + seuils ───
+  chercherAvantCommander: requirePermissionProcedure("stock.consulter")
+    .input(z.object({
+      q: z.string().optional(),
+      type: z.enum(["PIECE", "CONSOMMABLE", "OUTIL", "TOUS"]).default("TOUS"),
+      limit: z.number().int().max(200).default(50),
+    }).optional())
+    .query(async ({ ctx, input }) => {
+      const safe = input ?? {};
+      const conditions: any[] = [eq(produitsTable.isActive, true)];
+      if (safe.type && safe.type !== "TOUS") conditions.push(eq(produitsTable.typeProduit, safe.type));
+      const q = safe.q?.trim();
+      if (q && q.length > 0) {
+        const like = `%${q}%`;
+        conditions.push(sql`(${produitsTable.titre} ILIKE ${like} OR ${produitsTable.codeBarre} ILIKE ${like} OR ${produitsTable.codeArticle} ILIKE ${like} OR ${produitsTable.designationCourte} ILIKE ${like} OR ${produitsTable.marque} ILIKE ${like} OR ${produitsTable.referenceFabricant} ILIKE ${like})`);
+      }
+
+      const rows = await db
+        .select({
+          id: produitsTable.id,
+          typeProduit: produitsTable.typeProduit,
+          titre: produitsTable.titre,
+          codeBarre: produitsTable.codeBarre,
+          codeArticle: produitsTable.codeArticle,
+          designationCourte: produitsTable.designationCourte,
+          marque: produitsTable.marque,
+          etat: produitsTable.etat,
+          categorieNom: categories.nom,
+          seuilAlerte: produitsTable.seuilAlerte,
+          seuilCritique: produitsTable.seuilCritique,
+          stockMaximum: produitsTable.stockMaximum,
+          prixAchat: produitsTable.prixAchat,
+          dernierPrixAchat: produitsTable.dernierPrixAchat,
+          stockTotal: sql<number>`COALESCE(SUM(${stocks.quantite}), 0)`,
+          stockReserve: sql<number>`COALESCE(SUM(${stocks.quantiteReservee}), 0)`,
+          photos: produitsTable.photos,
+          imageUrl: produitsTable.imageUrl,
+        })
+        .from(produitsTable)
+        .leftJoin(categories, eq(produitsTable.categorieId, categories.id))
+        .leftJoin(stocks, and(eq(stocks.produitId, produitsTable.id), eq(stocks.agenceId, ctx.user.agenceId)))
+        .where(and(...conditions))
+        .groupBy(produitsTable.id, categories.nom)
+        .orderBy(produitsTable.titre)
+        .limit(safe.limit ?? 50);
+
+      // Quantités par unité (huiles : litres, bidons…)
+      const ids = rows.map((r) => r.id);
+      const unites = ids.length
+        ? await db
+            .select({
+              produitId: stocksUnites.produitId,
+              uniteCode: unitesMesure.code,
+              uniteSymbole: unitesMesure.symbole,
+              quantite: stocksUnites.quantite,
+            })
+            .from(stocksUnites)
+            .leftJoin(unitesMesure, eq(stocksUnites.uniteId, unitesMesure.id))
+            .where(and(inArray(stocksUnites.produitId, ids), eq(stocksUnites.agenceId, ctx.user.agenceId)))
+        : [];
+      const unitesParProduit = new Map<number, { code: string; symbole: string | null; quantite: number }[]>();
+      for (const u of unites) {
+        const cur = unitesParProduit.get(u.produitId) ?? [];
+        cur.push({ code: u.uniteCode, symbole: u.uniteSymbole, quantite: Number(u.quantite) });
+        unitesParProduit.set(u.produitId, cur);
+      }
+
+      return rows.map((r) => {
+        const stock = Number(r.stockTotal ?? 0);
+        const reserve = Number(r.stockReserve ?? 0);
+        const dispo = stock - reserve;
+        const seuil = Number(r.seuilAlerte ?? 5);
+        const niveau = stock <= 0 ? "rupture" : dispo <= Number(r.seuilCritique ?? 2) ? "critique" : stock <= seuil ? "faible" : "ok";
+        return {
+          ...r,
+          stockTotal: stock,
+          stockReserve: reserve,
+          disponible: dispo,
+          niveau,
+          unites: unitesParProduit.get(r.id) ?? [],
+        };
+      });
     }),
 
   // ─── Retour de pièce depuis l'atelier (specs V2 processus, cas particulier V1 §05) ───

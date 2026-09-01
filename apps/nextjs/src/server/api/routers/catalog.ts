@@ -18,7 +18,8 @@ function detectBarcodeType(v: string): string {
 
 // Bornes de validation commune (create + update) : le type de produit doit être
 // une valeur connue et le prix de vente strictement positif (0 FCFA interdit).
-const typeProduitEnum = z.enum(["PIECE", "SERVICE"]);
+// PIECE = pièce de rechange · SERVICE = main d'œuvre · OUTIL = outillage prêté aux techniciens · CONSOMMABLE = huiles, EPI, fournitures
+const typeProduitEnum = z.enum(["PIECE", "SERVICE", "OUTIL", "CONSOMMABLE"]);
 const prixVenteRefine = z.string().refine(v => Number(v) > 0, { message: "Le prix de vente doit être strictement positif" });
 const photoDataUrl = z.string().refine(v => v.startsWith("data:image/") && v.length <= 3_000_000, { message: "Photo invalide ou trop volumineuse (max 2 Mo)" });
 const photosInput = z.array(photoDataUrl).max(3, "3 photos maximum").optional();
@@ -153,7 +154,7 @@ export const catalogRouter = createTRPCRouter({
       let unitsMap = new Map<string, any[]>();
 
       if (productIds.length > 0) {
-        const catIds = items.map(p => p.categorieId).filter(Boolean) as string[];
+        const catIds = items.map(p => p.categorieId).filter((x): x is number => x !== null && x !== undefined);
         const branches: ReturnType<typeof sql>[] = [
           sql`SELECT 'stock' AS kind, s.produit_id::text AS pid, COALESCE(SUM(s.quantite), 0)::text AS v
           FROM stocks s
@@ -168,9 +169,7 @@ export const catalogRouter = createTRPCRouter({
           JOIN unites_mesure um ON um.id = pu.unite_id
           WHERE pu.statut = 'ACTIF' AND pu.produit_id IN (${sql.join(productIds.map(id => sql`${Number(id)}`), sql`, `)})`,
         ];
-        const enrich = await db.execute(sql<{
-          kind: string; pid: string; v: string;
-        }[]>`${sql.join(branches, sql` UNION ALL `)}`);
+        const enrich = (await db.execute(sql`${sql.join(branches, sql` UNION ALL `)}`)) as unknown as { kind: string; pid: string; v: string }[];
         for (const r of enrich) {
           if (r.kind === "stock") {
             stockMap.set(r.pid, Number(r.v));
@@ -245,6 +244,21 @@ export const catalogRouter = createTRPCRouter({
       };
     }),
 
+  /** Unités de mesure disponibles (pour sorties, déconditionnements…). */
+  listUnites: protectedProcedure
+    .input(z.object({ search: z.string().optional() }).optional())
+    .query(async ({ input }) => {
+      const q = input?.search?.trim();
+      const conditions = q
+        ? [sql`(${unitesMesure.code} ILIKE ${`%${q}%`} OR ${unitesMesure.libelle} ILIKE ${`%${q}%`})`]
+        : [];
+      return db
+        .select({ id: unitesMesure.id, code: unitesMesure.code, libelle: unitesMesure.libelle, symbole: unitesMesure.symbole, type: unitesMesure.type })
+        .from(unitesMesure)
+        .where(and(...conditions))
+        .orderBy(unitesMesure.code);
+    }),
+
   getByBarcode: protectedProcedure
     .input(z.object({ codeBarre: z.string() }))
     .query(async ({ input }) => {
@@ -279,7 +293,7 @@ export const catalogRouter = createTRPCRouter({
       description: z.string().optional(),
       categorieId: z.string().optional(),
       fournisseurId: z.string().optional(),
-      prixVente: prixVenteRefine,
+      prixVente: prixVenteRefine.optional(),
       prixMinimumVente: z.string().optional(),
       prixAchat: z.string().optional(),
       tva: z.string().default("0").refine(v => Number(v) >= 0 && Number(v) <= 100, { message: "La TVA doit être comprise entre 0 et 100" }),
@@ -325,6 +339,11 @@ export const catalogRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const { codeBarre: inputCodeBarre, unites, fournisseurs: inputFournisseurs, photos, ...rest } = input;
       const values: any = { ...rest };
+
+      // OUTIL / CONSOMMABLE : pas de prix de vente requis (non vendus)
+      if ((values.typeProduit === "OUTIL" || values.typeProduit === "CONSOMMABLE") && values.prixVente === undefined) {
+        values.prixVente = "0";
+      }
 
       // Un produit créé est directement exploitable par défaut (ACTIF).
       // Le flux validation BROUILLON → ACTIF reste disponible via setStatutCycleVie.
@@ -980,21 +999,27 @@ export const catalogRouter = createTRPCRouter({
   listProducts: protectedProcedure
     .input(z.object({
       query: z.string().optional(),
-      limit: z.number().default(50),
+      limit: z.number().int().max(500).default(100),
       offset: z.number().default(0),
     }).optional())
     .query(async ({ input }) => {
-      const { limit = 50, offset = 0 } = input ?? {};
+      const { limit = 100, offset = 0, query } = input ?? {};
+      const conditions = [eq(produits.isActive, true), eq(produits.statutCycleVie, "ACTIF")];
+      const q = query?.trim();
+      if (q && q.length > 0) {
+        const like = `%${q}%`;
+        conditions.push(sql`(${produits.titre} ILIKE ${like} OR ${produits.designationCourte} ILIKE ${like} OR ${produits.codeBarre} ILIKE ${like} OR ${produits.codeArticle} ILIKE ${like} OR ${produits.marque} ILIKE ${like} OR ${produits.referenceFabricant} ILIKE ${like} OR ${produits.nomCode} ILIKE ${like})`);
+      }
       const [items, total] = await Promise.all([
         db.select()
           .from(produits)
-          .where(and(eq(produits.isActive, true), eq(produits.statutCycleVie, "ACTIF")))
+          .where(and(...conditions))
           .orderBy(desc(produits.createdAt))
           .limit(limit)
           .offset(offset),
         db.select({ count: sql<number>`count(*)` })
           .from(produits)
-          .where(and(eq(produits.isActive, true), eq(produits.statutCycleVie, "ACTIF"))),
+          .where(and(...conditions)),
       ]);
       return { items: items.map(formatProduct), total: Number(total[0]?.count ?? 0) };
     }),

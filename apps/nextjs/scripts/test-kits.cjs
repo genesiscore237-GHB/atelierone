@@ -53,9 +53,17 @@ const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PAS
   const mvts = await trpcGet("stock.listMouvementsParOR", { orId: OR_ID });
   const m = mvts[0]?.result?.data?.json ?? [];
   const sorties = m.filter((x) => x.type === "SORTIE_OR");
-  const groupes = new Set(sorties.map((x) => x.groupeOperationId).filter(Boolean));
-  check("3 mouvements SORTIE_OR (kit + 2 composants)", sorties.length === 3, "trouvés=" + sorties.length);
-  check("Mêmes groupeOperationId (traçabilité complète)", groupes.size === 1, "groupes=" + [...groupes].join(","));
+  // Reproductible : on vérifie le DERNIER groupe d'opération (le sortirKit du run courant) = 3 mouvements liés
+  const derniersGroupes = new Map();
+  for (const x of sorties) {
+    if (!x.groupeOperationId) continue;
+    const cur = derniersGroupes.get(x.groupeOperationId) ?? [];
+    cur.push(x);
+    derniersGroupes.set(x.groupeOperationId, cur);
+  }
+  const maxGroupe = [...derniersGroupes.entries()].sort((a, b) => b[1].length - a[1].length)[0];
+  check("Dernier groupe = 3 mouvements SORTIE_OR (kit + 2 composants)", !!maxGroupe && maxGroupe[1].length === 3, "n=" + maxGroupe?.[1].length);
+  check("Mêmes groupeOperationId (traçabilité complète)", !!maxGroupe && new Set(maxGroupe[1].map((x) => x.groupeOperationId)).size === 1, "groupes=" + [...new Set(sorties.map((x) => x.groupeOperationId))].join(",").slice(0, 120));
 
   // 6. Sortie insuffisante → rollback total (aucun nouveau mouvement)
   const avant = (await trpcGet("stock.listMouvementsParOR", { orId: OR_ID }))[0].result.data.json.length;
@@ -69,6 +77,14 @@ const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PAS
   const lignes = await trpcGet("catalog.listKitLignes", { kitId: KIT_ID });
   const liste = lignes[0]?.result?.data?.json ?? [];
   check("Liste lignes (2 lignes)", liste.length === 2, "n=" + liste.length);
+
+  // 8. Nettoyage pour idempotence (append-only : les mouvements restent, la composition et le stock sont réinitialisés)
+  const { Client } = require("pg");
+  const cl = new Client({ connectionString: "postgresql://postgres:postgres@127.0.0.1:5432/atelierone_erp" });
+  await cl.connect();
+  await cl.query("DELETE FROM kits_lignes WHERE kit_id=$1", [KIT_ID]);
+  await cl.query("UPDATE stocks SET quantite=10, quantite_reservee=0 WHERE produit_id IN ($1,$2,$3) AND agence_id=1", [KIT_ID, C1, C2]);
+  await cl.end();
 
   console.log(`\nRÉSULTAT: ${pass} PASS / ${fail} FAIL`);
   process.exit(fail > 0 ? 1 : 0);

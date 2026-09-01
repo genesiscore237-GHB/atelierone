@@ -448,9 +448,9 @@ export async function sortirPourOR(
     produitId: number;
     agenceId: number;
     quantite: number;
-    orId: number;
-    vehiculeId: number;
-    numeroOR: string;
+    orId?: number | null;
+    vehiculeId?: number | null;
+    numeroOR?: string | null;
     uniteId?: string;
     emplacementId?: number;
     motif?: string;
@@ -461,6 +461,26 @@ export async function sortirPourOR(
 ) {
   const facteur = await getFacteurVersBase(tx, params.produitId, params.uniteId ?? (await uniteBaseId(tx, params.produitId)));
   const qteBase = params.quantite * facteur;
+
+  // Sortie en unité : contrôle + décrément du stock par unité (stocks_unites)
+  if (params.uniteId) {
+    const [su] = await tx
+      .select({ quantite: stocksUnites.quantite })
+      .from(stocksUnites)
+      .where(and(eq(stocksUnites.produitId, params.produitId), eq(stocksUnites.agenceId, params.agenceId), eq(stocksUnites.uniteId, params.uniteId)))
+      .for("update");
+    const dispo = su ? Number(su.quantite) : 0;
+    if (dispo < params.quantite) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: `Stock insuffisant pour l'unité ${params.uniteId}: ${dispo} < ${params.quantite}` });
+    }
+    const apres = Math.round((dispo - params.quantite) * 100) / 100;
+    if (su) {
+      await tx.update(stocksUnites).set({ quantite: String(apres) } as any).where(and(eq(stocksUnites.produitId, params.produitId), eq(stocksUnites.agenceId, params.agenceId), eq(stocksUnites.uniteId, params.uniteId)));
+    } else {
+      await tx.insert(stocksUnites).values({ produitId: params.produitId, agenceId: params.agenceId, uniteId: params.uniteId, quantite: String(apres) } as any);
+    }
+  }
+
   const res = await enregistrerMouvement(tx, {
     type: TYPES_MOUVEMENT.SORTIE_OR as any,
     sens: "S",
@@ -469,10 +489,10 @@ export async function sortirPourOR(
     quantite: qteBase,
     uniteId: params.uniteId,
     emplacementId: params.emplacementId,
-    orId: params.orId,
-    vehiculeId: params.vehiculeId,
-    documentLie: `OR-${params.numeroOR}`,
-    motif: params.motif ?? `Sortie piÃƒÂ¨ce liÃƒÂ©e OR-${params.numeroOR}`,
+    orId: params.orId ?? null,
+    vehiculeId: params.vehiculeId ?? null,
+    documentLie: params.numeroOR ? `OR-${params.numeroOR}` : "UTILISATION_INTERNE",
+    motif: params.motif ?? (params.numeroOR ? `Sortie pièce liée OR-${params.numeroOR}` : "Sortie pour utilisation (chercher avant de commander)"),
     commentaire: params.commentaire,
     effectuePar: params.effectuePar,
     coutUnitaireBase: params.coutUnitaireBase,
