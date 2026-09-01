@@ -1,16 +1,18 @@
 import { z } from "zod";
 import { createTRPCRouter, rhProcedure, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, employes, attendanceEntries, attendanceCalculations, employeePostures, TYPES_MISSION, hrWorkSchedules, hrGeneralSettings, hrAttendanceSettings, employeeSalaryHistory } from "@atelierone/db";
-import { eq, and, desc, sql, lte } from "drizzle-orm";
+import { db, employes, attendanceEntries, attendanceCalculations, employeePostures, TYPES_MISSION, hrGeneralSettings, hrAttendanceSettings, employeeSalaryHistory } from "@atelierone/db";
+import { eq, and, desc, asc, sql, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { calculerSalaireIntervalle, gainJour, tauxHoraire } from "~/server/lib/rh-posture-engine";
-import { runCalculation, moisCloture } from "~/server/api/routers/rh-presence";
+import { runCalculation, moisCloture, reconstruireJournee, annulerEvenement } from "~/server/lib/rh-projection";
 
 /**
  * RH — POSTURE DES EMPLOYÉS EN TEMPS RÉEL.
  * Pointage en direct par le responsable : arrivée, départ pause, retour pause,
- * départ, mission (début/retour avec motif normalisé). Chaque action dérive la
- * posture courante et alimente l'entrée de présence (4 moments).
+ * départ, mission (début/retour avec motif normalisé). La timeline des
+ * événements est la source canonique ; la journée (attendance_entries) est une
+ * projection recalculée (reconstruireJournee). Correction = invalidation tracée
+ * (annulerEvenement) : jamais de suppression, l'audit est complet.
  */
 
 const ACTION_POSTURE: Record<string, string> = {
@@ -53,25 +55,40 @@ export const rhPostureRouter = createTRPCRouter({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Le motif de mission est obligatoire." });
       }
 
-      const now = heureMaintenant();
-
-      // Entrée de présence du jour (upsert) + 4 moments — source tracée "direct"
-      const [entry] = await db.select().from(attendanceEntries).where(and(eq(attendanceEntries.employeeId, input.employeId), eq(attendanceEntries.date, today))).limit(1);
-      const valeurs: Record<string, unknown> = { source: "direct" };
-      if (input.action === "ARRIVEE") valeurs.timeIn = now;
-      if (input.action === "DEPART_PAUSE") valeurs.timeInBreak = now;
-      if (input.action === "RETOUR_PAUSE") valeurs.timeOutBreak = now;
-      if (input.action === "DEPART") valeurs.timeOut = now;
-      if (input.action === "MISSION_DEBUT") valeurs.status = "mission";
-      if (input.action === "MISSION_RETOUR") valeurs.status = "present";
-      if (entry) {
-        await db.update(attendanceEntries).set({ ...valeurs, updatedAt: new Date() } as any).where(eq(attendanceEntries.id, entry.id));
-      } else {
-        await db.insert(attendanceEntries).values({ employeeId: input.employeId, date: today, ...valeurs } as any);
+      // R1 — séquence logique : chaque action exige son prérequis (non annulé)
+      const REQUIS: Record<string, string> = {
+        DEPART_PAUSE: "ARRIVEE",
+        RETOUR_PAUSE: "DEPART_PAUSE",
+        DEPART: "ARRIVEE",
+        MISSION_RETOUR: "MISSION_DEBUT",
+      };
+      const requis = REQUIS[input.action];
+      if (requis) {
+        const [pre] = await db
+          .select({ id: employeePostures.id })
+          .from(employeePostures)
+          .where(and(
+            eq(employeePostures.employeeId, input.employeId),
+            eq(employeePostures.date, today),
+            eq(employeePostures.annule, false),
+            requis === "ARRIVEE"
+              ? sql`(${employeePostures.action} = 'ARRIVEE' OR (${employeePostures.action} = 'SAISIE_HEURE' AND ${employeePostures.notes} LIKE 'timeIn=%'))`
+              : eq(employeePostures.action, requis),
+          ))
+          .limit(1);
+        if (!pre) {
+          const LABELS: Record<string, string> = {
+            ARRIVEE: "l'arrivée", DEPART_PAUSE: "le départ en pause", RETOUR_PAUSE: "le retour de pause",
+            MISSION_DEBUT: "le début de mission", MISSION_RETOUR: "le retour de mission", DEPART: "le départ",
+          };
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Action impossible : ${LABELS[requis] ?? requis} doit d'abord être pointé(e).` });
+        }
       }
 
-      // Posture : désactiver la posture active du jour, créer la nouvelle
-      await db.update(employeePostures).set({ actif: false } as any).where(and(eq(employeePostures.employeeId, input.employeId), eq(employeePostures.date, today), eq(employeePostures.actif, true)));
+      const now = heureMaintenant();
+      const nowFull = new Date();
+
+      // Événement (timeline canonique, immuable) — la projection dérive la journée
       const posture = ACTION_POSTURE[input.action];
       const [evt] = await db
         .insert(employeePostures)
@@ -83,19 +100,111 @@ export const rhPostureRouter = createTRPCRouter({
           motifMission: input.motifMission ?? null,
           reference: input.reference ?? null,
           notes: input.notes ?? null,
-          horodatage: new Date(),
+          horodatage: nowFull,
+          heureEvenement: input.action === "MISSION_DEBUT" || input.action === "MISSION_RETOUR" ? null : now,
           pointePar: Number(ctx.user.id),
           actif: true,
         } as any)
         .returning();
 
-      // Recalcul de la journée (pause réelle incluse) — moteur partagé avec la présence
-      const [entryFinal] = await db.select().from(attendanceEntries).where(and(eq(attendanceEntries.employeeId, input.employeId), eq(attendanceEntries.date, today))).limit(1);
-      if (entryFinal) {
-        await runCalculation(entryFinal.id, input.employeId, today);
-      }
+      // Projection : journée + calcul + posture active recalculés depuis la timeline
+      const proj = await reconstruireJournee(input.employeId, today);
 
-      return { success: true, posture, event: evt, entryId: entryFinal?.id };
+      return { success: true, posture, event: evt, entryId: proj?.entry?.id ?? null };
+    }),
+
+  // ─── Annulation tracée d'un événement (motif obligatoire) ───
+  annulerEvenement: requirePermissionProcedure("rh.utilisateur.modifier")
+    .input(z.object({ evenementId: z.number().int(), motif: z.string().min(3).max(300) }))
+    .mutation(async ({ ctx, input }) => {
+      const [evt] = await db.select().from(employeePostures).where(eq(employeePostures.id, input.evenementId)).limit(1);
+      if (!evt) throw new TRPCError({ code: "NOT_FOUND", message: "Événement introuvable." });
+      if (evt.annule) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet événement est déjà annulé." });
+      if (await moisCloture(ctx.user.agenceId, evt.date)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Ce mois est clôturé — l'annulation est verrouillée." });
+      }
+      const proj = await annulerEvenement(evt.id, input.motif, Number(ctx.user.id));
+      return { success: true, postureActive: proj?.postureActive ?? null };
+    }),
+
+  // ─── Correction d'heure (1 clic : invalide l'ancien + pose SAISIE_HEURE tracé) ───
+  corrigerHeure: requirePermissionProcedure("rh.utilisateur.modifier")
+    .input(z.object({
+      employeId: z.number().int(),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      moment: z.enum(["timeIn", "timeInBreak", "timeOutBreak", "timeOut"]),
+      heure: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (await moisCloture(ctx.user.agenceId, input.date)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Ce mois est clôturé — la correction est verrouillée." });
+      }
+      const POSTURE_MOMENT: Record<string, string> = {
+        timeIn: "EN_TRAVAIL",
+        timeInBreak: "EN_PAUSE",
+        timeOutBreak: "EN_TRAVAIL",
+        timeOut: "HORS_SITE",
+      };
+      // Invalider l'événement actuel du moment (le plus récent non annulé)
+      const candidats = await db
+        .select()
+        .from(employeePostures)
+        .where(and(
+          eq(employeePostures.employeeId, input.employeId),
+          eq(employeePostures.date, input.date),
+          eq(employeePostures.annule, false),
+        ))
+        .orderBy(desc(employeePostures.id));
+      for (const evt of candidats) {
+        const estDuMoment =
+          (input.moment === "timeIn" && evt.action === "ARRIVEE") ||
+          (input.moment === "timeInBreak" && evt.action === "DEPART_PAUSE") ||
+          (input.moment === "timeOutBreak" && evt.action === "RETOUR_PAUSE") ||
+          (input.moment === "timeOut" && evt.action === "DEPART") ||
+          (evt.action === "SAISIE_HEURE" && (evt.notes ?? "").startsWith(`${input.moment}=`));
+        if (estDuMoment) {
+          await db
+            .update(employeePostures)
+            .set({ annule: true, annulePar: Number(ctx.user.id), motifAnnulation: `Heure corrigée (${input.heure})`, annuleA: new Date() } as any)
+            .where(eq(employeePostures.id, evt.id));
+          break;
+        }
+      }
+      // Poser la nouvelle heure (tracée)
+      await db.insert(employeePostures).values({
+        employeeId: input.employeId,
+        date: input.date,
+        action: "SAISIE_HEURE",
+        posture: POSTURE_MOMENT[input.moment],
+        notes: `${input.moment}=${input.heure}`,
+        horodatage: new Date(),
+        heureEvenement: input.heure,
+        pointePar: Number(ctx.user.id),
+        actif: true,
+      } as any);
+      const proj = await reconstruireJournee(input.employeId, input.date);
+      return { success: true, entryId: proj?.entry?.id ?? null };
+    }),
+
+  // ─── Annulation du pointage de toute la journée (re-pointe global) ───
+  annulerJournee: requirePermissionProcedure("rh.utilisateur.modifier")
+    .input(z.object({ employeId: z.number().int(), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), motif: z.string().min(3).max(300) }))
+    .mutation(async ({ ctx, input }) => {
+      if (await moisCloture(ctx.user.agenceId, input.date)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Ce mois est clôturé — l'annulation est verrouillée." });
+      }
+      const evts = await db
+        .select({ id: employeePostures.id })
+        .from(employeePostures)
+        .where(and(eq(employeePostures.employeeId, input.employeId), eq(employeePostures.date, input.date), eq(employeePostures.annule, false)));
+      for (const e of evts) {
+        await db
+          .update(employeePostures)
+          .set({ annule: true, annulePar: Number(ctx.user.id), motifAnnulation: input.motif, annuleA: new Date() } as any)
+          .where(eq(employeePostures.id, e.id));
+      }
+      const proj = await reconstruireJournee(input.employeId, input.date);
+      return { success: true, annules: evts.length, postureActive: proj?.postureActive ?? null };
     }),
 
   // ─── Vue temps réel : tous les employés, posture + gain du jour ───
@@ -199,7 +308,12 @@ export const rhPostureRouter = createTRPCRouter({
       const [entry] = await db.select().from(attendanceEntries).where(and(eq(attendanceEntries.employeeId, input.employeId), eq(attendanceEntries.date, d))).limit(1);
       const [calc] = await db.select().from(attendanceCalculations).where(and(eq(attendanceCalculations.employeeId, input.employeId), eq(attendanceCalculations.date, d))).limit(1);
       const events = await db.select().from(employeePostures).where(and(eq(employeePostures.employeeId, input.employeId), eq(employeePostures.date, d))).orderBy(desc(employeePostures.horodatage));
-      return { date: d, pointage: entry, calcul: calc, events };
+      const eventsUi = events.map((evt) => ({
+        ...evt,
+        heure: evt.heureEvenement ?? (evt.horodatage ? evt.horodatage.toTimeString().slice(0, 5) : null),
+        pointeParNom: null as string | null,
+      }));
+      return { date: d, pointage: entry, calcul: calc, events: eventsUi };
     }),
 
   // ─── Salaire sur intervalle (base présences) ───

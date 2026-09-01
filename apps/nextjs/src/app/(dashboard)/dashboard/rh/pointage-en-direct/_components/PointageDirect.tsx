@@ -4,9 +4,15 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import {
-  AlertTriangle, CalendarClock, Clock, Coffee, LogIn, LogOut, RefreshCw, Rocket, Wrench, X,
+  AlertTriangle, CalendarClock, Clock, Coffee, History, LogIn, LogOut, Pencil, RefreshCw, Rocket, Undo2, Wrench, X,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
+
+const ACTION_LABELS: Record<string, string> = {
+  ARRIVEE: "Arrivée", DEPART_PAUSE: "Départ en pause", RETOUR_PAUSE: "Retour de pause",
+  MISSION_DEBUT: "Mission (début)", MISSION_RETOUR: "Retour de mission", DEPART: "Départ",
+  SAISIE_HEURE: "Heure saisie / corrigée", STATUT: "Statut",
+};
 
 const POSTURE_META: Record<string, { label: string; badge: string }> = {
   EN_TRAVAIL: { label: "En travail", badge: "bg-success/15 text-success-foreground" },
@@ -35,6 +41,10 @@ export function PointageDirect() {
   const [missionFor, setMissionFor] = useState<number | null>(null);
   const [missionMotif, setMissionMotif] = useState("TEST_VEHICULE");
   const [missionRef, setMissionRef] = useState("");
+  const [journalEmp, setJournalEmp] = useState(0);
+  const [annulFor, setAnnulFor] = useState<{ id: number; motif: string } | null>(null);
+  const [corrFor, setCorrFor] = useState<{ id: number; moment: string; heure: string } | null>(null);
+  const [annulJournee, setAnnulJournee] = useState<{ motif: string } | null>(null);
   const [salaireEmp, setSalaireEmp] = useState(0);
   const [du, setDu] = useState(() => new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10));
   const [fin, setFin] = useState(() => new Date().toISOString().slice(0, 10));
@@ -48,6 +58,25 @@ export function PointageDirect() {
     { enabled: salaireEmp > 0 }
   );
   const { data: motifsData } = api.rhPosture.motifsMission.useQuery();
+
+  // Journal du jour (timeline éditable — invalidation tracée)
+  const { data: journal } = api.rhPosture.journee.useQuery(
+    { employeId: journalEmp, date: new Date().toISOString().slice(0, 10) },
+    { enabled: journalEmp > 0, refetchInterval: 15_000 }
+  );
+  const invalidate = () => utils.rhPosture.invalidate();
+  const annulerEvt = api.rhPosture.annulerEvenement.useMutation({
+    onSuccess: (r) => { toast.success(r?.postureActive ? `Annulé — posture : ${POSTURE_META[r.postureActive]?.label ?? r.postureActive}` : "Événement annulé"); setAnnulFor(null); invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const corriger = api.rhPosture.corrigerHeure.useMutation({
+    onSuccess: () => { toast.success("Heure corrigée (tracée)"); setCorrFor(null); invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const annulerJour = api.rhPosture.annulerJournee.useMutation({
+    onSuccess: (r) => { toast.success(`Pointage du jour annulé (${r.annules} événement(s) invalidés)`); setAnnulJournee(null); setJournalEmp(0); invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
 
   const employes = (data?.employes ?? []) as any[];
   const compteurs = (data?.compteurs ?? {}) as any;
@@ -181,6 +210,135 @@ export function PointageDirect() {
           </tbody>
         </table>
       </div>
+
+      {/* Journal du jour : timeline éditable (annulation tracée, correction d'heure) */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+          <History size={14} className="text-primary" /> Journal du jour — timeline éditable
+        </h3>
+        <div className="flex flex-wrap items-end gap-2">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Employé</p>
+            <select value={journalEmp} onChange={(e) => setJournalEmp(Number(e.target.value))} className="mt-1 h-9 min-w-52 rounded-lg border border-border bg-background px-3 text-sm">
+              <option value={0}>Choisir…</option>
+              {employes.map((e: any) => <option key={e.id} value={e.id}>{e.nom}</option>)}
+            </select>
+          </div>
+          {journalEmp > 0 && (
+            <Button size="sm" variant="outline" className="h-9 gap-1 text-xs text-destructive" onClick={() => setAnnulJournee({ motif: "" })}>
+              <Undo2 size={13} /> Annuler le pointage du jour
+            </Button>
+          )}
+        </div>
+
+        {journalEmp > 0 && (
+          <div className="mt-4 space-y-2">
+            <div className="grid grid-cols-4 gap-2 rounded-lg bg-muted/40 p-2 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground sm:grid-cols-8">
+              <span>Arrivée</span><span>Pause</span><span>Retour</span><span>Départ</span>
+              <span className="col-span-4 sm:col-span-4">Statut</span>
+            </div>
+            <div className="grid grid-cols-4 gap-2 p-2 text-center font-mono text-xs sm:grid-cols-8">
+              <span className="text-success-foreground">{fmtH(journal?.pointage?.timeIn)}</span>
+              <span className="text-warning-foreground">{fmtH(journal?.pointage?.timeInBreak)}</span>
+              <span>{fmtH(journal?.pointage?.timeOutBreak)}</span>
+              <span>{fmtH(journal?.pointage?.timeOut)}</span>
+              <span className="col-span-4 sm:col-span-4 font-sans font-bold uppercase">{journal?.pointage?.status ?? "—"}</span>
+            </div>
+
+            <div className="divide-y divide-border/50 rounded-lg border border-border/60">
+              {journal?.events?.length === 0 && (
+                <p className="px-3 py-6 text-center text-xs text-muted-foreground">Aucun événement — journée non pointée (saisie manuelle possible dans Présences).</p>
+              )}
+              {(journal?.events ?? []).map((evt: any) => {
+                const estMoment = ["ARRIVEE", "DEPART_PAUSE", "RETOUR_PAUSE", "DEPART"].includes(evt.action) || (evt.action === "SAISIE_HEURE" && (evt.notes ?? "").includes("="));
+                return (
+                  <div key={evt.id} className={`flex flex-wrap items-center gap-2 px-3 py-2 ${evt.annule ? "opacity-50" : ""}`}>
+                    <span className="w-16 font-mono text-xs font-bold">{evt.heure ?? "—"}</span>
+                    <span className={`min-w-32 text-xs font-semibold ${evt.annule ? "line-through" : ""}`}>{ACTION_LABELS[evt.action] ?? evt.action}</span>
+                    {evt.motifMission && <span className="text-[10px] font-semibold text-sky-400">{MOTIFS[evt.motifMission] ?? evt.motifMission}</span>}
+                    {evt.reference && <span className="font-mono text-[10px] text-muted-foreground">{evt.reference}</span>}
+                    {evt.annule ? (
+                      <span className="text-[10px] italic text-muted-foreground">annulé : {evt.motifAnnulation}</span>
+                    ) : (
+                      <span className="ml-auto flex gap-1">
+                        {estMoment && (
+                          <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px]" disabled={corriger.isPending} onClick={() => {
+                            const moment = evt.action === "SAISIE_HEURE" ? (evt.notes ?? "").split("=")[0] : ({ ARRIVEE: "timeIn", DEPART_PAUSE: "timeInBreak", RETOUR_PAUSE: "timeOutBreak", DEPART: "timeOut" } as any)[evt.action];
+                            setCorrFor({ id: evt.id, moment, heure: (evt.heure ?? "08:00").slice(0, 5) });
+                          }}>
+                            <Pencil size={11} /> Corriger
+                          </Button>
+                        )}
+                        <Button size="sm" variant="ghost" className="h-6 gap-1 px-2 text-[10px] text-destructive" disabled={annulerEvt.isPending} onClick={() => setAnnulFor({ id: evt.id, motif: "" })}>
+                          <Undo2 size={11} /> Annuler
+                        </Button>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {journal?.calcul && (
+              <p className="text-xs text-muted-foreground">
+                Travail : <b className="font-mono">{(Number(journal.calcul.workedMinutes) / 60).toFixed(1)} h</b> · pause {Math.round(Number(journal.calcul.breakMinutes) / 60 * 10) / 10} h · HS {Math.round(Number(journal.calcul.overtimeMinutes) / 60 * 10) / 10} h · code {journal.calcul.codePresence}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Modals de confirmation : annulation d'événement, correction, annulation du jour */}
+      {annulFor !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setAnnulFor(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
+              <Undo2 size={16} className="text-destructive" /> Annuler cet événement ?
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">L'événement reste visible (barré) dans le journal — l'annulation est tracée (qui, quand, pourquoi).</p>
+            <textarea value={annulFor.motif} onChange={(e) => setAnnulFor({ ...annulFor, motif: e.target.value })} placeholder="Motif obligatoire (min. 3 caractères)" rows={2} className="mt-3 w-full rounded-lg border border-border bg-background p-2 text-sm" />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setAnnulFor(null)}>Retour</Button>
+              <Button variant="destructive" disabled={annulFor.motif.trim().length < 3 || annulerEvt.isPending} onClick={() => annulerEvt.mutate({ evenementId: annulFor.id, motif: annulFor.motif.trim() })}>
+                <Undo2 size={14} /> Annuler
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {corrFor !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setCorrFor(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
+              <Pencil size={16} className="text-primary" /> Corriger l'heure
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">L'ancienne heure reste en audit (événement invalidé) — la nouvelle est tracée.</p>
+            <input type="time" value={corrFor.heure} onChange={(e) => setCorrFor({ ...corrFor, heure: e.target.value })} className="mt-3 h-10 w-full rounded-lg border border-border bg-background px-3 font-mono text-sm" />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setCorrFor(null)}>Retour</Button>
+              <Button disabled={!corrFor.heure || corriger.isPending} onClick={() => corriger.mutate({ employeId: journalEmp, date: new Date().toISOString().slice(0, 10), moment: corrFor.moment as any, heure: corrFor.heure })}>
+                <Pencil size={14} /> Corriger
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {annulJournee !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setAnnulJournee(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="flex items-center gap-2 text-base font-bold text-destructive">
+              <Undo2 size={16} /> Annuler tout le pointage du jour ?
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">Tous les événements de la journée seront invalidés (tracé) — l'employé redevient « Absent » jusqu'à un nouveau pointage.</p>
+            <textarea value={annulJournee.motif} onChange={(e) => setAnnulJournee({ motif: e.target.value })} placeholder="Motif obligatoire (min. 3 caractères)" rows={2} className="mt-3 w-full rounded-lg border border-border bg-background p-2 text-sm" />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setAnnulJournee(null)}>Retour</Button>
+              <Button variant="destructive" disabled={annulJournee.motif.trim().length < 3 || annulerJour.isPending} onClick={() => annulerJour.mutate({ employeId: journalEmp, date: new Date().toISOString().slice(0, 10), motif: annulJournee.motif.trim() })}>
+                <Undo2 size={14} /> Tout annuler
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Salaire sur intervalle */}
       <div className="rounded-xl border border-border bg-card p-4">

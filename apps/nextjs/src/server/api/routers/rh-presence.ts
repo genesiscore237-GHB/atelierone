@@ -1,66 +1,116 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import { createTRPCRouter, rhProcedure, requirePermissionProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
 import {
   employes,
   attendanceEntries,
-  overtimeAuthorizations,
   attendanceCalculations,
   attendanceMonthlySummaries,
+  overtimeAuthorizations,
   hrWorkCycles,
-  hrWorkSchedules,
-  hrAttendanceSettings,
-  hrPublicHolidays,
-  hrGeneralSettings,
   employeePostures,
 } from "@atelierone/db";
 import { eq, and, desc, gte, lte, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { calculateAttendance } from "~/server/lib/presence-engine";
+import { runCalculation, moisCloture, reconstruireJournee } from "~/server/lib/rh-projection";
 
 const ENTRY_STATUS = ["present", "absent", "conge", "maladie", "mission"] as const;
 const OT_STATUS = ["en_attente", "approuvee", "refusee"] as const;
 
-/** Garde de clôture : le mois de la date est-il verrouillé (résumé clôturé pour l'agence) ? */
-export async function moisCloture(agenceId: number, date: string): Promise<boolean> {
-  const [locked] = await db
-    .select({ id: attendanceMonthlySummaries.id })
-    .from(attendanceMonthlySummaries)
-    .innerJoin(employes, eq(attendanceMonthlySummaries.employeeId, employes.id))
-    .where(and(
-      eq(employes.agenceId, agenceId),
-      eq(attendanceMonthlySummaries.year, Number(date.slice(0, 4))),
-      eq(attendanceMonthlySummaries.month, Number(date.slice(5, 7))),
-      eq(attendanceMonthlySummaries.locked, true),
-    ))
-    .limit(1);
-  return !!locked;
-}
-
-/** Synchronisation statut de présence → événement de posture (unification pointage/présence). */
-async function syncPostureStatut(employeId: number, date: string, statut: string, motifMission?: string | null, reference?: string | null, par?: number) {
-  const POSTURE_STATUT: Record<string, string> = {
-    mission: "EN_MISSION",
-    conge: "CONGE",
-    maladie: "MALADIE",
-    absent: "ABSENT",
+/**
+ * Saisie tracée : une heure posée dans la grille devient un événement
+ * SAISIE_HEURE (l'ancien événement du moment est invalidé), un statut devient
+ * un événement STATUT — la journée est ensuite recalculée par la projection.
+ */
+async function poserEvenementsSaisie(
+  employeId: number,
+  date: string,
+  champs: { timeIn?: string | null; timeOut?: string | null; timeInBreak?: string | null; timeOutBreak?: string | null; status?: string; motifMission?: string | null; reference?: string | null },
+  par: number
+) {
+  const MOMENT_ACTION: Record<string, { action: string; posture: string }> = {
+    timeIn: { action: "SAISIE_HEURE", posture: "EN_TRAVAIL" },
+    timeInBreak: { action: "SAISIE_HEURE", posture: "EN_PAUSE" },
+    timeOutBreak: { action: "SAISIE_HEURE", posture: "EN_TRAVAIL" },
+    timeOut: { action: "SAISIE_HEURE", posture: "HORS_SITE" },
   };
-  const posture = POSTURE_STATUT[statut];
-  if (!posture) return; // present = pas d'événement (le pointage en direct gère)
-  const today = date;
-  await db.update(employeePostures).set({ actif: false } as any).where(and(eq(employeePostures.employeeId, employeId), eq(employeePostures.date, today), eq(employeePostures.actif, true)));
-  await db.insert(employeePostures).values({
-    employeeId: employeId,
-    date: today,
-    action: statut === "mission" ? "MISSION_DEBUT" : "STATUT",
-    posture,
-    motifMission: statut === "mission" ? (motifMission ?? "AUTRE") : null,
-    reference: reference ?? null,
-    notes: `Statut saisi en présence : ${statut}`,
-    horodatage: new Date(),
-    pointePar: par ?? null,
-    actif: true,
-  } as any);
+  for (const [champ, valeur] of Object.entries(champs)) {
+    if (champ === "status") {
+      if (valeur === "mission") {
+        // Mission posée depuis la grille → événement MISSION_DEBUT (motif + référence)
+        await db
+          .update(employeePostures)
+          .set({ annule: true, annulePar: par, motifAnnulation: "Remplacé par une nouvelle saisie", annuleA: new Date() } as any)
+          .where(and(eq(employeePostures.employeeId, employeId), eq(employeePostures.date, date), eq(employeePostures.action, "MISSION_DEBUT"), eq(employeePostures.annule, false)));
+        await db.insert(employeePostures).values({
+          employeeId: employeId,
+          date,
+          action: "MISSION_DEBUT",
+          posture: "EN_MISSION",
+          motifMission: champs.motifMission ?? "AUTRE",
+          reference: champs.reference ?? null,
+          notes: "Mission saisie en présence",
+          horodatage: new Date(),
+          pointePar: par,
+          actif: true,
+        } as any);
+      } else {
+        const POSTURE: Record<string, string> = { conge: "CONGE", maladie: "MALADIE", absent: "ABSENT" };
+        const posture = POSTURE[valeur ?? "present"];
+        await db
+          .update(employeePostures)
+          .set({ annule: true, annulePar: par, motifAnnulation: "Remplacé par une nouvelle saisie", annuleA: new Date() } as any)
+          .where(and(eq(employeePostures.employeeId, employeId), eq(employeePostures.date, date), eq(employeePostures.action, "STATUT"), eq(employeePostures.annule, false)));
+        if (posture) {
+          await db.insert(employeePostures).values({
+            employeeId: employeId,
+            date,
+            action: "STATUT",
+            posture,
+            motifMission: null,
+            reference: null,
+            notes: `Statut saisi en présence : ${valeur}`,
+            horodatage: new Date(),
+            pointePar: par,
+            actif: true,
+          } as any);
+        }
+      }
+      continue;
+    }
+    if (champ === "motifMission" || champ === "reference" || valeur === undefined) continue;
+    const spec = MOMENT_ACTION[champ];
+    if (!spec) continue;
+    // Invalider l'événement actuel de ce moment
+    const current = await db
+      .select({ id: employeePostures.id })
+      .from(employeePostures)
+      .where(and(
+        eq(employeePostures.employeeId, employeId),
+        eq(employeePostures.date, date),
+        eq(employeePostures.action, "SAISIE_HEURE"),
+        eq(employeePostures.annule, false),
+      ));
+    for (const evt of current) {
+      const [row] = await db.select().from(employeePostures).where(eq(employeePostures.id, evt.id)).limit(1);
+      if (row?.notes?.includes(`${champ}=`)) {
+        await db.update(employeePostures).set({ annule: true, annulePar: par, motifAnnulation: "Heure corrigée", annuleA: new Date() } as any).where(eq(employeePostures.id, evt.id));
+      }
+    }
+    await db.insert(employeePostures).values({
+      employeeId: employeId,
+      date,
+      action: spec.action,
+      posture: spec.posture,
+      motifMission: null,
+      reference: null,
+      notes: `${champ}=${valeur ?? ""}`,
+      horodatage: new Date(),
+      heureEvenement: valeur,
+      pointePar: par,
+      actif: true,
+    } as any);
+  }
 }
 
 /** RH-02 — Présences & temps de travail */
@@ -80,7 +130,7 @@ saveEntry: requirePermissionProcedure("rh.utilisateur.modifier")
         notes: z.string().optional(),
         motifMission: z.string().max(40).optional(),
         reference: z.string().max(120).optional(),
-        // specs MVP — validation admin par ligne + prime de tâche
+    // specs MVP - validation admin par ligne + prime de tâche
         validateEarlyArrival: z.boolean().optional(),
         validateLateDeparture: z.boolean().optional(),
         taskBonus: z.number().min(0).optional(),
@@ -97,61 +147,46 @@ saveEntry: requirePermissionProcedure("rh.utilisateur.modifier")
         .where(and(eq(employes.id, input.employeeId), eq(employes.agenceId, agenceId)))
         .limit(1);
       if (!emp) throw new TRPCError({ code: "NOT_FOUND", message: "Employé introuvable." });
-      if (emp.workCycleId === null) {
+if (emp.workCycleId === null) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Aucun cycle de travail affecté à cet employé (voir sa fiche)." });
       }
 
-      // Écrire (merge — n'écrase pas les champs non fournis)
+      // Saisie tracée : heures → événements SAISIE_HEURE, statut → événement STATUT/MISSION_DEBUT
+      await poserEvenementsSaisie(
+        input.employeeId,
+        input.date,
+        {
+          timeIn: input.timeIn,
+          timeOut: input.timeOut,
+          timeInBreak: input.timeInBreak,
+          timeOutBreak: input.timeOutBreak,
+          status: input.status,
+          motifMission: input.motifMission,
+          reference: input.reference,
+        },
+        Number(ctx.user.id)
+      );
+
+      // Attributs de journée (primes, validations, notes) → écrits sur la ligne
       const [existing] = await db
         .select({ id: attendanceEntries.id })
         .from(attendanceEntries)
         .where(and(eq(attendanceEntries.employeeId, input.employeeId), eq(attendanceEntries.date, input.date)))
         .limit(1);
-
-      let entryId: number;
+      const attrs: Record<string, unknown> = {
+        notes: input.notes ?? null,
+        validateEarlyArrival: input.validateEarlyArrival ?? false,
+        validateLateDeparture: input.validateLateDeparture ?? false,
+        updatedAt: new Date(),
+      };
+      if (input.taskBonus != null) attrs.taskBonus = String(input.taskBonus);
       if (existing) {
-        const values: Record<string, unknown> = {
-          status: input.status,
-          notes: input.notes ?? null,
-          validateEarlyArrival: input.validateEarlyArrival ?? false,
-          validateLateDeparture: input.validateLateDeparture ?? false,
-          taskBonus: input.taskBonus != null ? String(input.taskBonus) : undefined,
-          updatedAt: new Date(),
-        };
-        // Merge : seul un champ fourni est modifié (undefined = ne pas toucher, null = effacer)
-        if (input.timeIn !== undefined) values.timeIn = input.timeIn ?? null;
-        if (input.timeOut !== undefined) values.timeOut = input.timeOut ?? null;
-        if (input.timeInBreak !== undefined) values.timeInBreak = input.timeInBreak ?? null;
-        if (input.timeOutBreak !== undefined) values.timeOutBreak = input.timeOutBreak ?? null;
-        await db.update(attendanceEntries).set(values as any).where(eq(attendanceEntries.id, existing.id));
-        entryId = existing.id;
-      } else {
-        const [row] = await db
-          .insert(attendanceEntries)
-          .values({
-            employeeId: input.employeeId,
-            date: input.date,
-            timeIn: input.timeIn ?? null,
-            timeOut: input.timeOut ?? null,
-            timeInBreak: input.timeInBreak ?? null,
-            timeOutBreak: input.timeOutBreak ?? null,
-            status: input.status,
-            notes: input.notes ?? null,
-            validateEarlyArrival: input.validateEarlyArrival ?? false,
-            validateLateDeparture: input.validateLateDeparture ?? false,
-            taskBonus: input.taskBonus != null ? String(input.taskBonus) : "0",
-            createdBy: Number(ctx.user.id),
-          } as any)
-          .returning();
-        entryId = row.id;
+        await db.update(attendanceEntries).set(attrs as any).where(eq(attendanceEntries.id, existing.id));
       }
 
-      // Synchronisation statut → posture (mission/congé/maladie/absent)
-      await syncPostureStatut(input.employeeId, input.date, input.status, input.motifMission ?? null, input.reference ?? null, Number(ctx.user.id));
-
-      // Moteur de calcul
-      await runCalculation(entryId, input.employeeId, input.date);
-      return { id: entryId };
+      // Projection : la journée est recalculée depuis la timeline
+      const proj = await reconstruireJournee(input.employeeId, input.date);
+      return { id: proj?.entry?.id ?? existing?.id };
     }),
 
   saveBatch: requirePermissionProcedure("rh.utilisateur.modifier")
@@ -419,120 +454,7 @@ totalNormalMinutes: attendanceMonthlySummaries.totalNormalMinutes,
     }),
 });
 
-// ─── Moteur : calcul + persistance du résultat ───
-export async function runCalculation(entryId: number, employeeId: number, date: string) {
-  const [entry] = await db
-    .select()
-    .from(attendanceEntries)
-    .where(eq(attendanceEntries.id, entryId))
-    .limit(1);
-  if (!entry) return;
-
-const [emp] = await db
-    .select({ workCycleId: employes.workCycleId, agenceId: employes.agenceId })
-    .from(employes)
-    .where(eq(employes.id, employeeId))
-    .limit(1);
-  if (!emp?.workCycleId) return;
-  const entryAgenceId = emp.agenceId ?? 0;
-
-  const dayOfWeek = new Date(`${date}T12:00:00`).getDay();
-
-  const [schedule] = await db
-    .select()
-    .from(hrWorkSchedules)
-    .where(and(eq(hrWorkSchedules.cycleId, emp.workCycleId), eq(hrWorkSchedules.dayOfWeek, dayOfWeek)))
-    .limit(1);
-
-const [settingsRow] = await db
-    .select()
-    .from(hrAttendanceSettings)
-    .where(eq(hrAttendanceSettings.agenceId, entryAgenceId))
-    .limit(1);
-
-  const [holiday] = await db
-    .select({ id: hrPublicHolidays.id })
-    .from(hrPublicHolidays)
-    .where(eq(hrPublicHolidays.date, date))
-    .limit(1);
-
-  const [ot] = await db
-    .select({ maxHours: overtimeAuthorizations.maxHours, status: overtimeAuthorizations.status })
-    .from(overtimeAuthorizations)
-    .where(
-      and(
-        eq(overtimeAuthorizations.employeeId, employeeId),
-        eq(overtimeAuthorizations.date, date),
-        eq(overtimeAuthorizations.status, "approuvee"),
-      )
-    )
-    .limit(1);
-
-const [generalRow] = await db
-    .select({ defaultOvertimeThreshold: hrGeneralSettings.defaultOvertimeThreshold })
-    .from(hrGeneralSettings)
-    .where(eq(hrGeneralSettings.agenceId, entryAgenceId))
-    .limit(1);
-
-  const result = calculateAttendance({
-    timeIn: entry.timeIn,
-    timeInBreak: entry.timeInBreak ?? null,
-    timeOutBreak: entry.timeOutBreak ?? null,
-    timeOut: entry.timeOut,
-    schedule: schedule ?? null,
-    settings: {
-      lateToleranceMinutes: settingsRow?.lateToleranceMinutes ?? 0,
-      roundToMinutes: settingsRow?.roundToMinutes ?? 0,
-      autoDeductBreak: settingsRow?.autoDeductBreak ?? true,
-      countEarlyArrival: settingsRow?.countEarlyArrival ?? false,
-      countLateDeparture: settingsRow?.countLateDeparture ?? false,
-      autoDeductLate: settingsRow?.autoDeductLate ?? true,
-      autoDeductEarlyDeparture: settingsRow?.autoDeductEarlyDeparture ?? true,
-      maxNormalHoursPerDay: settingsRow?.maxNormalHoursPerDay ?? null,
-      defaultOvertimeThreshold: generalRow?.defaultOvertimeThreshold ?? null,
-    },
-    overtimeAuth: ot ? { maxHours: ot.maxHours, status: ot.status } : null,
-    isPublicHoliday: !!holiday,
-    // specs MVP — validation admin par ligne (clamps levés si validés)
-    validateEarlyArrival: entry.validateEarlyArrival ?? false,
-    validateLateDeparture: entry.validateLateDeparture ?? false,
-  });
-
-  const [existingCalc] = await db
-    .select({ id: attendanceCalculations.id })
-    .from(attendanceCalculations)
-    .where(eq(attendanceCalculations.attendanceEntryId, entryId))
-    .limit(1);
-
-const values = {
-    employeeId,
-    date,
-    rawMinutes: result.rawMinutes,
-    breakMinutes: result.breakMinutes,
-    workedMinutes: result.workedMinutes,
-    normalMinutes: result.normalMinutes,
-    overtimeMinutes: result.overtimeMinutes,
-    lateMinutes: result.lateMinutes,
-    earlyDepartureMinutes: result.earlyDepartureMinutes,
-    isAbsent: result.isAbsent,
-    codePresence: result.codePresence,
-    calculationDetails: result.details,
-    calculatedAt: new Date(),
-  };
-
-  if (existingCalc) {
-    await db
-      .update(attendanceCalculations)
-      .set(values as any)
-      .where(eq(attendanceCalculations.id, existingCalc.id));
-  } else {
-    await db
-      .insert(attendanceCalculations)
-      .values({ attendanceEntryId: entryId, ...values } as any);
-  }
-}
-
-// Réutilisé par saveBatch
+// Réutilisé par saveBatch - saisie tracée (événements + projection)
 async function saveSingle(user: { agenceId: number; id: string }, date: string, row: { employeeId: number; timeIn?: string | null; timeOut?: string | null; status?: string; validateEarlyArrival?: boolean; validateLateDeparture?: boolean; taskBonus?: number }) {
   const [emp] = await db
     .select({ id: employes.id, workCycleId: employes.workCycleId })
@@ -542,48 +464,22 @@ async function saveSingle(user: { agenceId: number; id: string }, date: string, 
   if (!emp) throw new TRPCError({ code: "NOT_FOUND", message: "Employé introuvable." });
   if (emp.workCycleId === null) throw new TRPCError({ code: "BAD_REQUEST", message: `Employé ${row.employeeId} sans cycle de travail.` });
 
+  await poserEvenementsSaisie(row.employeeId, date, { timeIn: row.timeIn, timeOut: row.timeOut, status: row.status ?? "present" }, Number(user.id));
+
   const [existing] = await db
     .select({ id: attendanceEntries.id })
     .from(attendanceEntries)
     .where(and(eq(attendanceEntries.employeeId, row.employeeId), eq(attendanceEntries.date, date)))
     .limit(1);
-
-  let entryId: number;
+  const attrs: Record<string, unknown> = {
+    validateEarlyArrival: row.validateEarlyArrival ?? false,
+    validateLateDeparture: row.validateLateDeparture ?? false,
+    updatedAt: new Date(),
+  };
+  if (row.taskBonus != null) attrs.taskBonus = String(row.taskBonus);
   if (existing) {
-    const values: Record<string, unknown> = {
-      status: row.status ?? "present",
-      validateEarlyArrival: row.validateEarlyArrival ?? false,
-      validateLateDeparture: row.validateLateDeparture ?? false,
-      taskBonus: row.taskBonus != null ? String(row.taskBonus) : undefined,
-      updatedAt: new Date(),
-    };
-    // Merge : seul un champ fourni est modifié
-    if (row.timeIn !== undefined) values.timeIn = row.timeIn ?? null;
-    if (row.timeOut !== undefined) values.timeOut = row.timeOut ?? null;
-    await db.update(attendanceEntries).set(values as any).where(eq(attendanceEntries.id, existing.id));
-    entryId = existing.id;
-  } else {
-    const [created] = await db
-      .insert(attendanceEntries)
-      .values({
-        employeeId: row.employeeId,
-        date,
-        timeIn: row.timeIn ?? null,
-        timeOut: row.timeOut ?? null,
-        status: row.status ?? "present",
-        validateEarlyArrival: row.validateEarlyArrival ?? false,
-        validateLateDeparture: row.validateLateDeparture ?? false,
-        taskBonus: row.taskBonus != null ? String(row.taskBonus) : "0",
-        createdBy: Number(user.id),
-      } as any)
-      .returning();
-    entryId = created.id;
+    await db.update(attendanceEntries).set(attrs as any).where(eq(attendanceEntries.id, existing.id));
   }
 
-  await syncPostureStatut(row.employeeId, date, row.status ?? "present", null, null, Number(user.id));
-  await runCalculation(entryId, row.employeeId, date);
+  await reconstruireJournee(row.employeeId, date);
 }
-
-
-
-
