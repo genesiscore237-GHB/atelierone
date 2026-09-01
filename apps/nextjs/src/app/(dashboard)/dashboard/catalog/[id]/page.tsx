@@ -168,7 +168,7 @@ export default function ProductDetailPage() {
               {product.codeBarre && <span className="font-mono">{product.codeBarre}</span>}
               {product.typeProduit && (
                 <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                  {product.typeProduit === "MANUEL" ? "Manuel scolaire" : "Fourniture"}
+                  {({ PIECE: "Pièce détachée", SERVICE: "Main d'œuvre", OUTIL: "Outil", CONSOMMABLE: "Consommable" } as Record<string, string>)[product.typeProduit] ?? product.typeProduit}
                 </span>
               )}
             </div>

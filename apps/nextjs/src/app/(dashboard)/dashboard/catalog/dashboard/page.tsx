@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { api } from "~/trpc/react";
-import { RefreshCw, Download, BookOpen, Pencil, AlertTriangle, TrendingUp } from "lucide-react";
+import { RefreshCw, Download, Wrench, Clock3, AlertTriangle, TrendingUp } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -71,10 +71,10 @@ export default function CatalogDashboardPage() {
   }, [refetch]);
 
   const totalCaParType = (agg?.caParType ?? []).reduce((s, r) => s + r.total, 0);
-  const caManuels = (agg?.caParType ?? []).find(r => r.type === "MANUEL")?.total ?? 0;
-  const caFournitures = totalCaParType - caManuels;
-  const pctManuels = totalCaParType > 0 ? Math.round(caManuels / totalCaParType * 100) : 0;
-  const pctFournitures = totalCaParType > 0 ? 100 - pctManuels : 0;
+  const caPieces = (agg?.caParType ?? []).filter(r => r.type === "PIECE" || r.type === "MANUEL").reduce((s, r) => s + r.total, 0);
+  const caServices = totalCaParType - caPieces;
+  const pctPieces = totalCaParType > 0 ? Math.round(caPieces / totalCaParType * 100) : 0;
+  const pctServices = totalCaParType > 0 ? 100 - pctPieces : 0;
 
   const ventesNiveau = agg?.ventesParNiveau ?? [];
 
@@ -144,17 +144,17 @@ export default function CatalogDashboardPage() {
           {totalCaParType > 0 ? (
             <div className="flex items-center gap-6">
               <div className="shrink-0 size-24 rounded-full"
-                style={{ background: `conic-gradient(#3B82F6 0deg ${pctManuels * 3.6}deg, #F59E0B ${pctManuels * 3.6}deg 360deg)` }} />
+                style={{ background: `conic-gradient(#3B82F6 0deg ${pctPieces * 3.6}deg, #F59E0B ${pctPieces * 3.6}deg 360deg)` }} />
               <div className="text-sm space-y-2">
                 <button onClick={() => setFilterType(filterType === "manuels" ? null : "manuels")}
                   className={`flex items-center gap-2 transition-colors w-full text-left ${filterType === "manuels" ? "opacity-100" : filterType ? "opacity-40 hover:opacity-70" : "hover:opacity-80"}`}>
                   <span className="inline-block size-3 rounded-sm bg-primary" />
-                  <span className="text-foreground/80"><BookOpen className="inline size-3.5 mr-1" /> Manuels : {pctManuels}% ({caManuels.toLocaleString()} F)</span>
+                  <span className="text-foreground/80"><Wrench className="inline size-3.5 mr-1" /> Pièces : {pctPieces}% ({caPieces.toLocaleString()} F)</span>
                 </button>
                 <button onClick={() => setFilterType(filterType === "fournitures" ? null : "fournitures")}
                   className={`flex items-center gap-2 transition-colors w-full text-left ${filterType === "fournitures" ? "opacity-100" : filterType ? "opacity-40 hover:opacity-70" : "hover:opacity-80"}`}>
                   <span className="inline-block size-3 rounded-sm bg-warning" />
-                  <span className="text-foreground/80"><Pencil className="inline size-3.5 mr-1" /> Fournitures : {pctFournitures}% ({caFournitures.toLocaleString()} F)</span>
+                  <span className="text-foreground/80"><Clock3 className="inline size-3.5 mr-1" /> Main d'œuvre : {pctServices}% ({caServices.toLocaleString()} F)</span>
                 </button>
               </div>
             </div>

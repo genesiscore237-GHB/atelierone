@@ -99,12 +99,8 @@ export default function CatalogPage() {
             {isLoading ? "Chargement..." : `${data?.total ?? 0} produit${(data?.total ?? 0) > 1 ? "s" : ""}`}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Link href="/dashboard/catalog/dashboard"
-            className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/20">
-            <BarChart3 className="size-4" /> Tableau de bord
-          </Link>
-                  <Link href="/dashboard/catalog/categories"
+<div className="flex flex-wrap gap-2">
+          <Link href="/dashboard/catalog/categories"
             className="inline-flex items-center gap-2 rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm font-medium text-foreground hover:bg-accent">
             <BookOpen className="size-4" /> Catégories
           </Link>

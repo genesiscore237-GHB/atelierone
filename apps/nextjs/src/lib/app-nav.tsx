@@ -419,6 +419,11 @@ export const DOMAINS: AppDomain[] = [
         icon: Package,
         desc: "Pièces auto, catégories, prix, seuils",
         moduleId: "catalog",
+        subs: [
+          { id: "catalog-articles", label: "Articles", href: "/dashboard/catalog", icon: Package, moduleId: "catalog", desc: "Liste des articles" },
+          { id: "catalog-categories", label: "Catégories", href: "/dashboard/catalog/categories", icon: BookOpen, moduleId: "catalog", desc: "Catégories de produits" },
+          { id: "catalog-stats", label: "Statistiques", href: "/dashboard/catalog/dashboard", icon: BarChart3, moduleId: "catalog", desc: "CA, ventes, alertes" },
+        ],
       },
       {
         id: "stock-mouvements",
