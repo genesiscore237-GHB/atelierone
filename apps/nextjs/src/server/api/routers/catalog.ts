@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, adminProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, modelesEmballage, fournisseurs, produitsFournisseurs, agences, articleEquivalences, kitsLignes, mouvementsStock, emplacements } from "@atelierone/db";
+import { db, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, modelesEmballage, fournisseurs, produitsFournisseurs, agences, articleEquivalences, kitsLignes, mouvementsStock, emplacements, compatibilitesProduits } from "@atelierone/db";
 import { eq, ilike, and, desc, sql, inArray, ne, getTableColumns, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { generateBarcode, autoGenerateBarcode, ensureBarcodeSequence } from "@atelierone/db/utils";
@@ -78,6 +78,12 @@ function formatProduct(p: typeof produits.$inferSelect) {
       estCore: p.estCore,
       valeurCore: p.valeurCore,
       notes: p.notes,
+      classeAbc: p.classeAbc,
+      poidsKg: p.poidsKg,
+      dimensions: p.dimensions,
+      garantieMois: p.garantieMois,
+      suiviSerie: p.suiviSerie,
+      suiviLot: p.suiviLot,
     marque: p.marque,
     referenceFabricant: p.referenceFabricant,
     couleur: p.couleur,
@@ -200,14 +206,14 @@ export const catalogRouter = createTRPCRouter({
 
   getById: protectedProcedure
     .input(z.object({ id: z.string() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const query = db.select()
         .from(produits)
         .where(eq(produits.id, input.id))
         .limit(1);
       const [item] = await query;
       if (!item) throw new TRPCError({ code: "NOT_FOUND" });
-      const [barres, productUnits, extras, fournisseurRows] = await Promise.all([
+      const [barres, productUnits, extras, fournisseurRows, compatibilites, stockRows] = await Promise.all([
         db.select().from(codesBarres).where(eq(codesBarres.produitId, input.id)),
         db.select().from(produitUnites)
           .where(and(eq(produitUnites.produitId, Number(input.id)), eq(produitUnites.statut, "ACTIF"))),
@@ -233,6 +239,13 @@ export const catalogRouter = createTRPCRouter({
           .from(produitsFournisseurs)
           .innerJoin(fournisseurs, eq(fournisseurs.id, produitsFournisseurs.fournisseurId))
           .where(and(eq(produitsFournisseurs.produitId, Number(input.id)), eq(produitsFournisseurs.isActive, true))),
+        db.select()
+          .from(compatibilitesProduits)
+          .where(eq(compatibilitesProduits.produitId, Number(input.id))),
+        db.select({ emplacementId: stocks.id, quantite: stocks.quantite, emplacementCode: emplacements.code })
+          .from(stocks)
+          .leftJoin(emplacements, eq(emplacements.id, stocks.emplacementId))
+          .where(and(eq(stocks.produitId, Number(input.id)), eq(stocks.agenceId, ctx.user!.agenceId))),
       ]);
       return {
         ...formatProduct(item),
@@ -241,7 +254,59 @@ export const catalogRouter = createTRPCRouter({
         categorieNom: extras[0]?.categorieNom ?? null,
         fournisseurNom: extras[0]?.fournisseurNom ?? null,
         fournisseurs: fournisseurRows,
+        compatibilites,
+        stockTotal: stockRows.reduce((s, r) => s + Number(r.quantite ?? 0), 0),
+        stockParEmplacement: stockRows,
       };
+    }),
+
+  /** Compatibilités véhicule d'un produit (wireframe). */
+  listCompatibilites: protectedProcedure
+    .input(z.object({ produitId: z.number().int() }))
+    .query(async ({ input }) => {
+      return db.select()
+        .from(compatibilitesProduits)
+        .where(eq(compatibilitesProduits.produitId, input.produitId))
+        .orderBy(compatibilitesProduits.marque);
+    }),
+
+  addCompatibilite: stockProcedure
+    .input(z.object({
+      produitId: z.number().int(),
+      marque: z.string().min(1),
+      modele: z.string().min(1),
+      anneeDe: z.number().int().optional(),
+      anneeA: z.number().int().optional(),
+      motorisation: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const [existing] = await db
+        .select({ id: compatibilitesProduits.id })
+        .from(compatibilitesProduits)
+        .where(and(
+          eq(compatibilitesProduits.produitId, input.produitId),
+          eq(compatibilitesProduits.marque, input.marque.trim()),
+          eq(compatibilitesProduits.modele, input.modele.trim()),
+          input.motorisation ? eq(compatibilitesProduits.motorisation, input.motorisation.trim()) : eq(compatibilitesProduits.motorisation, null),
+        ))
+        .limit(1);
+      if (existing) throw new TRPCError({ code: "CONFLICT", message: "Cette compatibilité existe déjà." });
+      const [row] = await db.insert(compatibilitesProduits).values({
+        produitId: input.produitId,
+        marque: input.marque.trim(),
+        modele: input.modele.trim(),
+        anneeDe: input.anneeDe ?? null,
+        anneeA: input.anneeA ?? null,
+        motorisation: input.motorisation?.trim() || null,
+      } as any).returning();
+      return row;
+    }),
+
+  removeCompatibilite: stockProcedure
+    .input(z.object({ id: z.number().int() }))
+    .mutation(async ({ input }) => {
+      await db.delete(compatibilitesProduits).where(eq(compatibilitesProduits.id, input.id));
+      return { success: true };
     }),
 
   /** Unités de mesure disponibles (pour sorties, déconditionnements…). */
@@ -290,6 +355,24 @@ export const catalogRouter = createTRPCRouter({
       stockInitial: z.number().min(0).optional(),
       emplacementStockId: z.number().int().optional(),
       uniteStockId: z.string().optional(),
+      // Classification ABC (référentiel garage)
+      classeAbc: z.enum(["A", "B", "C"]).optional(),
+      // Wireframe produit : infos complémentaires
+      poidsKg: z.number().min(0).optional(),
+      dimensions: z.string().optional(),
+      garantieMois: z.number().int().min(0).optional(),
+      suiviSerie: z.boolean().optional(),
+      suiviLot: z.boolean().optional(),
+      referenceFournisseur: z.string().optional(),
+      delaiFournisseur: z.number().int().min(0).optional(),
+      // Compatibilité véhicule (wireframe)
+      compatibilites: z.array(z.object({
+        marque: z.string().min(1),
+        modele: z.string().min(1),
+        anneeDe: z.number().int().optional(),
+        anneeA: z.number().int().optional(),
+        motorisation: z.string().optional(),
+      })).optional(),
       // Specs 02 §2.1 : désignation courte
       designationCourte: z.string().optional(),
       editeur: z.string().optional(),
@@ -367,7 +450,13 @@ export const catalogRouter = createTRPCRouter({
           branche = parent?.typeBranche ?? null;
         }
         if (branche && branche !== values.typeProduit) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: `La catégorie choisie (${branche}) n'est pas cohérente avec le type de produit ${values.typeProduit} (RG-002)` });
+          // Référentiel garage : PIECE et CONSOMMABLE interchangeables (filtres = pièces,
+          // huiles = consommables) ; SERVICE et OUTIL restent stricts.
+          const interchangeable = ["PIECE", "CONSOMMABLE"];
+          const ok = interchangeable.includes(branche) && interchangeable.includes(values.typeProduit);
+          if (!ok) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: `La catégorie choisie (${branche}) n'est pas cohérente avec le type de produit ${values.typeProduit} (RG-002)` });
+          }
         }
       }
 
@@ -476,6 +565,33 @@ export const catalogRouter = createTRPCRouter({
         }
       }
 
+      // Fournisseur principal : référence + délai (wireframe)
+      if (input.fournisseurId && (input.referenceFournisseur || input.delaiFournisseur)) {
+        const [pf] = await db.select({ id: produitsFournisseurs.id }).from(produitsFournisseurs)
+          .where(and(eq(produitsFournisseurs.produitId, p.id), eq(produitsFournisseurs.fournisseurId, Number(input.fournisseurId)), eq(produitsFournisseurs.estPrincipal, true)))
+          .limit(1);
+        const pfValues = { referenceFournisseur: input.referenceFournisseur ?? null, delaiApprovisionnement: input.delaiFournisseur ?? null } as any;
+        if (pf) {
+          await db.update(produitsFournisseurs).set(pfValues).where(eq(produitsFournisseurs.id, pf.id));
+        } else if (input.fournisseurId) {
+          await db.insert(produitsFournisseurs).values({ produitId: p.id, fournisseurId: Number(input.fournisseurId), estPrincipal: true, ...pfValues } as any);
+        }
+      }
+
+      // Compatibilités véhicule (wireframe)
+      if (input.compatibilites && input.compatibilites.length > 0) {
+        for (const c of input.compatibilites) {
+          await db.insert(compatibilitesProduits).values({
+            produitId: p.id,
+            marque: c.marque.trim(),
+            modele: c.modele.trim(),
+            anneeDe: c.anneeDe ?? null,
+            anneeA: c.anneeA ?? null,
+            motorisation: c.motorisation?.trim() || null,
+          } as any);
+        }
+      }
+
       await db.insert(auditLogs).values({
         userId: ctx.user!.id,
         action: "catalog.create",
@@ -537,6 +653,24 @@ export const catalogRouter = createTRPCRouter({
       id: z.string(),
       codeBarre: z.string().optional(),
       nomCode: z.string().optional(),
+      // Classification ABC (référentiel garage)
+      classeAbc: z.enum(["A", "B", "C"]).optional().nullable(),
+      // Wireframe produit : infos complémentaires
+      poidsKg: z.number().min(0).optional().nullable(),
+      dimensions: z.string().optional().nullable(),
+      garantieMois: z.number().int().min(0).optional().nullable(),
+      suiviSerie: z.boolean().optional(),
+      suiviLot: z.boolean().optional(),
+      referenceFournisseur: z.string().optional(),
+      delaiFournisseur: z.number().int().min(0).optional(),
+      // Compatibilité véhicule (wireframe)
+      compatibilites: z.array(z.object({
+        marque: z.string().min(1),
+        modele: z.string().min(1),
+        anneeDe: z.number().int().optional(),
+        anneeA: z.number().int().optional(),
+        motorisation: z.string().optional(),
+      })).optional(),
       // Specs 02 §2.1 : code article métier unique
       codeArticle: z.string().optional(),
       titre: z.string().optional(),
@@ -598,7 +732,7 @@ export const catalogRouter = createTRPCRouter({
       })).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const { id, unites, fournisseurs: inputFournisseurs, photos, codeBarre: inputCodeBarre, ...data } = input;
+      const { id, unites, fournisseurs: inputFournisseurs, photos, codeBarre: inputCodeBarre, referenceFournisseur, delaiFournisseur, ...data } = input;
 
       const [old] = await db.select()
         .from(produits)
@@ -620,7 +754,12 @@ export const catalogRouter = createTRPCRouter({
           branche = parent?.typeBranche ?? null;
         }
         if (branche && branche !== (data.typeProduit ?? old.typeProduit)) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: `La catégorie choisie (${branche}) n'est pas cohérente avec le type de produit (RG-002)` });
+          // Référentiel garage : PIECE et CONSOMMABLE interchangeables
+          const interchangeable = ["PIECE", "CONSOMMABLE"];
+          const ok = interchangeable.includes(branche) && interchangeable.includes(data.typeProduit ?? old.typeProduit);
+          if (!ok) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: `La catégorie choisie (${branche}) n'est pas cohérente avec le type de produit (RG-002)` });
+          }
         }
       }
 
@@ -755,6 +894,34 @@ export const catalogRouter = createTRPCRouter({
               estPrincipal: f.estPrincipal,
             } as any);
           }
+        }
+      }
+
+      // Fournisseur principal : référence + délai (wireframe)
+      if (data.fournisseurId && (referenceFournisseur || delaiFournisseur)) {
+        const [pf] = await db.select({ id: produitsFournisseurs.id }).from(produitsFournisseurs)
+          .where(and(eq(produitsFournisseurs.produitId, Number(id)), eq(produitsFournisseurs.fournisseurId, Number(data.fournisseurId)), eq(produitsFournisseurs.estPrincipal, true)))
+          .limit(1);
+        const pfValues = { referenceFournisseur: referenceFournisseur ?? null, delaiApprovisionnement: delaiFournisseur ?? null } as any;
+        if (pf) {
+          await db.update(produitsFournisseurs).set(pfValues).where(eq(produitsFournisseurs.id, pf.id));
+        } else {
+          await db.insert(produitsFournisseurs).values({ produitId: Number(id), fournisseurId: Number(data.fournisseurId), estPrincipal: true, ...pfValues } as any);
+        }
+      }
+
+      // Compatibilités véhicule : remplacement complet si fournies (wireframe)
+      if (input.compatibilites !== undefined) {
+        await db.delete(compatibilitesProduits).where(eq(compatibilitesProduits.produitId, Number(id)));
+        for (const c of input.compatibilites) {
+          await db.insert(compatibilitesProduits).values({
+            produitId: Number(id),
+            marque: c.marque.trim(),
+            modele: c.modele.trim(),
+            anneeDe: c.anneeDe ?? null,
+            anneeA: c.anneeA ?? null,
+            motorisation: c.motorisation?.trim() || null,
+          } as any);
         }
       }
 

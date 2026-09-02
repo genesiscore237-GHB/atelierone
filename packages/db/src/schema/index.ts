@@ -123,3 +123,4 @@ export { tenantSites, tenantLicences, tenantPaiements, syncIngests, tenantSnapsh
 export { licenceLocale, syncEtat, syncOutbox } from "./saa_local";
 export { pretsOutils } from "./prets_outils";
 export { demandesCommande } from "./demandes_commande";
+export { compatibilitesProduits } from "./compatibilites_produits";

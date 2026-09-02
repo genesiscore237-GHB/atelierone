@@ -38,6 +38,14 @@ export const produits = pgTable("produits", {
   statutCycleVie: varchar("statut_cycle_vie", { length: 20 }).default("BROUILLON"),
   // Statut outillage (specs garage) : REPARATION | USE | CASSE | PERDU | VOLE | REFORME — null = disponible
   statutOutil: varchar("statut_outil", { length: 20 }),
+  // Classification ABC (référentiel garage) : A = haute rotation, B = moyenne, C = faible
+  classeAbc: varchar("classe_abc", { length: 1 }),
+  // Wireframe produit : infos complémentaires + suivi
+  poidsKg: numeric("poids_kg", { precision: 8, scale: 2 }),
+  dimensions: varchar("dimensions", { length: 50 }), // L x l x H
+  garantieMois: integer("garantie_mois"),
+  suiviSerie: boolean("suivi_serie").default(false),
+  suiviLot: boolean("suivi_lot").default(false),
   dateDiscontinuation: timestamp("date_discontinuation"),
   motifSuspension: text("motif_suspension"),
   modeleEmballageId: uuid("modele_emballage_id").references(() => modelesEmballage.id),

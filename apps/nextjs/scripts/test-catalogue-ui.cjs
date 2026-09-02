@@ -17,9 +17,9 @@ const EXE = "C:\\Users\\FAYA COMPUTER\\AppData\\Local\\ms-playwright\\chromium-1
   await page.waitForURL("**/dashboard**", { timeout: 60000 });
   check("Connexion OK", true);
 
-  // 1. Liste : sous-nav du catalogue (Articles / Catégories / Statistiques)
+// 1. Liste : sous-nav du catalogue (Articles / Catégories / Statistiques)
   await page.goto("http://localhost:3000/dashboard/catalog", { waitUntil: "domcontentloaded", timeout: 90000 });
-  await page.waitForLoadState("networkidle");
+  await page.waitForSelector("text=Catalogue produits", { timeout: 60000 }).catch(() => {});
   await page.waitForTimeout(1200);
   const stats = await page.getByText("Statistiques", { exact: false }).count();
   const categories = await page.getByText("Catégories", { exact: false }).count();
@@ -32,23 +32,29 @@ const EXE = "C:\\Users\\FAYA COMPUTER\\AppData\\Local\\ms-playwright\\chromium-1
   check("En-tête : bouton Nouveau présent", nouveau >= 1, "n=" + nouveau);
   check("En-tête : bouton Tableau de bord retiré (Statistiques dans la sous-nav)", btnDashboard === 0, "n=" + btnDashboard);
 
-  // 3. Formulaire de création : 1 écran simple, 4 types, 3 blocs, quantité initiale
+  // 3. Formulaire de création : wireframe 2 colonnes, sections A-H
   await page.goto("http://localhost:3000/dashboard/catalog/produits/nouveau", { waitUntil: "domcontentloaded", timeout: 90000 });
-  await page.waitForSelector("text=Identité", { timeout: 45000 }).catch(() => {});
+  await page.waitForSelector("text=A · Identification", { timeout: 45000 }).catch(() => {});
   await page.waitForTimeout(800);
   const piece = await page.locator("text=Pièce détachée").count();
-  const consommable = await page.locator("text=Consommable (huiles…)").count();
-  const outil = await page.locator("text=Outil / Matériel").count();
+  const consommable = await page.locator("text=Consommable").count();
+  const outil = await page.locator("text=Outillage").count();
   const service = await page.locator("text=Main d'œuvre").count();
-  const sectionIdentite = await page.locator("text=Identité").count();
-  const sectionPrix = await page.locator("text=Prix & fournisseur").count();
-  const sectionStock = await page.locator("text=Stock initial").count();
-  check("Formulaire : 4 types (Pièce/Consommable/Outil/Main d'œuvre)", piece >= 1 && consommable >= 1 && outil >= 1 && service >= 1, `${piece}/${consommable}/${outil}/${service}`);
-  check("Formulaire : 1 écran — bloc « Identité »", sectionIdentite >= 1, "n=" + sectionIdentite);
-  check("Formulaire : bloc « Prix & fournisseur »", sectionPrix >= 1, "n=" + sectionPrix);
-  check("Formulaire : bloc « Stock initial » (quantité à la création)", sectionStock >= 1, "n=" + sectionStock);
+  const sectionId = await page.locator("text=A · Identification").count();
+  const sectionCls = await page.locator("text=B · Classification").count();
+  const sectionCompat = await page.locator("text=C · Compatibilité véhicule").count();
+  const sectionPrix = await page.locator("text=E · Prix & tarification").count();
+  const sectionStock = await page.locator("text=F · Gestion de stock").count();
+  check("Formulaire : 4 types (Pièce/Consommable/Outillage/Main d'œuvre)", piece >= 1 && consommable >= 1 && outil >= 1 && service >= 1, `${piece}/${consommable}/${outil}/${service}`);
+  check("Wireframe : section A Identification", sectionId >= 1, "n=" + sectionId);
+  check("Wireframe : section B Classification", sectionCls >= 1, "n=" + sectionCls);
+  check("Wireframe : section C Compatibilité véhicule", sectionCompat >= 1, "n=" + sectionCompat);
+  check("Wireframe : section E Prix & tarification", sectionPrix >= 1, "n=" + sectionPrix);
+  check("Wireframe : section F Gestion de stock", sectionStock >= 1, "n=" + sectionStock);
   check("Formulaire : plus d'écran « Que souhaitez-vous enregistrer ? »", (await page.locator("text=Que souhaitez-vous enregistrer").count()) === 0);
   check("Formulaire : anti-doublon « Cette pièce existe déjà ? »", (await page.locator("text=Cette pièce existe déjà ?").count()) >= 1);
+  check("Pied : bouton « Enregistrer et créer un autre »", (await page.locator("text=Enregistrer et créer un autre").count()) >= 1);
+  check("Pied : bouton « Annuler »", (await page.locator("text=Annuler").count()) >= 1);
 
   // 4. Navigation rapide : créer une pièce en un seul écran (champs essentiels visibles sans déplier)
   const designations = await page.locator('input[placeholder*="Filtre à huile"]').count();

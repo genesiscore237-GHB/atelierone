@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -10,12 +11,21 @@ import { toast } from "sonner";
 export default function NouveauProduitPage() {
   const router = useRouter();
   const utils = api.useUtils();
+  const [formKey, setFormKey] = useState(0);
 
   const createProduct = api.catalog.create.useMutation({
     onSuccess: () => {
       utils.catalog.list.invalidate();
       toast.success("Produit créé");
       router.push("/dashboard/catalog");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const createAnother = api.catalog.create.useMutation({
+    onSuccess: () => {
+      utils.catalog.list.invalidate();
+      toast.success("Produit créé — vous pouvez enregistrer le suivant");
+      setFormKey((k) => k + 1);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -31,16 +41,15 @@ export default function NouveauProduitPage() {
           Catalogue
         </Link>
         <h1 className="mt-2 text-lg font-semibold text-foreground">Nouveau produit</h1>
+        <p className="text-xs text-muted-foreground">Stock › Produits › Nouveau</p>
       </div>
 
-      <div className="mx-auto max-w-2xl rounded-xl border border-border bg-card p-6">
-        <ProductWizard
-          onSave={async (data) => {
-            await createProduct.mutateAsync(data);
-          }}
-          isPending={createProduct.isPending}
-        />
-      </div>
+      <ProductWizard
+        key={formKey}
+        onSave={async (data) => { await createProduct.mutateAsync(data); }}
+        onSaveCreateAnother={async (data) => { await createAnother.mutateAsync(data); }}
+        isPending={createProduct.isPending || createAnother.isPending}
+      />
     </div>
   );
 }

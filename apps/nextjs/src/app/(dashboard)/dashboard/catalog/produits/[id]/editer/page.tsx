@@ -13,23 +13,40 @@ function mapProductToDefaults(product: any) {
     typeProduit: product.typeProduit,
     titre: product.titre,
     codeArticle: product.codeArticle ?? "",
+    codeBarre: product.codeBarre ?? "",
+    designationCourte: product.designationCourte ?? "",
     categorieId: product.categorieId ? String(product.categorieId) : null,
     marque: product.marque ?? product.editeur ?? "",
     etat: product.etat ?? "neuf",
-    photo: product.photos?.[0] ?? null,
+    origineQualite: product.origineQualite ?? "AUTRE",
+    estCore: product.estCore ?? false,
+    classeAbc: product.classeAbc ?? "",
+    photos: Array.isArray(product.photos) ? product.photos : [],
     description: product.description ?? "",
     prixAchat: product.prixAchat ? Number(product.prixAchat) : 0,
     prixVente: product.prixVente != null ? Number(product.prixVente) : 0,
+    tva: product.tva ? Number(product.tva) : 19.25,
+    prixMinimumVente: product.prixMinimumVente ? Number(product.prixMinimumVente) : "",
     fournisseurId: (product.fournisseurId ?? product.fournisseurs?.[0]?.fournisseurId) ? String(product.fournisseurId ?? product.fournisseurs?.[0]?.fournisseurId) : "",
+    referenceFournisseur: product.fournisseurs?.[0]?.referenceFournisseur ?? "",
+    delaiFournisseur: product.fournisseurs?.[0]?.delaiApprovisionnement ?? "",
     seuilAlerte: product.seuilAlerte ?? 5,
+    stockMax: product.stockMaximum ?? "",
+    stockActuel: product.stockTotal ?? 0,
     emplacementId: product.emplacementPrincipalId ?? null,
     uniteId: product.productUnits?.find?.((u: any) => u.estUniteBase)?.uniteId ?? product.productUnits?.[0]?.uniteId ?? "",
     quantiteInitiale: 0,
     referenceFabricant: product.referenceFabricant ?? "",
     refOem: product.refOem ?? "",
     refAftermarket: product.refAftermarket ?? "",
-    tva: product.tva ? Number(product.tva) : 0,
+    poidsKg: product.poidsKg ? Number(product.poidsKg) : "",
+    dimensions: product.dimensions ?? "",
+    garantieMois: product.garantieMois ?? "",
+    suiviSerie: product.suiviSerie ?? false,
+    suiviLot: product.suiviLot ?? false,
+    compatibilites: Array.isArray(product.compatibilites) ? product.compatibilites : [],
     notes: product.notes ?? "",
+    statut: product.statut ?? "actif",
   };
 }
 
@@ -91,17 +108,17 @@ export default function EditProduitPage() {
         <h1 className="mt-2 text-lg font-semibold text-foreground">
           Modifier : {product.titre}
         </h1>
+        <p className="text-xs text-muted-foreground">Stock › Produits › Modifier</p>
       </div>
 
-      <div className="mx-auto max-w-2xl rounded-xl border border-border bg-card p-6">
-        <ProductWizard
-          defaultValues={defaultValues}
-          onSave={async (data) => {
-            await updateProduct.mutateAsync({ id, ...data });
-          }}
-          isPending={updateProduct.isPending}
-        />
-      </div>
+      <ProductWizard
+        defaultValues={defaultValues}
+        onSave={async (data) => {
+          await updateProduct.mutateAsync({ id, ...data });
+        }}
+        isPending={updateProduct.isPending}
+        derniereModification={product.updatedAt ? new Date(product.updatedAt).toLocaleString("fr-FR") : undefined}
+      />
     </div>
   );
 }
