@@ -9,7 +9,7 @@ export const rhRouter = createTRPCRouter({
     .input(
       z.object({
         page: z.number().min(1).default(1),
-        limit: z.number().min(10).max(100).default(50),
+        limit: z.number().min(10).max(300).default(100),
         search: z.string().optional(),
         statut: z.enum(["actif", "conge", "suspendu", "archive"]).optional(),
         typeEmploye: z.enum(["permanent", "contractuel", "stagiaire", "temporaire", "apprenti", "prestataire"]).optional(),

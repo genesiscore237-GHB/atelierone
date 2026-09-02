@@ -64,7 +64,7 @@ export default function ProductDetailPage() {
   const { data: product, isLoading } = api.catalog.getById.useQuery({ id }, { enabled: !!id });
   const { data: stock } = api.inventory.getStock.useQuery({ produitId: id }, { enabled: !!id });
   const { data: movements } = api.inventory.getMovements.useQuery({ produitId: id, limit: 50 }, { enabled: !!id });
-  const { data: arbre } = api.catalog.getArbreEmballage.useQuery({ produitId: id }, { enabled: !!id });
+
   const utils = api.useUtils();
 
   const updateProduct = api.catalog.update.useMutation({

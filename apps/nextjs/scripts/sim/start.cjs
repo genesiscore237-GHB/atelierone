@@ -95,9 +95,15 @@ console.log("Instances :");
 for (const i of instances) console.log(`  ${i.port} → ${i.name} (${i.db})${i.role ? " [CENTRAL]" : ""}`);
 
 for (const inst of instances) {
-  const p = spawn("pnpm", ["-F", "@atelierone/nextjs", "dev", "-p", String(inst.port)], {
+  const env = makeEnv(inst);
+  // Build prod par instance (fini le dev : 4 compilateurs à la volée qui saturent la machine)
+  const dist = `.next-sim-${inst.port}`;
+  const build = spawn("pnpm", ["-F", "@atelierone/nextjs", "exec", "next", "build"], { cwd: root, env, shell: true });
+  build.stdout.on("data", (d) => log(inst.name + " BUILD", d));
+  build.stderr.on("data", (d) => log(inst.name + " BUILD ERR", d));
+  const p = spawn("pnpm", ["-F", "@atelierone/nextjs", "exec", "next", "start", "-p", String(inst.port)], {
     cwd: root,
-    env: makeEnv(inst),
+    env,
     shell: true,
   });
   p.stdout.on("data", (d) => log(inst.name, d));

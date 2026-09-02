@@ -236,6 +236,7 @@ export const stockRouter = createTRPCRouter({
       const jours = input?.jours ?? 90;
       const limit = input?.limit ?? 50;
       const cutoff = new Date(Date.now() - jours * 24 * 60 * 60 * 1000);
+      const cutoffIso = cutoff.toISOString();
 
       const rows = await db.select({
         produitId: stocks.produitId,
@@ -245,7 +246,7 @@ export const stockRouter = createTRPCRouter({
         prixAchat: produits.prixAchat,
         prixVente: produits.prixVente,
         categorieNom: categories.nom,
-        derniereVente: sql<Date>`MAX(${mouvementsStock.createdAt})`,
+        derniereVente: sql<Date>`MAX(${mouvementsStock.dateMouvement})`,
         valeurStock: sql<number>`COALESCE(${stocks.quantite}, 0)::numeric * COALESCE(${produits.prixAchat}, 0)`,
       })
         .from(stocks)
@@ -262,7 +263,7 @@ export const stockRouter = createTRPCRouter({
           sql`COALESCE(${stocks.quantite}, 0) > 0`,
         ))
         .groupBy(stocks.produitId, produits.id, stocks.quantite, stocks.id, categories.nom)
-        .having(sql`MAX(${mouvementsStock.createdAt}) IS NULL OR MAX(${mouvementsStock.createdAt}) < ${cutoff}`)
+        .having(sql`MAX(${mouvementsStock.dateMouvement}) IS NULL OR MAX(${mouvementsStock.dateMouvement}) < ${cutoffIso}`)
         .orderBy(desc(sql`COALESCE(${stocks.quantite}, 0)::numeric * COALESCE(${produits.prixAchat}, 0)`))
         .limit(limit);
 
