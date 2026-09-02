@@ -1,13 +1,56 @@
 import { z } from "zod";
 import { createTRPCRouter, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, produits, categories, stocks, stocksUnites, unitesMesure, pretsOutils, employes, mouvementsStock } from "@atelierone/db";
+import { db, produits, categories, stocks, stocksUnites, stocksLots, lots, unitesMesure, pretsOutils, employes, mouvementsStock } from "@atelierone/db";
 import { eq, and, desc, asc, sql, or, ilike, inArray, lt } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import { enregistrerMouvement, TYPES_MOUVEMENT } from "~/server/lib/stock-engine";
 
 /**
  * OUTILLAGE & MATÉRIEL — outils prêtés aux techniciens + consommables.
  * OUTIL : prêt (sortie → retour) — CONSOMMABLE : stock classique.
+ * Statuts d'outil (specs garage) : REPARATION | USE | CASSE | PERDU | VOLE | REFORME
+ * Le prêt décrémente la quantité disponible, le retour OK la réintègre.
+ * Permission mécanicien : stock.utiliser (sortir/rendre) — stock.modifier (gestion).
  */
+
+/** Décrémente (ou incrémente) le stock d'un outil d'une unité + mouvement tracé. */
+async function ajusterStockOutil(tx: any, outilId: number, agenceId: number, sens: "E" | "S", type: string, motif: string, par: number) {
+  const [stockRow] = await tx
+    .select({ id: stocks.id, quantite: stocks.quantite })
+    .from(stocks)
+    .where(and(eq(stocks.produitId, outilId), eq(stocks.agenceId, agenceId)))
+    .limit(1);
+  const stockAvant = stockRow ? Number(stockRow.quantite) : 0;
+  if (sens === "S" && stockAvant <= 0) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Stock disponible insuffisant pour cet outil." });
+  }
+  const stockApres = sens === "S" ? stockAvant - 1 : stockAvant + 1;
+  if (stockRow) {
+    await tx.update(stocks).set({ quantite: String(stockApres) }).where(eq(stocks.id, stockRow.id));
+  } else {
+    await tx.insert(stocks).values({ produitId: outilId, agenceId, emplacementId: 2, quantite: String(stockApres), quantiteReservee: 0 } as any);
+  }
+  await tx.insert(mouvementsStock).values({
+    produitId: outilId,
+    agenceId,
+    type,
+    sens,
+    quantite: "1",
+    stockAvant: String(stockAvant),
+    stockApres: String(stockApres),
+    motif,
+    effectuePar: par,
+  } as any);
+}
+
+const STATUT_OUTIL_META: Record<string, string> = {
+  REPARATION: "En réparation",
+  USE: "Usé",
+  CASSE: "Cassé",
+  PERDU: "Perdu",
+  VOLE: "Volé",
+  REFORME: "Réformé",
+};
 
 export const outillageRouter = createTRPCRouter({
   /** Liste des outils / consommables avec recherche, stock et statut. */
@@ -17,7 +60,7 @@ export const outillageRouter = createTRPCRouter({
         q: z.string().optional(),
         type: z.enum(["OUTIL", "CONSOMMABLE"]).optional(),
         categorieId: z.number().int().optional(),
-        statut: z.enum(["TOUS", "DISPONIBLE", "PRETE", "STOCK_EPUISE"]).optional(),
+        statut: z.enum(["TOUS", "DISPONIBLE", "PRETE", "STOCK_EPUISE", "REPARATION", "USE", "CASSE", "PERDU", "VOLE", "REFORME"]).optional(),
         limit: z.number().int().min(10).max(300).default(100),
       }).optional()
     )
@@ -57,6 +100,7 @@ export const outillageRouter = createTRPCRouter({
           seuilAlerte: produits.seuilAlerte,
           photos: produits.photos,
           imageUrl: produits.imageUrl,
+          statutOutil: produits.statutOutil,
           stockTotal: sql<number>`COALESCE(SUM(${stocks.quantite}), 0)`,
         })
         .from(produits)
@@ -100,13 +144,18 @@ export const outillageRouter = createTRPCRouter({
         const stock = Number(r.stockTotal ?? 0);
         const pretsActifs = pretsParOutil.get(r.id) ?? [];
         const estPrete = pretsActifs.length > 0;
-        const statut = r.typeProduit === "OUTIL" ? (estPrete ? "PRETE" : stock > 0 ? "DISPONIBLE" : "STOCK_EPUISE") : stock > 0 ? "DISPONIBLE" : "STOCK_EPUISE";
+        // Statut specs garage prioritaire (usé, cassé, perdu, volé, en réparation, réformé)
+        const statutSpecial = r.statutOutil ?? null;
+        const statut = statutSpecial
+          ? statutSpecial
+          : r.typeProduit === "OUTIL" ? (estPrete ? "PRETE" : stock > 0 ? "DISPONIBLE" : "STOCK_EPUISE") : stock > 0 ? "DISPONIBLE" : "STOCK_EPUISE";
         return {
           ...r,
           stockTotal: stock,
           prets: pretsActifs,
           estPrete,
           statut,
+          statutLabel: statutSpecial ? STATUT_OUTIL_META[statutSpecial] ?? statutSpecial : null,
         };
       });
 
@@ -135,6 +184,7 @@ export const outillageRouter = createTRPCRouter({
           categorieNom: categories.nom,
           emplacementPrincipalId: produits.emplacementPrincipalId,
           seuilAlerte: produits.seuilAlerte,
+          statutOutil: produits.statutOutil,
           photos: produits.photos,
           imageUrl: produits.imageUrl,
           estReconditionnable: produits.estReconditionnable,
@@ -147,7 +197,7 @@ export const outillageRouter = createTRPCRouter({
         .limit(1);
       if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Outil introuvable." });
 
-      const [stocksLignes, pretsHisto, mouvements, stockParUnite] = await Promise.all([
+      const [stocksLignes, pretsHisto, mouvements, stockParUnite, futs] = await Promise.all([
         db
           .select({ emplacementId: stocks.emplacementId, quantite: stocks.quantite })
           .from(stocks)
@@ -188,6 +238,20 @@ export const outillageRouter = createTRPCRouter({
           .from(stocksUnites)
           .leftJoin(unitesMesure, eq(stocksUnites.uniteId, unitesMesure.id))
           .where(and(eq(stocksUnites.produitId, input.id), eq(stocksUnites.agenceId, ctx.user.agenceId))),
+        // Fûts / lots (specs huiles : volume initial / restant, ouvert / fermé)
+        db
+          .select({
+            lotId: lots.id,
+            numeroLot: lots.numeroLot,
+            volumeInitial: lots.quantiteInitiale,
+            volumeRestant: stocksLots.quantite,
+            datePeremption: lots.datePeremption,
+            dateReception: lots.dateReception,
+            statut: lots.statut,
+          })
+          .from(stocksLots)
+          .innerJoin(lots, eq(stocksLots.lotId, lots.id))
+          .where(and(eq(stocksLots.produitId, input.id), eq(stocksLots.agenceId, ctx.user.agenceId))),
       ]);
 
       const pretsActifs = pretsHisto.filter((h) => h.actif);
@@ -197,6 +261,15 @@ export const outillageRouter = createTRPCRouter({
         stock: stocksLignes.map((s) => ({ emplacementId: s.emplacementId, quantite: Number(s.quantite) })),
         stockTotal: stocksLignes.reduce((acc, s) => acc + Number(s.quantite), 0),
         stockParUnite: stockParUnite.map((u) => ({ uniteId: u.uniteId, code: u.uniteCode, libelle: u.uniteLibelle, symbole: u.uniteSymbole, quantite: Number(u.quantite) })),
+        futs: futs.map((f) => ({
+          lotId: f.lotId,
+          numeroLot: f.numeroLot,
+          volumeInitial: Number(f.volumeInitial ?? 0),
+          volumeRestant: Number(f.volumeRestant ?? 0),
+          datePeremption: f.datePeremption,
+          dateReception: f.dateReception,
+          ouvert: f.statut !== "CLOTURE",
+        })),
         pretsActifs,
         historiquePrets: pretsHisto.map((h) => ({ ...h, enRetard: !!h.actif && !!h.dateRetour && new Date(h.dateRetour) < now })),
         mouvements,
@@ -204,76 +277,142 @@ export const outillageRouter = createTRPCRouter({
     }),
 
   /** Prêt d'un outil à un technicien. */
-  preter: requirePermissionProcedure("stock.modifier")
+  preter: requirePermissionProcedure("stock.utiliser", "stock.modifier")
     .input(z.object({
       outilId: z.number().int(),
       technicienId: z.number().int(),
       orId: z.number().int().optional(),
       motif: z.string().optional(),
-      dateRetour: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      dateRetour: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     }))
     .mutation(async ({ ctx, input }) => {
-      const [p] = await db
-        .select({ id: produits.id, typeProduit: produits.typeProduit })
-        .from(produits)
-        .where(eq(produits.id, input.outilId))
-        .limit(1);
-      if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Outil introuvable." });
-      if (p.typeProduit !== "OUTIL") throw new TRPCError({ code: "BAD_REQUEST", message: "Seul un outil (type OUTIL) peut être prêté." });
+      return db.transaction(async (tx) => {
+        const [p] = await tx
+          .select({ id: produits.id, typeProduit: produits.typeProduit, statutOutil: produits.statutOutil })
+          .from(produits)
+          .where(eq(produits.id, input.outilId))
+          .limit(1);
+        if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Outil introuvable." });
+        if (p.typeProduit !== "OUTIL") throw new TRPCError({ code: "BAD_REQUEST", message: "Seul un outil (type OUTIL) peut être prêté." });
+        if (p.statutOutil) throw new TRPCError({ code: "BAD_REQUEST", message: `Outil non disponible : ${STATUT_OUTIL_META[p.statutOutil] ?? p.statutOutil} — il ne peut pas être prêté.` });
 
-      const [dejaPrete] = await db
-        .select({ id: pretsOutils.id })
-        .from(pretsOutils)
-        .where(and(eq(pretsOutils.outilId, input.outilId), eq(pretsOutils.actif, true)))
-        .limit(1);
-      if (dejaPrete) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet outil est déjà prêté — il doit d'abord être rendu." });
+        const [dejaPrete] = await tx
+          .select({ id: pretsOutils.id })
+          .from(pretsOutils)
+          .where(and(eq(pretsOutils.outilId, input.outilId), eq(pretsOutils.actif, true)))
+          .limit(1);
+        if (dejaPrete) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet outil est déjà prêté — il doit d'abord être rendu." });
 
-      const [tech] = await db.select({ id: employes.id }).from(employes).where(eq(employes.id, input.technicienId)).limit(1);
-      if (!tech) throw new TRPCError({ code: "NOT_FOUND", message: "Technicien introuvable." });
+        const [tech] = await tx.select({ id: employes.id }).from(employes).where(eq(employes.id, input.technicienId)).limit(1);
+        if (!tech) throw new TRPCError({ code: "NOT_FOUND", message: "Technicien introuvable." });
 
-      const [row] = await db
-        .insert(pretsOutils)
-        .values({
-          agenceId: ctx.user.agenceId,
-          outilId: input.outilId,
-          technicienId: input.technicienId,
-          orId: input.orId ?? null,
-          motif: input.motif ?? null,
-          dateSortie: new Date(),
-          dateRetour: input.dateRetour ? new Date(`${input.dateRetour}T18:00:00`) : null,
-          sortiePar: Number(ctx.user.id),
-          actif: true,
-        } as any)
-        .returning();
-      return row;
+        // Specs garage : quantity_available diminue de 1 (le stock est contrôlé)
+        await ajusterStockOutil(tx, input.outilId, ctx.user.agenceId, "S", TYPES_MOUVEMENT.SORTIE_OUTIL, `Prêt à technicien — retour prévu ${input.dateRetour}`, Number(ctx.user.id));
+
+        const [row] = await tx
+          .insert(pretsOutils)
+          .values({
+            agenceId: ctx.user.agenceId,
+            outilId: input.outilId,
+            technicienId: input.technicienId,
+            orId: input.orId ?? null,
+            motif: input.motif ?? null,
+            dateSortie: new Date(),
+            dateRetour: new Date(`${input.dateRetour}T18:00:00`),
+            sortiePar: Number(ctx.user.id),
+            actif: true,
+          } as any)
+          .returning();
+        return row;
+      }) as any;
     }),
 
-  /** Retour d'un outil (état + remarque). */
-  retourner: requirePermissionProcedure("stock.modifier")
+  /** Retour d'un outil (état + remarque). Specs : notes obligatoires si état ≠ OK. */
+  retourner: requirePermissionProcedure("stock.utiliser", "stock.modifier")
     .input(z.object({
       pretId: z.number().int(),
       etatRetour: z.enum(["OK", "ENDOMMAGE", "PERDU"]).default("OK"),
       remarque: z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const [pret] = await db
-        .select()
-        .from(pretsOutils)
-        .where(and(eq(pretsOutils.id, input.pretId), eq(pretsOutils.agenceId, ctx.user.agenceId)))
-        .limit(1);
-      if (!pret) throw new TRPCError({ code: "NOT_FOUND", message: "Prêt introuvable." });
-      if (!pret.actif) throw new TRPCError({ code: "BAD_REQUEST", message: "Ce prêt est déjà rendu." });
-      await db
-        .update(pretsOutils)
-        .set({
-          actif: false,
-          retourneLe: new Date(),
-          retournePar: Number(ctx.user.id),
-          etatRetour: input.etatRetour,
-          remarque: input.remarque ?? null,
-        } as any)
-        .where(eq(pretsOutils.id, input.pretId));
-      return { success: true };
+      if (input.etatRetour !== "OK" && (!input.remarque || input.remarque.trim().length < 3)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Une remarque (min 3 caractères) est obligatoire quand l'outil revient endommagé ou perdu." });
+      }
+      return db.transaction(async (tx) => {
+        const [pret] = await tx
+          .select()
+          .from(pretsOutils)
+          .where(and(eq(pretsOutils.id, input.pretId), eq(pretsOutils.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!pret) throw new TRPCError({ code: "NOT_FOUND", message: "Prêt introuvable." });
+        if (!pret.actif) throw new TRPCError({ code: "BAD_REQUEST", message: "Ce prêt est déjà rendu." });
+
+        const [p] = await tx.select({ statutOutil: produits.statutOutil }).from(produits).where(eq(produits.id, pret.outilId)).limit(1);
+
+        // Specs : retour OK → quantité disponible +1, statut disponible ;
+        // Endommagé → statut CASSE ; Perdu → statut PERDU + déduction
+        if (input.etatRetour === "OK") {
+          await ajusterStockOutil(tx, pret.outilId, ctx.user.agenceId, "E", TYPES_MOUVEMENT.RETOUR_OUTIL, `Retour OK — ${input.remarque ?? "bon état"}`, Number(ctx.user.id));
+          await tx.update(produits).set({ statutOutil: null } as any).where(eq(produits.id, pret.outilId));
+        } else if (input.etatRetour === "ENDOMMAGE") {
+          await tx.update(produits).set({ statutOutil: "CASSE" } as any).where(eq(produits.id, pret.outilId));
+        } else {
+          await ajusterStockOutil(tx, pret.outilId, ctx.user.agenceId, "S", TYPES_MOUVEMENT.RETOUR_OUTIL, `Outil perdu (non rendu) — ${input.remarque}`, Number(ctx.user.id));
+          await tx.update(produits).set({ statutOutil: "PERDU" } as any).where(eq(produits.id, pret.outilId));
+        }
+
+        await tx
+          .update(pretsOutils)
+          .set({
+            actif: false,
+            retourneLe: new Date(),
+            retournePar: Number(ctx.user.id),
+            etatRetour: input.etatRetour,
+            remarque: input.remarque ?? null,
+          } as any)
+          .where(eq(pretsOutils.id, input.pretId));
+        return { success: true };
+      }) as any;
+    }),
+
+  /** Déclaration directe (fiche outil / retard) : perdu, volé, cassé, usé, en réparation, réformé. */
+  declarerStatut: requirePermissionProcedure("stock.utiliser", "stock.modifier")
+    .input(z.object({
+      outilId: z.number().int(),
+      statut: z.enum(["REPARATION", "USE", "CASSE", "PERDU", "VOLE", "REFORME"]),
+      motif: z.string().min(3),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [p] = await tx
+          .select({ id: produits.id, typeProduit: produits.typeProduit, statutOutil: produits.statutOutil })
+          .from(produits)
+          .where(eq(produits.id, input.outilId))
+          .limit(1);
+        if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Outil introuvable." });
+        if (p.typeProduit !== "OUTIL") throw new TRPCError({ code: "BAD_REQUEST", message: "Seul un outil peut être déclaré." });
+
+        // Perte / vol / casse / réforme → déduction d'une unité (specs : quantity_available ajustée)
+        if (["PERDU", "VOLE", "CASSE", "REFORME"].includes(input.statut)) {
+          await ajusterStockOutil(tx, input.outilId, ctx.user.agenceId, "S", TYPES_MOUVEMENT.RETOUR_OUTIL, `${STATUT_OUTIL_META[input.statut]} — ${input.motif}`, Number(ctx.user.id));
+        }
+        await tx.update(produits).set({ statutOutil: input.statut } as any).where(eq(produits.id, input.outilId));
+        return { success: true, statutLabel: STATUT_OUTIL_META[input.statut] };
+      }) as any;
+    }),
+
+  /** Retour d'un outil à l'état disponible (levée d'un statut spécial, ex. fin de réparation). */
+  leverStatut: requirePermissionProcedure("stock.utiliser", "stock.modifier")
+    .input(z.object({ outilId: z.number().int(), motif: z.string().min(3) }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [p] = await tx.select({ id: produits.id }).from(produits).where(eq(produits.id, input.outilId)).limit(1);
+        if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Outil introuvable." });
+        const [pret] = await tx.select({ id: pretsOutils.id }).from(pretsOutils).where(and(eq(pretsOutils.outilId, input.outilId), eq(pretsOutils.actif, true))).limit(1);
+        if (pret) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet outil est en prêt — il doit d'abord être rendu." });
+        await tx.update(produits).set({ statutOutil: null } as any).where(eq(produits.id, input.outilId));
+        return { success: true };
+      }) as any;
     }),
 
   /** Historique des prêts (par technicien ou global). */

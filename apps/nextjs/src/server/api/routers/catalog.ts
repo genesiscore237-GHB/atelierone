@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, adminProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, modelesEmballage, fournisseurs, produitsFournisseurs, agences, articleEquivalences, kitsLignes } from "@atelierone/db";
+import { db, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, modelesEmballage, fournisseurs, produitsFournisseurs, agences, articleEquivalences, kitsLignes, mouvementsStock, emplacements } from "@atelierone/db";
 import { eq, ilike, and, desc, sql, inArray, ne, getTableColumns, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { generateBarcode, autoGenerateBarcode, ensureBarcodeSequence } from "@atelierone/db/utils";
@@ -286,6 +286,10 @@ export const catalogRouter = createTRPCRouter({
       // Specs 02 §2.1 : code article métier unique (ex. FIL-HUI-001)
       codeArticle: z.string().optional(),
       titre: z.string().min(1),
+      // Ajout rapide : stock initial à la création (le produit arrive directement en stock)
+      stockInitial: z.number().min(0).optional(),
+      emplacementStockId: z.number().int().optional(),
+      uniteStockId: z.string().optional(),
       // Specs 02 §2.1 : désignation courte
       designationCourte: z.string().optional(),
       editeur: z.string().optional(),
@@ -484,6 +488,47 @@ export const catalogRouter = createTRPCRouter({
         .from(produits)
         .where(eq(produits.id, p.id))
         .limit(1);
+
+      // Ajout rapide : quantité initiale → le produit est directement en stock (tracé)
+      if (input.stockInitial != null && input.stockInitial > 0 && p.typeProduit !== "SERVICE") {
+        const emplacementFinal = input.emplacementStockId ?? p.emplacementPrincipalId ?? 2;
+        const [stockRow] = await db
+          .select({ id: stocks.id, quantite: stocks.quantite, cmup: stocks.coutUnitaireMoyen })
+          .from(stocks)
+          .where(and(eq(stocks.produitId, Number(p.id)), eq(stocks.agenceId, ctx.user!.agenceId), eq(stocks.emplacementId, emplacementFinal)))
+          .limit(1);
+        const stockAvant = stockRow ? Number(stockRow.quantite) : 0;
+        if (stockRow) {
+          await db.update(stocks).set({ quantite: String(stockAvant + input.stockInitial), coutUnitaireMoyen: input.prixAchat ? String(input.prixAchat) : stockRow.cmup }).where(eq(stocks.id, stockRow.id));
+        } else {
+          await db.insert(stocks).values({
+            produitId: Number(p.id),
+            agenceId: ctx.user!.agenceId,
+            emplacementId: emplacementFinal,
+            quantite: String(input.stockInitial),
+            quantiteReservee: 0,
+            coutUnitaireMoyen: input.prixAchat ? String(input.prixAchat) : null,
+          } as any);
+        }
+        await db.insert(mouvementsStock).values({
+          produitId: Number(p.id),
+          agenceId: ctx.user!.agenceId,
+          type: "AJUSTEMENT_INVENTAIRE_POSITIF",
+          sens: "E",
+          quantite: String(input.stockInitial),
+          uniteId: input.uniteStockId || null,
+          emplacementId: emplacementFinal,
+          stockAvant: String(stockAvant),
+          stockApres: String(stockAvant + input.stockInitial),
+          coutUnitaireBase: input.prixAchat ? String(input.prixAchat) : null,
+          reference: "STOCK-INITIAL",
+          referenceType: "CREATION",
+          documentLie: "CREATION-PRODUIT",
+          motif: "Quantité initiale à la création (enregistrement progressif)",
+          effectuePar: Number(ctx.user!.id),
+        } as any);
+      }
+
       return formatProduct(updated!);
     }),
 

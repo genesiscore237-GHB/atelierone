@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, stocks, produits, categories, unitesMesure, mouvementsStock, inventaires, inventairesSessions, deconditionnements, reconditionnements, emplacements, stocksUnites, ventesLignes, ventes } from "@atelierone/db";
+import { db, stocks, produits, categories, unitesMesure, mouvementsStock, inventaires, inventairesSessions, deconditionnements, reconditionnements, emplacements, stocksUnites, ventesLignes, ventes, demandesCommande } from "@atelierone/db";
 import { eq, and, desc, sql, lt, lte, gte, isNotNull, isNull, count, sum, avg, asc, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSortieUnite, mouvementEntreeUnite, TYPES_MOUVEMENT, sortirPourOR, retourAtelier, reserverStock, libererStock } from "~/server/lib/stock-engine";
@@ -285,6 +285,7 @@ export const stockRouter = createTRPCRouter({
       seuilAlerte: produits.seuilAlerte,
       seuilCritique: produits.seuilCritique,
       categorieNom: categories.nom,
+      typeProduit: produits.typeProduit,
     })
       .from(stocks)
       .innerJoin(produits, eq(stocks.produitId, produits.id))
@@ -301,6 +302,7 @@ export const stockRouter = createTRPCRouter({
       seuilAlerte: r.seuilAlerte ?? 0,
       seuilCritique: r.seuilCritique ?? 0,
       categorie: r.categorieNom,
+      typeProduit: r.typeProduit,
       niveau: r.quantite < (r.seuilCritique ?? 2) ? "critique" : "faible",
     }));
   }),
@@ -1287,7 +1289,7 @@ export const stockRouter = createTRPCRouter({
 
   createEmplacement: requirePermissionProcedure("stock.modifier")
     .input(z.object({
-      code: z.string().min(1).regex(/^[A-Z0-9]{2,4}(-[A-Z0-9]{1,4}){1,4}$/, "Format attendu : ZONE-ALLEE-RAYON-NIVEAU (ex. MAG-A-01-03, EXT-PNEU)"),
+      code: z.string().min(1).regex(/^[A-Za-z0-9-]{1,30}$/, "Code simple : lettres, chiffres, tirets (ex. CASIER-A3, BAC-12, MAG-A-01)"),
       libelle: z.string().optional(),
       type: z.string().default("RAYON"),
       parentId: z.number().int().optional(),
@@ -1518,6 +1520,76 @@ export const stockRouter = createTRPCRouter({
         });
         return { stockAvant: res.stockAvant, stockApres: res.stockApres, produitTitre: prod.titre };
       }) as any;
+    }),
+
+  // ─── Entrée manuelle : « + Stock » (liste, fiche, anti-doublon) ───
+  ajouterStock: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      produitId: z.number().int(),
+      quantite: z.number().positive(),
+      uniteId: z.string().optional(),
+      emplacementId: z.number().int().optional(),
+      prixAchat: z.number().min(0).optional(),
+      motif: z.string().min(3),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [prod] = await tx
+          .select({ titre: produitsTable.titre, typeProduit: produitsTable.typeProduit })
+          .from(produitsTable)
+          .where(eq(produitsTable.id, input.produitId))
+          .limit(1);
+        if (!prod) throw new TRPCError({ code: "BAD_REQUEST", message: "Produit introuvable." });
+        if (prod.typeProduit === "SERVICE") throw new TRPCError({ code: "BAD_REQUEST", message: "Un service n'a pas de stock." });
+        const res = await enregistrerMouvement(tx as any, {
+          type: TYPES_MOUVEMENT.ACHAT_RECEPTION as any,
+          sens: "E",
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          quantite: input.quantite,
+          uniteId: input.uniteId,
+          emplacementId: input.emplacementId,
+          motif: input.motif,
+          coutUnitaireBase: input.prixAchat ?? null,
+          effectuePar: Number(ctx.user.id),
+        });
+        return { stockAvant: res.stockAvant, stockApres: res.stockApres, produitTitre: prod.titre };
+      }) as any;
+    }),
+
+  // ─── Demande de commande (produit introuvable → « chercher avant de commander ») ───
+  creerDemandeCommande: requirePermissionProcedure("stock.consulter")
+    .input(z.object({
+      designation: z.string().min(2),
+      reference: z.string().optional(),
+      quantite: z.number().positive().default(1),
+      unite: z.string().optional(),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [row] = await db
+        .insert(demandesCommande)
+        .values({
+          agenceId: ctx.user.agenceId,
+          designation: input.designation.trim(),
+          reference: input.reference?.trim() || null,
+          quantite: String(input.quantite),
+          unite: input.unite || "piece",
+          notes: input.notes ?? null,
+          creePar: Number(ctx.user.id),
+        } as any)
+        .returning();
+      return row;
+    }),
+
+  listDemandesCommande: requirePermissionProcedure("stock.consulter")
+    .query(async ({ ctx }) => {
+      return db
+        .select()
+        .from(demandesCommande)
+        .where(eq(demandesCommande.agenceId, ctx.user.agenceId))
+        .orderBy(desc(demandesCommande.creeLe))
+        .limit(50);
     }),
 
   // ─── Recherche « chercher avant de commander » : produit + stock + seuils ───

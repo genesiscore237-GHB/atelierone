@@ -14,8 +14,7 @@ const DSN = "postgresql://postgres:postgres@127.0.0.1:5432/atelierone_erp";
   const consCode = `CON-MAG-${suffix}`;
   await c.query("DELETE FROM stocks WHERE produit_id IN (SELECT id FROM produits WHERE code_article LIKE $1)", [`OUT-MAG-%`]);
   await c.query("DELETE FROM prets_outils WHERE outil_id IN (SELECT id FROM produits WHERE code_article LIKE $1)", [`OUT-MAG-%`]);
-  await c.query("DELETE FROM mouvements_stock WHERE produit_id IN (SELECT id FROM produits WHERE code_article LIKE $1)", [`OUT-MAG-%`]);
-  await c.query("DELETE FROM produits WHERE code_article LIKE $1", ["OUT-MAG-%"]);
+  await c.query("UPDATE produits SET is_active=false WHERE code_article LIKE $1", ["OUT-MAG-%"]);
   const uniteBase = (await c.query("SELECT id FROM unites_mesure LIMIT 1")).rows[0]?.id;
   const unites = [{ unite_id: String(uniteBase), facteur_conversion: 1, est_unite_base: true, est_unite_vente_defaut: true, est_unite_achat_defaut: true }];
   await c.end();
@@ -87,8 +86,9 @@ const DSN = "postgresql://postgres:postgres@127.0.0.1:5432/atelierone_erp";
   const h1 = (histo[0]?.result?.data?.json ?? []).find((p) => p.id === pretId);
   check("Historique : ENDOMMAGE + remarque tracés", h1?.etatRetour === "ENDOMMAGE" && h1?.remarque === "Mâchoire faussée" && !h1?.actif, JSON.stringify(h1));
 
-  // ── 6. Retour PERDU (perte enregistrée) ──
-  const pret2 = await trpcPost("outillage.preter", { outilId, technicienId: EMP003 });
+  // ── 6. Retour PERDU (perte enregistrée) — après lever du statut CASSE du retour précédent ──
+  await trpcPost("outillage.leverStatut", { outilId, motif: "Réparé au magasin" });
+  const pret2 = await trpcPost("outillage.preter", { outilId, technicienId: EMP003, dateRetour: new Date(Date.now() + 86400000).toISOString().slice(0, 10) });
   const pret2Id = pret2[0]?.result?.data?.json?.id;
   const ret2 = await trpcPost("outillage.retourner", { pretId: pret2Id, etatRetour: "PERDU", remarque: "Non rapporté" });
   check("Retour PERDU accepté (perte d'outil)", !ret2[0]?.error, ret2[0]?.error?.json?.message);
@@ -123,8 +123,7 @@ const DSN = "postgresql://postgres:postgres@127.0.0.1:5432/atelierone_erp";
   await c3.connect();
   await c3.query("DELETE FROM stocks WHERE produit_id IN (SELECT id FROM produits WHERE code_article LIKE $1)", [`OUT-MAG-%`]);
   await c3.query("DELETE FROM prets_outils WHERE outil_id IN (SELECT id FROM produits WHERE code_article LIKE $1)", [`OUT-MAG-%`]);
-  await c3.query("DELETE FROM mouvements_stock WHERE produit_id IN (SELECT id FROM produits WHERE code_article LIKE $1)", [`OUT-MAG-%`]);
-  await c3.query("DELETE FROM produits WHERE code_article LIKE $1", ["OUT-MAG-%"]);
+  await c3.query("UPDATE produits SET is_active=false WHERE code_article LIKE $1", ["OUT-MAG-%"]);
   await c3.end();
 
   console.log(`\nRÉSULTAT MAGASINIER PROD : ${pass} PASS / ${fail} FAIL`);

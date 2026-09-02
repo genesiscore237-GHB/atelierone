@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { api } from "~/trpc/react";
 import {
   Plus, Search, Package, Upload, BarChart3, BookOpen, ChevronDown,
-  Download, Printer, Camera, ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight,
   Eye, Pencil, AlertTriangle, RotateCcw,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
@@ -12,6 +12,9 @@ import { Skeleton } from "~/components/ui/skeleton";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "~/components/ui/select";
+import { Input } from "~/components/ui/input";
+import { Label } from "~/components/ui/label";
+import { toast } from "sonner";
 import Link from "next/link";
 import { ShoppingCart } from "lucide-react";
 import { usePermissions } from "~/hooks/usePermissions";
@@ -88,6 +91,15 @@ export default function CatalogPage() {
   const [filtersOpen, setFiltersOpen] = useState(true);
   const { hasPermission } = usePermissions();
   const [commanderProduit, setCommanderProduit] = useState<{ id: string; titre: string; stock: number } | null>(null);
+  const [addStockFor, setAddStockFor] = useState<{ id: string; titre: string } | null>(null);
+  const [addStockQte, setAddStockQte] = useState("1");
+  const [addStockEmplacement, setAddStockEmplacement] = useState("");
+  const [addStockMotif, setAddStockMotif] = useState("");
+  const { data: emplacements } = api.stock.listEmplacements.useQuery({});
+  const addStockMut = api.stock.ajouterStock.useMutation({
+    onSuccess: () => { toast.success("Stock mis à jour"); utils.catalog.list.invalidate(); setAddStockFor(null); setAddStockQte("1"); setAddStockEmplacement(""); setAddStockMotif(""); },
+    onError: (e) => toast.error(e.message),
+  });
 
   return (
     <div className="p-4 md:p-6">
@@ -210,18 +222,6 @@ export default function CatalogPage() {
                 placeholder="Rechercher un produit..."
                 className="w-full rounded-lg border border-border bg-muted py-2 pl-10 pr-3 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary/30" />
             </div>
-            <button title="Scanner code-barres"
-              className="rounded-lg border border-border bg-muted p-2 text-muted-foreground hover:text-foreground transition-colors">
-              <Camera className="size-4" />
-            </button>
-            <div className="flex gap-2">
-              <button className="flex items-center gap-1.5 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground/80 hover:text-foreground transition-colors">
-                <Download className="size-3.5" /> Export
-              </button>
-              <button className="flex items-center gap-1.5 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground/80 hover:text-foreground transition-colors">
-                <Printer className="size-3.5" /> Étiquettes
-              </button>
-            </div>
           </div>
 
           {/* Table */}
@@ -312,6 +312,15 @@ export default function CatalogPage() {
                           </td>
                           <td className="px-2 py-3">
                             <div className="flex justify-center gap-0.5">
+                              {hasPermission("stock.modifier") && (
+                                <button
+                                  onClick={() => setAddStockFor({ id: String(p.id), titre: p.titre })}
+                                  className="rounded p-1 text-success-foreground hover:bg-accent transition-colors"
+                                  title="Ajouter du stock"
+                                >
+                                  <Plus className="size-3.5" />
+                                </button>
+                              )}
                               {(stockLow || stockOut) && hasPermission("achats.commander") && (
                                 <button
                                   onClick={() => setCommanderProduit({ id: String(p.id), titre: p.titre, stock })}
@@ -390,6 +399,43 @@ export default function CatalogPage() {
         open={!!commanderProduit}
         onOpenChange={(o) => { if (!o) setCommanderProduit(null); }}
       />
+
+      {/* Modal + Stock (depuis la liste) */}
+      {addStockFor !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setAddStockFor(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
+              <Plus className="size-4 text-success-foreground" /> Ajouter du stock : {addStockFor.titre}
+            </h3>
+            <div className="mt-4 space-y-3">
+              <div>
+                <Label>Quantité</Label>
+                <Input type="number" min={1} value={addStockQte} onChange={(e) => setAddStockQte(e.target.value)} />
+              </div>
+              <div>
+                <Label>Emplacement</Label>
+                <Select value={addStockEmplacement} onValueChange={setAddStockEmplacement}>
+                  <SelectTrigger><SelectValue placeholder="Choisir" /></SelectTrigger>
+                  <SelectContent>
+                    {emplacements?.map((e: any) => <SelectItem key={e.id} value={String(e.id)}>{e.code}{e.libelle ? ` — ${e.libelle}` : ""}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Motif (obligatoire)</Label>
+                <Input value={addStockMotif} onChange={(e) => setAddStockMotif(e.target.value)} placeholder="ex. Pièces retrouvées au garage" />
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setAddStockFor(null)}>Annuler</Button>
+              <Button disabled={!Number(addStockQte) || !addStockEmplacement || addStockMotif.trim().length < 3 || addStockMut.isPending}
+                onClick={() => addStockMut.mutate({ produitId: Number(addStockFor.id), quantite: Number(addStockQte), emplacementId: Number(addStockEmplacement), motif: addStockMotif.trim() })}>
+                <Plus className="size-4" /> Ajouter
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

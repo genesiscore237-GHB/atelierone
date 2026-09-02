@@ -4,80 +4,32 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Package } from "lucide-react";
 import { api } from "~/trpc/react";
-import { ProductWizard, type UniteRow } from "../../../_components/ProductWizard";
+import { ProductWizard } from "../../../_components/ProductWizard";
 import { Skeleton } from "~/components/ui/skeleton";
 import { toast } from "sonner";
 
 function mapProductToDefaults(product: any) {
-  const unites: UniteRow[] = (product.productUnits ?? []).filter((u: any) => u.statut === "ACTIF").map((u: any, i: number) => ({
-    id: `u_${i}`,
-    unite_id: u.uniteId,
-    unite_label: "",
-    facteur_conversion: u.facteurVersParent != null ? Number(u.facteurVersParent) : 1,
-    prix_achat: Number(u.prixAchat) || 0,
-    prix_vente: Number(u.prixVente) || 0,
-    est_unite_achat_defaut: u.estUniteAchatDefaut ?? false,
-    est_unite_vente_defaut: u.estUniteVenteDefaut ?? false,
-    est_unite_base: u.estUniteBase ?? false,
-  }));
-
   return {
     typeProduit: product.typeProduit,
     titre: product.titre,
-    code_barre: product.codeBarre ?? "",
-    description: product.description ?? "",
-    statut: product.statut ?? "actif",
+    codeArticle: product.codeArticle ?? "",
+    categorieId: product.categorieId ? String(product.categorieId) : null,
+    marque: product.marque ?? product.editeur ?? "",
     etat: product.etat ?? "neuf",
-    langue: product.langue ?? "",
-    collection: product.collection ?? "",
-    photo_preview: product.photos?.[0] ?? null,
-    categorie_id: product.categorieId ? String(product.categorieId) : null,
-    prix_vente: product.prixVente != null ? Number(product.prixVente) : 0,
-    prix_achat: product.prixAchat ? Number(product.prixAchat) : 0,
+    photo: product.photos?.[0] ?? null,
+    description: product.description ?? "",
+    prixAchat: product.prixAchat ? Number(product.prixAchat) : 0,
+    prixVente: product.prixVente != null ? Number(product.prixVente) : 0,
+    fournisseurId: (product.fournisseurId ?? product.fournisseurs?.[0]?.fournisseurId) ? String(product.fournisseurId ?? product.fournisseurs?.[0]?.fournisseurId) : "",
+    seuilAlerte: product.seuilAlerte ?? 5,
+    emplacementId: product.emplacementPrincipalId ?? null,
+    uniteId: product.productUnits?.find?.((u: any) => u.estUniteBase)?.uniteId ?? product.productUnits?.[0]?.uniteId ?? "",
+    quantiteInitiale: 0,
+    referenceFabricant: product.referenceFabricant ?? "",
+    refOem: product.refOem ?? "",
+    refAftermarket: product.refAftermarket ?? "",
     tva: product.tva ? Number(product.tva) : 0,
-    fournisseur_id: product.fournisseurId ? String(product.fournisseurId) : null,
-    seuil_alerte_stock: product.seuilAlerte ?? 5,
-    stock_maximum: product.stockMaximum ?? null,
-    fournisseurs: (product.fournisseurs ?? []).map((f: any, i: number) => ({
-      id: `fs_${i}`,
-      fournisseurId: String(f.fournisseurId),
-      uniteId: f.uniteId ?? "",
-      reference: f.referenceFournisseur ?? "",
-      prixAchat: f.prixAchat ? String(f.prixAchat) : "",
-      delai: f.delaiApprovisionnement ? String(f.delaiApprovisionnement) : "",
-      estPrincipal: f.estPrincipal ?? false,
-    })),
-    auteur: product.auteur ?? "",
-    editeur: product.editeur ?? "",
-    isbn: product.isbn ?? "",
-    statut_officiel: product.statutOfficiel ?? "",
-    sous_systeme_id: product.sousSystemeId,
-    niveau_id: product.niveauId,
-    filiere_id: product.filiereId,
-    classe_id: product.classeId,
-    matiere_id: product.matiereId,
-    annee_liste_id: product.anneeListeId,
-    ministere_id: product.ministereId,
-    prix_reglemente: product.prixReglemente ?? false,
-    prix_reglemente_valeur: product.prixReglementeValeur ? Number(product.prixReglementeValeur) : 0,
-    marque: product.marque ?? "",
-    reference_fabricant: product.referenceFabricant ?? "",
-    couleur: product.couleur ?? "",
-    format: product.format ?? "",
-    matiere_composition: product.matiereComposition ?? "",
-    // Specs 02 §2.1 : champs d'article
-    code_article: product.codeArticle ?? "",
-    designation_courte: product.designationCourte ?? "",
-    ref_oem: product.refOem ?? "",
-    ref_aftermarket: product.refAftermarket ?? "",
-    emplacement_principal_id: product.emplacementPrincipalId ?? null,
-    origine_qualite: product.origineQualite ?? "AUTRE",
-    dlc_jours: product.dlcJours ?? null,
-    est_reconditionnable: product.estReconditionnable ?? false,
-    est_core: product.estCore ?? false,
-    valeur_core: product.valeurCore ?? null,
     notes: product.notes ?? "",
-    unites,
   };
 }
 

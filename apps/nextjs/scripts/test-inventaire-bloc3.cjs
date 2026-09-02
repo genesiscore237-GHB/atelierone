@@ -1,4 +1,5 @@
 const BASE = "http://localhost:3000";
+const { Client } = require("pg");
 let pass = 0, fail = 0;
 const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PASS]", label); } else { fail++; console.log("  [FAIL]", label, extra); } };
 (async () => {
@@ -28,6 +29,12 @@ const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PAS
     body: new URLSearchParams({ csrfToken: csrf.csrfToken, email: "admin@gpj.cm", password: "admin123", callbackUrl: BASE + "/dashboard" }),
   });
 
+  // Pré-condition : stock du produit 26 = 10 (auto-suffisant quel que soit l'ordre des tests)
+  const pre = new Client({ connectionString: "postgresql://postgres:postgres@127.0.0.1:5432/atelierone_erp" });
+  await pre.connect();
+  await pre.query("UPDATE stocks SET quantite=10, quantite_reservee=0 WHERE produit_id=26 AND agence_id=1;");
+  await pre.end();
+
   // 1. Création → BROUILLON
   const c = await trpcPost("stock.createSessionInventaire", { libelle: "Session bloc3 test", notes: "Test cycle complet" });
   const sid = c[0]?.result?.data?.json?.id;
@@ -35,7 +42,7 @@ const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PAS
   check("Session créée en BROUILLON", !c[0]?.error && c[0].result.data.json.statut === "brouillon", c[0]?.error?.json?.message);
 
   // 2. Comptage sur brouillon → refusé
-  const r2 = await trpcPost("stock.compterProduit", { sessionId: sid, produitId: "26", quantiteReelle: 5, commentaire: "comptage avant démarrage" });
+  const r2 = await trpcPost("stock.compterProduit", { sessionId: sid, produitId: "26", quantiteReelle: 7, commentaire: "comptage avant démarrage" });
   check("Comptage refusé en BROUILLON", !!r2[0]?.error && /en cours/.test(r2[0].error.json.message), r2[0]?.error?.json?.message);
 
   // 3. Démarrage → EN_COURS
@@ -43,7 +50,7 @@ const check = (label, ok, extra = "") => { if (ok) { pass++; console.log("  [PAS
   check("Démarrage → EN_COURS", !r3[0]?.error && r3[0].result.data.json.statut === "en_cours", r3[0]?.error?.json?.message);
 
   // 4. Comptage OK
-  const r4 = await trpcPost("stock.compterProduit", { sessionId: sid, produitId: "26", quantiteReelle: 5, commentaire: "comptage réel" });
+  const r4 = await trpcPost("stock.compterProduit", { sessionId: sid, produitId: "26", quantiteReelle: 7, commentaire: "comptage réel" });
   console.log("comptage:", JSON.stringify(r4[0]?.result?.data?.json ?? r4[0]?.error?.json));
   check("Comptage accepté en EN_COURS (écart -3)", !r4[0]?.error && r4[0].result.data.json.ecart === -3, r4[0]?.error?.json?.message);
 

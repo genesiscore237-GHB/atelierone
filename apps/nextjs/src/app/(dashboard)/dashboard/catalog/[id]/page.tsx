@@ -7,7 +7,7 @@ import { api } from "~/trpc/react";
 import {
   ArrowLeft, Package, Trash2, Barcode, Info,
   BarChart3, History, ShoppingCart, Eye, AlertTriangle,
-  Loader2, Plus, ChevronRight, ChevronDown,
+  Loader2, Plus, ChevronRight, ChevronDown, PackagePlus,
   Play, Pause, Ban, Archive, Star, Check, Tag, Receipt, Boxes,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
@@ -18,6 +18,7 @@ import { CommanderProduitDialog } from "../_components/CommanderProduitDialog";
 import { toast } from "sonner";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 
 const statutBadge: Record<string, { label: string; cls: string }> = {
   actif:       { label: "Actif",       cls: "bg-success/10 text-success-foreground border-success/20" },
@@ -38,11 +39,8 @@ const cycleVieBadge: Record<string, { label: string; cls: string }> = {
 
 const tabs = [
   { id: "apercu",   label: "Aperçu",       icon: Eye },
-  { id: "emballage", label: "Emballage",   icon: Package },
   { id: "stock",    label: "Stock",        icon: BarChart3 },
-  { id: "tarifs",   label: "Tarifs",       icon: Tag },
   { id: "historique", label: "Historique", icon: History },
-  { id: "ventes",   label: "Ventes",       icon: ShoppingCart },
 ];
 
 export default function ProductDetailPage() {
@@ -55,6 +53,13 @@ export default function ProductDetailPage() {
   const [transitionTarget, setTransitionTarget] = useState<string | null>(null);
   const [transitionMotif, setTransitionMotif] = useState("");
   const [showCommanderDialog, setShowCommanderDialog] = useState(false);
+  const [showAddStock, setShowAddStock] = useState(false);
+  const [addStock, setAddStock] = useState({ qte: "1", emplacementId: "", motif: "" });
+  const { data: emplacements } = api.stock.listEmplacements.useQuery({});
+  const addStockMut = api.stock.ajouterStock.useMutation({
+    onSuccess: () => { toast.success("Stock mis à jour"); api.useUtils().catalog.invalidate(); api.useUtils().stock.invalidate(); setShowAddStock(false); },
+    onError: (e) => toast.error(e.message),
+  });
 
   const { data: product, isLoading } = api.catalog.getById.useQuery({ id }, { enabled: !!id });
   const { data: stock } = api.inventory.getStock.useQuery({ produitId: id }, { enabled: !!id });
@@ -174,15 +179,9 @@ export default function ProductDetailPage() {
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
-            {nextTransitions.map(t => (
-              <Button key={t} onClick={() => openTransition(t)}>
-                {t === "ACTIF" && <Play className="size-4" />}
-                {t === "SUSPENDU" && <Pause className="size-4" />}
-                {t === "DISCONTINUE" && <Ban className="size-4" />}
-                {t === "ARCHIVE" && <Archive className="size-4" />}
-                {t === "ACTIF" ? "Activer" : t === "SUSPENDU" ? "Suspendre" : t === "DISCONTINUE" ? "Discontinuer" : t}
-              </Button>
-            ))}
+            <Button onClick={() => setShowAddStock(true)} variant="outline" className="gap-1.5">
+              <PackagePlus className="size-4" /> + Stock
+            </Button>
             <Button onClick={() => setShowEditModal(true)}>
               Modifier
             </Button>
@@ -255,6 +254,41 @@ export default function ProductDetailPage() {
                 Confirmer
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Ajouter du stock (bouton + Stock) */}
+      <Dialog open={showAddStock} onOpenChange={setShowAddStock}>
+        <DialogContent className="border-border bg-background text-foreground sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">Ajouter du stock : {product.titre}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Quantité</Label>
+              <Input type="number" min={1} value={addStock.qte} onChange={(e) => setAddStock({ ...addStock, qte: e.target.value })} />
+            </div>
+            <div>
+              <Label>Emplacement</Label>
+              <Select value={addStock.emplacementId} onValueChange={(v) => setAddStock({ ...addStock, emplacementId: v })}>
+                <SelectTrigger><SelectValue placeholder="Choisir un emplacement" /></SelectTrigger>
+                <SelectContent>
+                  {emplacements?.map((e: any) => <SelectItem key={e.id} value={String(e.id)}>{e.code}{e.libelle ? ` — ${e.libelle}` : ""}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Motif (obligatoire)</Label>
+              <Input value={addStock.motif} onChange={(e) => setAddStock({ ...addStock, motif: e.target.value })} placeholder="ex. Pièces retrouvées au garage, réception…" />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setShowAddStock(false)}>Annuler</Button>
+            <Button disabled={!Number(addStock.qte) || !addStock.emplacementId || addStock.motif.trim().length < 3 || addStockMut.isPending}
+              onClick={() => addStockMut.mutate({ produitId: Number(id), quantite: Number(addStock.qte), emplacementId: Number(addStock.emplacementId), motif: addStock.motif.trim() })}>
+              Ajouter
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

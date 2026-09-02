@@ -36,6 +36,8 @@ export const produits = pgTable("produits", {
   quantiteMinimale: numeric("quantite_minimale", { precision: 12, scale: 2 }).default("0"),
   statut: varchar("statut", { length: 50 }).default("actif"),
   statutCycleVie: varchar("statut_cycle_vie", { length: 20 }).default("BROUILLON"),
+  // Statut outillage (specs garage) : REPARATION | USE | CASSE | PERDU | VOLE | REFORME — null = disponible
+  statutOutil: varchar("statut_outil", { length: 20 }),
   dateDiscontinuation: timestamp("date_discontinuation"),
   motifSuspension: text("motif_suspension"),
   modeleEmballageId: uuid("modele_emballage_id").references(() => modelesEmballage.id),

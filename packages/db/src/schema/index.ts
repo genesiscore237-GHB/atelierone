@@ -122,3 +122,4 @@ export { hrDocumentTypes } from "./rh_documents";
 export { tenantSites, tenantLicences, tenantPaiements, syncIngests, tenantSnapshots, tenantRelances, tenantAudit, tenantUsage } from "./tenant";
 export { licenceLocale, syncEtat, syncOutbox } from "./saa_local";
 export { pretsOutils } from "./prets_outils";
+export { demandesCommande } from "./demandes_commande";

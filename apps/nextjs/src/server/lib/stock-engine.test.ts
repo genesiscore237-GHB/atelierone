@@ -32,9 +32,9 @@ describe("stock-engine constants", () => {
 
   it("all movement types are accounted for", () => {
     const values = Object.values(TYPES_MOUVEMENT);
-    expect(values).toHaveLength(20);
+    expect(values).toHaveLength(22);
     const unique = new Set(values);
-    expect(unique.size).toBe(20);
+    expect(unique.size).toBe(22);
   });
 
   it("MOTIF_OBLIGATOIRE_TYPES couvre perte/vol/casse/ajustements", () => {

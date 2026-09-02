@@ -24,6 +24,8 @@ export const TYPES_MOUVEMENT = {
   // Specs V2 Â§04/Â§05 : sortie atelier liÃ©e Ã  un OR + retour atelier
   SORTIE_OR: "SORTIE_OR",
   RETOUR_ATELIER: "RETOUR_ATELIER",
+  SORTIE_OUTIL: "SORTIE_OUTIL",
+  RETOUR_OUTIL: "RETOUR_OUTIL",
   // Specs V2 Â§04 processus 5 : rÃ©servation / libÃ©ration de stock
   RESERVATION: "RESERVATION",
   LIBERATION_RESERVATION: "LIBERATION_RESERVATION",

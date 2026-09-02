@@ -17,7 +17,22 @@ const STATUT_META: Record<string, { label: string; badge: string }> = {
   DISPONIBLE: { label: "Disponible", badge: "bg-success/15 text-success-foreground" },
   PRETE: { label: "Prêté", badge: "bg-warning/15 text-warning-foreground" },
   STOCK_EPUISE: { label: "Épuisé", badge: "bg-destructive/15 text-destructive" },
+  REPARATION: { label: "En réparation", badge: "bg-warning/15 text-warning-foreground" },
+  USE: { label: "Usé", badge: "bg-warning/15 text-warning-foreground" },
+  CASSE: { label: "Cassé", badge: "bg-destructive/15 text-destructive" },
+  PERDU: { label: "Perdu", badge: "bg-destructive/15 text-destructive" },
+  VOLE: { label: "Volé", badge: "bg-destructive/15 text-destructive" },
+  REFORME: { label: "Réformé", badge: "bg-muted text-muted-foreground" },
 };
+
+const DECLARE_STATUTS = [
+  { value: "REPARATION", label: "En réparation" },
+  { value: "USE", label: "Usé" },
+  { value: "CASSE", label: "Cassé" },
+  { value: "PERDU", label: "Perdu" },
+  { value: "VOLE", label: "Volé" },
+  { value: "REFORME", label: "Réformé" },
+] as const;
 
 const ETAT_RETOUR_OPTIONS = [
   { value: "OK", label: "OK — rendu en bon état" },
@@ -38,11 +53,13 @@ export function Outillage() {
   const [dateRetourPret, setDateRetourPret] = useState("");
   const [orPret, setOrPret] = useState(0);
   const [retourFor, setRetourFor] = useState<{ pretId: number; etat: "OK" | "ENDOMMAGE" | "PERDU"; remarque: string } | null>(null);
+  const [declarerFor, setDeclarerFor] = useState<{ outilId: number; titre: string; statut: string; motif: string } | null>(null);
+  const [leverFor, setLeverFor] = useState<{ outilId: number; motif: string } | null>(null);
 
   const { data, isLoading, refetch } = api.outillage.list.useQuery({
     q: q || undefined,
     type: (type || undefined) as "OUTIL" | "CONSOMMABLE" | undefined,
-    statut: (statut || undefined) as "TOUS" | "DISPONIBLE" | "PRETE" | "STOCK_EPUISE" | undefined,
+    statut: (statut || undefined) as "TOUS" | "DISPONIBLE" | "PRETE" | "STOCK_EPUISE" | "REPARATION" | "USE" | "CASSE" | "PERDU" | "VOLE" | "REFORME" | undefined,
     limit: 300,
   }, { refetchInterval: 30_000 });
   const { data: techniciens } = api.rh.list.useQuery({ limit: 200, statut: "actif" });
@@ -56,10 +73,18 @@ export function Outillage() {
   const retourner = api.outillage.retourner.useMutation({
     onSuccess: (r) => {
       const etat = retourFor?.etat;
-      toast.success(etat === "PERDU" ? "Outil déclaré perdu — déclarez la perte dans Stock → Ajustement" : etat === "ENDOMMAGE" ? "Outil rendu — état endommagé enregistré" : "Outil rendu en bon état");
+      toast.success(etat === "PERDU" ? "Outil déclaré perdu — il n'est plus prêtable" : etat === "ENDOMMAGE" ? "Outil rendu — statut Cassé enregistré" : "Outil rendu en bon état");
       utils.outillage.list.invalidate(); utils.outillage.historiquePrets.invalidate(); utils.outillage.get.invalidate(); utils.outillage.pretsEnCours.invalidate();
       setRetourFor(null);
     },
+    onError: (e) => toast.error(e.message),
+  });
+  const declarerStatut = api.outillage.declarerStatut.useMutation({
+    onSuccess: (r) => { toast.success(`Outil déclaré : ${r.statutLabel}`); utils.outillage.list.invalidate(); utils.outillage.get.invalidate(); utils.outillage.pretsEnCours.invalidate(); setDeclarerFor(null); },
+    onError: (e) => toast.error(e.message),
+  });
+  const leverStatut = api.outillage.leverStatut.useMutation({
+    onSuccess: () => { toast.success("Outil de nouveau disponible"); utils.outillage.list.invalidate(); utils.outillage.get.invalidate(); setLeverFor(null); },
     onError: (e) => toast.error(e.message),
   });
 
@@ -120,6 +145,12 @@ export function Outillage() {
           <option value="">Tous les statuts</option>
           <option value="DISPONIBLE">Disponible</option>
           <option value="PRETE">Prêté</option>
+          <option value="REPARATION">En réparation</option>
+          <option value="USE">Usé</option>
+          <option value="CASSE">Cassé</option>
+          <option value="PERDU">Perdu</option>
+          <option value="VOLE">Volé</option>
+          <option value="REFORME">Réformé</option>
           <option value="STOCK_EPUISE">Épuisé</option>
         </select>
       </div>
@@ -199,10 +230,19 @@ export function Outillage() {
                             <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px] text-success-foreground" disabled={retourner.isPending} onClick={() => setRetourFor({ pretId: pret.id, etat: "OK", remarque: "" })}>
                               <Undo2 size={11} /> Rendre
                             </Button>
-                          ) : (
-                            <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px]" onClick={() => setShowPret(o.id)}>
-                              <HandHelping size={11} /> Prêter
+                          ) : o.statutOutil ? (
+                            <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px] text-success-foreground" onClick={() => setLeverFor({ outilId: o.id, motif: "" })}>
+                              <Undo2 size={11} /> Rendre dispo
                             </Button>
+                          ) : (
+                            <>
+                              <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px]" onClick={() => setShowPret(o.id)}>
+                                <HandHelping size={11} /> Prêter
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-6 gap-1 px-2 text-[10px] text-destructive" onClick={() => setDeclarerFor({ outilId: o.id, titre: o.titre, statut: "CASSE", motif: "" })}>
+                                <AlertTriangle size={11} /> Déclarer
+                              </Button>
+                            </>
                           )
                         )}
                       </div>
@@ -257,7 +297,7 @@ export function Outillage() {
                 </select>
               </div>
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Date de retour prévue</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Date de retour prévue *</p>
                 <input type="date" value={dateRetourPret} onChange={(e) => setDateRetourPret(e.target.value)} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm" />
               </div>
               <div>
@@ -267,7 +307,7 @@ export function Outillage() {
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setShowPret(null)}>Annuler</Button>
-              <Button disabled={!techPret || preter.isPending} onClick={() => preter.mutate({ outilId: showPret, technicienId: techPret, orId: orPret || undefined, motif: motifPret || undefined, dateRetour: dateRetourPret || undefined })}>
+              <Button disabled={!techPret || !dateRetourPret || preter.isPending} onClick={() => preter.mutate({ outilId: showPret, technicienId: techPret, orId: orPret || undefined, motif: motifPret || undefined, dateRetour: dateRetourPret })}>
                 <HandHelping size={14} /> Prêter
               </Button>
             </div>
@@ -292,19 +332,70 @@ export function Outillage() {
               ))}
             </div>
             <div className="mt-3">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Remarque (optionnelle)</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Remarque {retourFor.etat !== "OK" ? "(obligatoire)" : "(optionnelle)"}</p>
               <input value={retourFor.remarque} onChange={(e) => setRetourFor({ ...retourFor, remarque: e.target.value })} placeholder="ex. mâchoire faussée, manche fissuré…" className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm" />
             </div>
             {retourFor.etat === "PERDU" && (
               <p className="mt-3 flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2.5 text-[11px] text-destructive">
                 <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                Après confirmation, déclarez la perte (Stock → Ajustement manuel → Perte) pour déduire l'outil du stock.
+                L'outil sera marqué « Perdu » et ne sera plus prêtable.
               </p>
             )}
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setRetourFor(null)}>Annuler</Button>
-              <Button disabled={retourner.isPending} onClick={() => retourner.mutate({ pretId: retourFor.pretId, etatRetour: retourFor.etat, remarque: retourFor.remarque || undefined })}>
+              <Button disabled={retourner.isPending || (retourFor.etat !== "OK" && retourFor.remarque.trim().length < 3)} onClick={() => retourner.mutate({ pretId: retourFor.pretId, etatRetour: retourFor.etat, remarque: retourFor.remarque.trim() || undefined })}>
                 <Undo2 size={14} /> Confirmer le retour
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal déclaration : usé / cassé / perdu / volé / en réparation / réformé */}
+      {declarerFor !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setDeclarerFor(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
+              <AlertTriangle size={16} className="text-destructive" /> Déclarer : {declarerFor.titre}
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">Justification obligatoire — l'outil ne sera plus prêtable (la quantité est ajustée pour perte/vol/casse/réforme).</p>
+            <div className="mt-4 space-y-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Statut</p>
+                <select value={declarerFor.statut} onChange={(e) => setDeclarerFor({ ...declarerFor, statut: e.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm">
+                  {DECLARE_STATUTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Motif (obligatoire, min 3 caractères)</p>
+                <textarea value={declarerFor.motif} onChange={(e) => setDeclarerFor({ ...declarerFor, motif: e.target.value })} rows={2} placeholder="ex. mâchoire faussée après chute, disparu du vestiaire…" className="mt-1 w-full rounded-lg border border-border bg-background p-2 text-sm" />
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDeclarerFor(null)}>Annuler</Button>
+              <Button variant="destructive" disabled={declarerFor.motif.trim().length < 3 || declarerStatut.isPending} onClick={() => declarerStatut.mutate({ outilId: declarerFor.outilId, statut: declarerFor.statut as any, motif: declarerFor.motif.trim() })}>
+                <AlertTriangle size={14} /> Déclarer
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal lever un statut (retour à disponible) */}
+      {leverFor !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setLeverFor(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
+              <Undo2 size={16} className="text-success-foreground" /> Rendre l'outil disponible
+            </h3>
+            <div className="mt-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Motif (min 3 caractères)</p>
+              <input value={leverFor.motif} onChange={(e) => setLeverFor({ ...leverFor, motif: e.target.value })} placeholder="ex. réparation terminée" className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm" />
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setLeverFor(null)}>Annuler</Button>
+              <Button disabled={leverFor.motif.trim().length < 3 || leverStatut.isPending} onClick={() => leverStatut.mutate({ outilId: leverFor.outilId, motif: leverFor.motif.trim() })}>
+                <Undo2 size={14} /> Rendre disponible
               </Button>
             </div>
           </div>
@@ -361,6 +452,22 @@ function FicheOutil({ id, onClose, canModifier, onRetourner, onOuvrirRetour }: {
                 <span key={u.uniteId} className="rounded-full bg-background px-2.5 py-1 text-xs font-mono font-bold">
                   {u.quantite} {u.symbole ?? u.libelle ?? u.code}
                 </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {data.futs?.length > 0 && (
+          <div className="mt-3 rounded-lg bg-muted/20 p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Fûts / lots (specs huiles)</p>
+            <div className="mt-1.5 space-y-1">
+              {data.futs.map((f: any) => (
+                <div key={f.lotId} className="flex flex-wrap items-center gap-2 rounded-lg bg-background px-2.5 py-1.5 text-xs">
+                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${f.ouvert ? "bg-warning/15 text-warning-foreground" : "bg-muted text-muted-foreground"}`}>{f.ouvert ? "Ouvert" : "Fermé"}</span>
+                  <span className="font-mono font-bold">{f.numeroLot ?? `LOT-${f.lotId}`}</span>
+                  <span className="font-mono text-muted-foreground">{f.volumeRestant} / {f.volumeInitial} L</span>
+                  {f.datePeremption && <span className="text-muted-foreground">· périme le {new Date(f.datePeremption).toLocaleDateString("fr-FR")}</span>}
+                </div>
               ))}
             </div>
           </div>

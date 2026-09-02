@@ -167,7 +167,10 @@ if (emp.workCycleId === null) {
         Number(ctx.user.id)
       );
 
-      // Attributs de journée (primes, validations, notes) → écrits sur la ligne
+      // Projection : la journée est recalculée depuis la timeline (ligne garantie)
+      const proj = await reconstruireJournee(input.employeeId, input.date);
+
+      // Attributs de journée (primes, validations, notes) — appliqués APRÈS la projection
       const [existing] = await db
         .select({ id: attendanceEntries.id })
         .from(attendanceEntries)
@@ -183,9 +186,10 @@ if (emp.workCycleId === null) {
       if (existing) {
         await db.update(attendanceEntries).set(attrs as any).where(eq(attendanceEntries.id, existing.id));
       }
-
-      // Projection : la journée est recalculée depuis la timeline
-      const proj = await reconstruireJournee(input.employeeId, input.date);
+      // Recalcul si des validations admin ou primes ont changé (le calcul précède les attributs)
+      if (existing && (input.validateLateDeparture != null || input.validateEarlyArrival != null || input.taskBonus != null)) {
+        await runCalculation(existing.id, input.employeeId, input.date);
+      }
       return { id: proj?.entry?.id ?? existing?.id };
     }),
 
@@ -466,6 +470,10 @@ async function saveSingle(user: { agenceId: number; id: string }, date: string, 
 
   await poserEvenementsSaisie(row.employeeId, date, { timeIn: row.timeIn, timeOut: row.timeOut, status: row.status ?? "present" }, Number(user.id));
 
+  // Projection : la ligne du jour est créée/mise à jour depuis la timeline
+  await reconstruireJournee(row.employeeId, date);
+
+  // Attributs de journée (prime, validations) — appliqués APRÈS la projection (ligne garantie)
   const [existing] = await db
     .select({ id: attendanceEntries.id })
     .from(attendanceEntries)
@@ -480,6 +488,8 @@ async function saveSingle(user: { agenceId: number; id: string }, date: string, 
   if (existing) {
     await db.update(attendanceEntries).set(attrs as any).where(eq(attendanceEntries.id, existing.id));
   }
-
-  await reconstruireJournee(row.employeeId, date);
+  // Recalcul si des validations admin ou primes ont changé (le calcul précède les attributs)
+  if (existing && (row.validateLateDeparture != null || row.validateEarlyArrival != null || row.taskBonus != null)) {
+    await runCalculation(existing.id, row.employeeId, date);
+  }
 }

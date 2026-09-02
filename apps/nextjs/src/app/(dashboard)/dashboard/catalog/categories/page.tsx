@@ -250,7 +250,7 @@ export default function CategoriesPage() {
                     }
                   }}
                   required
-                  placeholder="Ex: Mathématiques, Fournitures..."
+                  placeholder="Ex: Pièces moteur, Huiles, Outillage..."
                   autoFocus
                 />
               </div>

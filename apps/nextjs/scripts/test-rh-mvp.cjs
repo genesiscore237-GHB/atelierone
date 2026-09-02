@@ -8,6 +8,10 @@ const fmt = (n) => Math.round(Number(n ?? 0) * 100) / 100;
   await pre.connect();
   const preNow = new Date();
   await pre.query("UPDATE attendance_monthly_summaries SET locked=false WHERE year=$1 AND month=$2;", [preNow.getFullYear(), preNow.getMonth() + 1]);
+  // Nettoyage des pointages du mois pour les 3 employés testés (idempotence du bulletin)
+  await pre.query("DELETE FROM employee_postures WHERE date >= $1 AND employee_id IN (SELECT id FROM employes WHERE matricule IN ('EMP001','EMP003','EMP005'));", [new Date(preNow.getFullYear(), preNow.getMonth(), 1).toISOString().slice(0, 10)]);
+  await pre.query("DELETE FROM attendance_calculations WHERE date >= $1 AND employee_id IN (SELECT id FROM employes WHERE matricule IN ('EMP001','EMP003','EMP005'));", [new Date(preNow.getFullYear(), preNow.getMonth(), 1).toISOString().slice(0, 10)]);
+  await pre.query("DELETE FROM attendance_entries WHERE date >= $1 AND employee_id IN (SELECT id FROM employes WHERE matricule IN ('EMP001','EMP003','EMP005'));", [new Date(preNow.getFullYear(), preNow.getMonth(), 1).toISOString().slice(0, 10)]);
   await pre.end();
   const jar = new Map();
   async function http(path, opts = {}) {

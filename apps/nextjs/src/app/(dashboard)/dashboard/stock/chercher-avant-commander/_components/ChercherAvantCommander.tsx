@@ -28,7 +28,10 @@ export function ChercherAvantCommander() {
   const [q, setQ] = useState("");
   const [type, setType] = useState("TOUS");
   const [sortirFor, setSortirFor] = useState<{ id: number; titre: string; qte: string; uniteId: string; motif: string } | null>(null);
+  const [sortirOrFor, setSortirOrFor] = useState<{ id: number; titre: string; qte: string; orId: number } | null>(null);
+  const [demandeFor, setDemandeFor] = useState<{ designation: string; reference: string; qte: string; notes: string } | null>(null);
   const [commanderFor, setCommanderFor] = useState<{ produitId: string; titre: string; stock: number } | null>(null);
+  const { data: orsEnCours } = api.or.getDashboard.useQuery(undefined, { select: (d: any) => (d?.ors ?? []).filter((o: any) => ["EN_COURS", "EN_ATTENTE", "DIAGNOSTIC"].includes(o.statut ?? "")) });
 
   const { data, isLoading, refetch } = api.stock.chercherAvantCommander.useQuery(
     { q: q || undefined, type: (type || "TOUS") as any, limit: 100 },
@@ -45,6 +48,15 @@ export function ChercherAvantCommander() {
     },
     onError: (e) => toast.error(e.message),
   });
+  const sortirPourReparation = api.stock.sortirPourOR.useMutation({
+    onSuccess: () => { toast.success("Pièce sortie pour la réparation — stock mis à jour"); utils.stock.chercherAvantCommander.invalidate(); utils.stock.getDashboard.invalidate(); setSortirOrFor(null); },
+    onError: (e) => toast.error(e.message),
+  });
+  const creerDemande = api.stock.creerDemandeCommande.useMutation({
+    onSuccess: () => { toast.success("Demande de commande enregistrée"); utils.stock.listDemandesCommande.invalidate(); setDemandeFor(null); },
+    onError: (e) => toast.error(e.message),
+  });
+  const { data: demandes } = api.stock.listDemandesCommande.useQuery(undefined, { refetchInterval: 60_000 });
 
   const canModifier = hasPermission("stock.modifier");
   const rows = (data ?? []) as any[];
@@ -91,6 +103,10 @@ export function ChercherAvantCommander() {
           <p className="text-sm text-muted-foreground">
             Aucun produit trouvé {q ? `pour « ${q} »` : "— recherchez une pièce avant de commander"}.
           </p>
+          <p className="mt-1 text-xs text-muted-foreground">Si ce produit n'existe pas au garage, créez une demande de commande :</p>
+          <Button size="sm" variant="outline" className="mt-3 gap-1 text-xs" onClick={() => setDemandeFor({ designation: q, reference: "", qte: "1", notes: "" })}>
+            <ShoppingCart size={12} /> Créer une demande de commande
+          </Button>
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border bg-card">
@@ -148,9 +164,14 @@ export function ChercherAvantCommander() {
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-end gap-1">
                         {canModifier && p.disponible > 0 && (
-                          <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px] text-success-foreground" disabled={sortir.isPending} onClick={() => setSortirFor({ id: p.id, titre: p.titre, qte: "1", uniteId: p.unites[0]?.code ?? "", motif: "" })}>
-                            <Wrench size={11} /> Utiliser (sortie)
-                          </Button>
+                          <>
+                            <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px] text-sky-400" disabled={sortirPourReparation.isPending} onClick={() => setSortirOrFor({ id: p.id, titre: p.titre, qte: "1", orId: 0 })}>
+                              <Wrench size={11} /> Sortir pour réparation
+                            </Button>
+                            <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px] text-success-foreground" disabled={sortir.isPending} onClick={() => setSortirFor({ id: p.id, titre: p.titre, qte: "1", uniteId: p.unites[0]?.code ?? "", motif: "" })}>
+                              <Wrench size={11} /> Sortir (stock)
+                            </Button>
+                          </>
                         )}
                         <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px]" onClick={() => setCommanderFor({ produitId: String(p.id), titre: p.titre, stock: p.disponible })}>
                           <ShoppingCart size={11} /> Commander
@@ -198,6 +219,94 @@ export function ChercherAvantCommander() {
                 <Wrench size={14} /> Utiliser et mettre à jour le stock
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal sortie pour réparation (choix de l'OR) */}
+      {sortirOrFor !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setSortirOrFor(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
+              <Wrench size={16} className="text-sky-400" /> Sortir pour réparation : {sortirOrFor.titre}
+            </h3>
+            <div className="mt-4 space-y-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Ordre de réparation *</p>
+                <select value={sortirOrFor.orId} onChange={(e) => setSortirOrFor({ ...sortirOrFor, orId: Number(e.target.value) })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm">
+                  <option value={0}>Choisir…</option>
+                  {(orsEnCours ?? []).map((o: any) => <option key={o.id} value={o.id}>OR-{o.numero ?? o.id} — {o.vehicule ?? ""}</option>)}
+                </select>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Quantité</p>
+                <input type="number" min={1} value={sortirOrFor.qte} onChange={(e) => setSortirOrFor({ ...sortirOrFor, qte: e.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm" />
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setSortirOrFor(null)}>Annuler</Button>
+              <Button disabled={!sortirOrFor.orId || !Number(sortirOrFor.qte) || sortirPourReparation.isPending} onClick={() => sortirPourReparation.mutate({ orId: sortirOrFor.orId, produitId: sortirOrFor.id, quantite: Number(sortirOrFor.qte), motif: "Sortie pour réparation" })}>
+                <Wrench size={14} /> Sortir
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal demande de commande (produit introuvable) */}
+      {demandeFor !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setDemandeFor(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="flex items-center gap-2 text-base font-bold text-foreground">
+              <ShoppingCart size={16} className="text-primary" /> Créer une demande de commande
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">Le produit n'existe pas au garage — la demande est enregistrée pour commande.</p>
+            <div className="mt-4 space-y-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Désignation *</p>
+                <input value={demandeFor.designation} onChange={(e) => setDemandeFor({ ...demandeFor, designation: e.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm" />
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Référence</p>
+                  <input value={demandeFor.reference} onChange={(e) => setDemandeFor({ ...demandeFor, reference: e.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm" />
+                </div>
+                <div className="w-24">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Quantité</p>
+                  <input type="number" min={1} value={demandeFor.qte} onChange={(e) => setDemandeFor({ ...demandeFor, qte: e.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm" />
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Notes</p>
+                <input value={demandeFor.notes} onChange={(e) => setDemandeFor({ ...demandeFor, notes: e.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm" />
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDemandeFor(null)}>Annuler</Button>
+              <Button disabled={demandeFor.designation.trim().length < 2 || creerDemande.isPending} onClick={() => creerDemande.mutate({ designation: demandeFor.designation.trim(), reference: demandeFor.reference.trim() || undefined, quantite: Number(demandeFor.qte) || 1, notes: demandeFor.notes.trim() || undefined })}>
+                <ShoppingCart size={14} /> Enregistrer la demande
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Demandes de commande en attente */}
+      {(demandes ?? []).length > 0 && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h3 className="mb-2 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+            <ShoppingCart size={14} className="text-primary" /> Demandes de commande en attente ({(demandes ?? []).length})
+          </h3>
+          <div className="space-y-1">
+            {(demandes ?? []).map((d: any) => (
+              <div key={d.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/20 px-3 py-1.5 text-xs">
+                <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${d.statut === "EN_ATTENTE" ? "bg-warning/15 text-warning-foreground" : "bg-success/15 text-success-foreground"}`}>{d.statut}</span>
+                <span className="font-semibold">{d.designation}</span>
+                {d.reference && <span className="font-mono text-[10px] text-muted-foreground">{d.reference}</span>}
+                <span className="font-mono text-[10px] text-muted-foreground">× {Number(d.quantite)} {d.unite}</span>
+                <span className="ml-auto text-[10px] text-muted-foreground">{new Date(d.creeLe).toLocaleDateString("fr-FR")}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
