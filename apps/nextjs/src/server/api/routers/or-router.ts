@@ -85,6 +85,19 @@ const genNumero = async (agenceId: number): Promise<string> => {
   return `${prefix}${String((row?.n ?? 0) + 1).padStart(4, "0")}`;
 };
 
+/** MVP : dossier fermé définitivement → plus aucune modification (diagnostic, devis, pièces, travaux, facture). */
+const verifierDossierOuvert = async (orId: number, agenceId: number): Promise<void> => {
+  const [or] = await db
+    .select({ statut: ordresReparation.statut })
+    .from(ordresReparation)
+    .where(and(eq(ordresReparation.id, orId), eq(ordresReparation.agenceId, agenceId)))
+    .limit(1);
+  if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Dossier introuvable." });
+  if (or.statut === "ferme_definitif") {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Dossier fermé définitivement : plus aucune modification n'est possible." });
+  }
+};
+
 export const orRouter = createTRPCRouter({
   // ─── Véhicules (liés aux OR) ───
   listVehicules: requirePermissionProcedure("or.consulter")
@@ -437,6 +450,239 @@ export const orRouter = createTRPCRouter({
       return row;
     }),
 
+  // ─── Recherche unifiée réception (plaque, châssis, client, téléphone) ───
+  rechercherReception: requirePermissionProcedure("or.consulter")
+    .input(z.object({ q: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const q = input.q.trim();
+      const like = `%${q}%`;
+      const [vehs, clis] = await Promise.all([
+        db
+          .select({
+            id: vehicules.id,
+            immatriculation: vehicules.immatriculation,
+            numeroChassis: vehicules.numeroChassis,
+            marque: vehicules.marque,
+            modele: vehicules.modele,
+            version: vehicules.version,
+            annee: vehicules.annee,
+            couleur: vehicules.couleur,
+            carburant: vehicules.carburant,
+            typeVehicule: vehicules.typeVehicule,
+            kilometrage: vehicules.kilometrage,
+            clientId: vehicules.clientId,
+            clientNom: clients.nom,
+            clientPrenom: clients.prenom,
+            clientTelephone: clients.telephone,
+            chauffeurNom: vehicules.chauffeurNom,
+            chauffeurTelephone: vehicules.chauffeurTelephone,
+          })
+          .from(vehicules)
+          .leftJoin(clients, eq(vehicules.clientId, clients.id))
+          .where(and(eq(vehicules.agenceId, ctx.user.agenceId), sql`(${vehicules.immatriculation} ILIKE ${like} OR ${vehicules.numeroChassis} ILIKE ${like} OR ${vehicules.marque} ILIKE ${like} OR ${vehicules.modele} ILIKE ${like} OR ${clients.nom} ILIKE ${like} OR ${clients.telephone} ILIKE ${like})`))
+          .orderBy(vehicules.immatriculation)
+          .limit(10),
+        db
+          .select({ id: clients.id, nom: clients.nom, prenom: clients.prenom, telephone: clients.telephone, email: clients.email, adresse: clients.adresse, ville: clients.ville })
+          .from(clients)
+          .where(and(eq(clients.agenceId, ctx.user.agenceId), sql`(${clients.nom} ILIKE ${like} OR ${clients.telephone} ILIKE ${like} OR ${clients.email} ILIKE ${like} OR ${clients.codeClient} ILIKE ${like})`))
+          .orderBy(clients.nom)
+          .limit(10),
+      ]);
+      return { vehicules: vehs, clients: clis };
+    }),
+
+  // ─── RÉCEPTION COMPLÈTE (MVP) : client + véhicule + dossier + check-list + photos en un flux ───
+  receptionner: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      client: z.object({
+        id: z.number().int().optional(),
+        nom: z.string().min(1),
+        prenom: z.string().optional(),
+        telephone: z.string().optional(),
+        email: z.string().optional(),
+        adresse: z.string().optional(),
+        ville: z.string().optional(),
+      }),
+      vehicule: z.object({
+        id: z.number().int().optional(),
+        immatriculation: z.string().min(1),
+        numeroChassis: z.string().optional(),
+        typeVehicule: z.string().default("voiture"),
+        marque: z.string().optional(),
+        modele: z.string().optional(),
+        version: z.string().optional(),
+        annee: z.number().int().optional(),
+        couleur: z.string().optional(),
+        carburant: z.string().optional(),
+        kilometrage: z.number().int().optional(),
+      }),
+      chauffeur: z.object({ nom: z.string().optional(), telephone: z.string().optional() }).optional(),
+      reception: z.object({
+        dateReception: z.string().optional(),
+        kilometrageEntree: z.number().int().min(0),
+        niveauCarburantEntree: z.string().optional(),
+        pannesDeclarees: z.string().min(1),
+        observationsReception: z.string().optional(),
+        motEntree: z.string().default("PANNE"),
+        plainte: z.string().optional(),
+        outillage: z.record(z.any()).optional(),
+        photos: z.array(z.string()).optional(),
+        signatureDeposant: z.string().optional(),
+        validationVerbale: z.boolean().default(false),
+        typeIntervention: z.string().default("ATELIER"),
+        lieuDepannage: z.string().optional(),
+        emplacement: z.string().optional(),
+        clientAttendSurPlace: z.boolean().default(false),
+        courtoisieDemandee: z.boolean().default(false),
+        datePromesse: z.string().optional(),
+        priorite: z.string().default("P3"),
+      }),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const agenceId = ctx.user.agenceId;
+
+        // 1. Client (existant ou créé à la volée)
+        let clientId = input.client.id ?? null;
+        if (clientId) {
+          const [cli] = await tx.select({ id: clients.id }).from(clients).where(and(eq(clients.id, clientId), eq(clients.agenceId, agenceId))).limit(1);
+          if (!cli) throw new TRPCError({ code: "BAD_REQUEST", message: "Client introuvable." });
+        } else {
+          const codeClient = `CLI-${String(Date.now()).slice(-6)}`;
+          const [cli] = await tx.insert(clients).values({
+            agenceId,
+            nom: input.client.nom.trim(),
+            prenom: input.client.prenom?.trim() || null,
+            telephone: input.client.telephone?.trim() || null,
+            email: input.client.email?.trim() || null,
+            adresse: input.client.adresse?.trim() || null,
+            ville: input.client.ville?.trim() || null,
+            codeClient,
+            typeClient: "PART",
+            statut: "ACTIF",
+          } as any).returning();
+          clientId = cli.id;
+        }
+
+        // 2. Véhicule (existant → complété ; sinon créé) — toujours lié à un client
+        let vehiculeId = input.vehicule.id ?? null;
+        if (vehiculeId) {
+          await tx.update(vehicules).set({
+            clientId,
+            chauffeurNom: input.chauffeur?.nom?.trim() ?? null,
+            chauffeurTelephone: input.chauffeur?.telephone?.trim() ?? null,
+            kilometrage: input.vehicule.kilometrage ?? undefined,
+            updatedAt: new Date(),
+          } as any).where(eq(vehicules.id, vehiculeId));
+        } else {
+          const [veh] = await tx.insert(vehicules).values({
+            agenceId,
+            clientId,
+            immatriculation: input.vehicule.immatriculation.trim().toUpperCase(),
+            numeroChassis: input.vehicule.numeroChassis?.trim() || null,
+            typeVehicule: input.vehicule.typeVehicule,
+            marque: input.vehicule.marque?.trim() || null,
+            modele: input.vehicule.modele?.trim() || null,
+            version: input.vehicule.version?.trim() || null,
+            annee: input.vehicule.annee ?? null,
+            couleur: input.vehicule.couleur?.trim() || null,
+            carburant: input.vehicule.carburant || null,
+            kilometrage: input.vehicule.kilometrage ?? null,
+            chauffeurNom: input.chauffeur?.nom?.trim() || null,
+            chauffeurTelephone: input.chauffeur?.telephone?.trim() || null,
+            statutImmobilisation: "en_reception",
+          } as any).returning();
+          vehiculeId = veh.id;
+        }
+
+        // 3. Dossier d'intervention (OR) complet
+        const numero = await genNumero(agenceId);
+        const [or] = await tx.insert(ordresReparation).values({
+          agenceId,
+          numero,
+          vehiculeId,
+          clientId,
+          plainte: input.reception.plainte ?? input.reception.pannesDeclarees,
+          diagnostic: null,
+          motEntree: input.reception.motEntree,
+          priorite: input.reception.priorite,
+          dateOuverture: new Date(),
+          dateReception: input.reception.dateReception ? new Date(input.reception.dateReception) : new Date(),
+          datePromesse: input.reception.datePromesse ?? null,
+          emplacement: input.reception.emplacement ?? "Réception",
+          kilometrageEntree: input.reception.kilometrageEntree,
+          kilometrageSortie: null,
+          niveauCarburantEntree: input.reception.niveauCarburantEntree ?? null,
+          pannesDeclarees: input.reception.pannesDeclarees,
+          observationsReception: input.reception.observationsReception ?? null,
+          receptionnisteId: Number(ctx.user.id),
+          outillage: input.reception.outillage ?? null,
+          typeIntervention: input.reception.typeIntervention,
+          lieuDepannage: input.reception.lieuDepannage ?? null,
+          signatureDeposant: input.reception.signatureDeposant ?? null,
+          validationVerbale: input.reception.validationVerbale,
+          clientAttendSurPlace: input.reception.clientAttendSurPlace,
+          courtoisieDemandee: input.reception.courtoisieDemandee,
+          creePar: Number(ctx.user.id),
+          statut: "EN_ATTENTE_DIAGNOSTIC",
+        } as any).returning();
+
+        // 4. Photos de réception
+        if (input.reception.photos && input.reception.photos.length > 0) {
+          for (const photo of input.reception.photos) {
+            await tx.insert(orPhotos).values({ orId: or.id, photo, uploaderId: Number(ctx.user.id) } as any);
+          }
+        }
+
+        // 5. Historique de réception (traçabilité)
+        await tx.insert(orHistorique).values({
+          orId: or.id,
+          type: "RECEPTION",
+          nouvelleValeur: "EN_ATTENTE_DIAGNOSTIC",
+          commentaire: `Réception ${input.reception.typeIntervention}${input.reception.lieuDepannage ? ` (${input.reception.lieuDepannage})` : ""} — ${input.reception.pannesDeclarees}`,
+          changePar: Number(ctx.user.id),
+        } as any);
+
+        // 6. Le véhicule entre en réparation
+        await tx.update(vehicules).set({ statutImmobilisation: "en_reparation", updatedAt: new Date() } as any).where(eq(vehicules.id, vehiculeId));
+
+        return { id: or.id, numero, vehiculeId, clientId };
+      }) as any;
+    }),
+
+  // ─── FERMETURE DÉFINITIVE : gèle diagnostic, devis, pièces, travaux, facture ───
+  fermerDefinitivement: requirePermissionProcedure("or.modifier")
+    .input(z.object({ id: z.number().int(), motif: z.string().min(3).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id, numero: ordresReparation.numero, statut: ordresReparation.statut, vehiculeId: ordresReparation.vehiculeId, clientId: ordresReparation.clientId, totalTTC: ordresReparation.totalTTC, venteId: ordresReparation.venteId, notes: ordresReparation.notes })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.id), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "Dossier introuvable." });
+      if (or.statut === "ferme_definitif") throw new TRPCError({ code: "BAD_REQUEST", message: "Ce dossier est déjà fermé définitivement." });
+      if (!["LIVRE", "PRET_A_LIVRER", "CONTROLE_QUALITE"].includes(or.statut)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "La fermeture définitive exige un dossier livré ou prêt à livrer (statut actuel : " + or.statut + ")." });
+      }
+      await db.update(ordresReparation).set({
+        statut: "ferme_definitif",
+        dateFermeture: new Date(),
+        fermeDefinitivementPar: Number(ctx.user.id),
+        notes: or.notes ? `${or.notes}\n[FERMETURE] ${input.motif ?? ""}` : `[FERMETURE] ${input.motif ?? ""}`,
+        updatedAt: new Date(),
+      } as any).where(eq(ordresReparation.id, or.id));
+      await db.insert(orHistorique).values({
+        orId: or.id,
+        type: "FERMETURE_DEFINITIVE",
+        ancienneValeur: or.statut,
+        nouvelleValeur: "ferme_definitif",
+        commentaire: input.motif ?? "Fermeture définitive du dossier",
+        changePar: Number(ctx.user.id),
+      } as any);
+      return { success: true, numero: or.numero };
+    }),
+
   // ─── Cycle de vie : changement de statut (règles + historique + véhicule) ───
   changerStatut: requirePermissionProcedure("or.modifier")
     .input(z.object({
@@ -605,6 +851,7 @@ export const orRouter = createTRPCRouter({
         .where(and(eq(ordresReparation.id, input.ordreId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
         .limit(1);
       if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "OR introuvable." });
+      await verifierDossierOuvert(input.ordreId, ctx.user.agenceId);
 
       const totalLigne = input.quantite * input.prixUnitaire * (1 + input.tva / 100);
       const [row] = await db
@@ -637,13 +884,15 @@ export const orRouter = createTRPCRouter({
     }))
     .mutation(async ({ ctx, input }) => {
       const { id, ...rest } = input;
-      await db.update(lignesOrdreReparation).set(rest as any).where(eq(lignesOrdreReparation.id, id));
       const [ligne] = await db
         .select({ ordreId: lignesOrdreReparation.ordreId })
         .from(lignesOrdreReparation)
         .where(eq(lignesOrdreReparation.id, id))
         .limit(1);
-      if (ligne) await recalculerTotaux(ctx.user.agenceId, ligne.ordreId);
+      if (!ligne) throw new TRPCError({ code: "BAD_REQUEST", message: "Ligne introuvable." });
+      await verifierDossierOuvert(ligne.ordreId, ctx.user.agenceId);
+      await db.update(lignesOrdreReparation).set(rest as any).where(eq(lignesOrdreReparation.id, id));
+      await recalculerTotaux(ctx.user.agenceId, ligne.ordreId);
       return { success: true };
     }),
 
@@ -655,6 +904,8 @@ export const orRouter = createTRPCRouter({
         .from(lignesOrdreReparation)
         .where(eq(lignesOrdreReparation.id, input.id))
         .limit(1);
+      if (!ligne) throw new TRPCError({ code: "BAD_REQUEST", message: "Ligne introuvable." });
+      await verifierDossierOuvert(ligne.ordreId, ctx.user.agenceId);
       await db.delete(lignesOrdreReparation).where(eq(lignesOrdreReparation.id, input.id));
       if (ligne) await recalculerTotaux(ctx.user.agenceId, ligne.ordreId);
       return { success: true };
@@ -1668,7 +1919,7 @@ export const orRouter = createTRPCRouter({
           .where(and(eq(ordresReparation.id, input.id), eq(ordresReparation.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "Ordre de réparation introuvable." });
-        if (or.venteId) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet OR est déjà facturé." });
+        if (or.statut === "ferme_definitif") throw new TRPCError({ code: "BAD_REQUEST", message: "Dossier fermé définitivement : la facturation est figée (un avoir serait nécessaire)." });
         if (!STATUTS_FACTURABLES.includes(or.statut as any)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Seul un OR PRÊT À LIVRER / LIVRÉ / CONTRÔLE QUALITÉ peut être facturé (statut actuel : ${STATUT_LABELS[or.statut ?? ""] ?? or.statut}).` });
         }
@@ -1678,6 +1929,9 @@ export const orRouter = createTRPCRouter({
           .from(lignesOrdreReparation)
           .where(eq(lignesOrdreReparation.ordreId, input.id));
         if (lignes.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Aucune ligne à facturer sur cet OR." });
+
+        // Facturation cumulative : on facture le RESTANT (total actuel − déjà facturé)
+        const dejaFacture = Number(or.totalFacture ?? 0);
 
         // Remise : contrat couvrant → remise du contrat ; sinon remise par défaut du client
         let remisePourcent = input.remisePourcent ?? 0;
@@ -1696,16 +1950,17 @@ export const orRouter = createTRPCRouter({
           delaiJours = Number(client.delaiPaiementJours ?? 0);
         }
 
-        const total = calculerTotalFacture(lignes as any[], remisePourcent);
-        if (total <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Le montant de la facture est nul." });
+        const totalComplet = calculerTotalFacture(lignes as any[], remisePourcent);
+        const restant = totalComplet - dejaFacture;
+        if (restant <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet OR est déjà entièrement facturé." });
 
-        // Crédit : vérification du plafond
+        // Crédit : vérification du plafond (sur le montant à facturer)
         if (input.modePaiement === "credit" && client) {
           const [encoursRow] = await tx
             .select({ n: sql<number>`COALESCE(SUM(${dettesClients.montantRestant}), 0)::int` })
             .from(dettesClients)
             .where(eq(dettesClients.clientId, or.clientId));
-          if (!respectePlafondCredit(Number(encoursRow?.n ?? 0), total, client.plafondCredit ? Number(client.plafondCredit) : null)) {
+          if (!respectePlafondCredit(Number(encoursRow?.n ?? 0), restant, client.plafondCredit ? Number(client.plafondCredit) : null)) {
             throw new TRPCError({ code: "BAD_REQUEST", message: "Plafond de crédit dépassé pour ce client." });
           }
         }
@@ -1715,7 +1970,7 @@ export const orRouter = createTRPCRouter({
           .from(ventes)
           .where(sql`${ventes.reference} LIKE ${`FAC-${new Date().getFullYear()}-%`}`);
         const reference = genererReferenceFacture((last?.n ?? 0) + 1);
-        const montantPaye = input.modePaiement === "credit" ? (input.montantPaye ?? 0) : (input.montantPaye ?? total);
+        const montantPaye = input.modePaiement === "credit" ? (input.montantPaye ?? 0) : (input.montantPaye ?? restant);
 
         const [vente] = await tx
           .insert(ventes)
@@ -1727,55 +1982,193 @@ export const orRouter = createTRPCRouter({
             sessionCaisseId: null,
             modePaiement: input.modePaiement,
             remise: String(remisePourcent > 0 ? Math.round((calculerTotalFacture(lignes as any[], 0) * remisePourcent) / 100) : 0),
-            montantTotal: String(total),
+            montantTotal: String(restant),
             montantPaye: String(montantPaye),
             statut: "termine",
-            notes: input.notes ?? `Facturation OR ${or.numero}`,
+            notes: input.notes ?? `Facturation OR ${or.numero}${dejaFacture > 0 ? ` (complément — reste à facturer ${restant} F)` : ""}`,
           } as any)
           .returning();
 
-        for (const ligne of lignes) {
-          let coutUnitaire: string | null = null;
-          if (ligne.produitId) {
-            const [cmpRow] = await tx
-              .select({ cmup: stocks.coutUnitaireMoyen })
-              .from(stocks)
-              .where(and(eq(stocks.produitId, ligne.produitId), eq(stocks.agenceId, ctx.user.agenceId)))
-              .limit(1);
-            coutUnitaire = cmpRow?.cmup != null ? String(Number(cmpRow.cmup)) : null;
+        if (dejaFacture === 0) {
+          // Première facture : toutes les lignes
+          for (const ligne of lignes) {
+            let coutUnitaire: string | null = null;
+            if (ligne.produitId) {
+              const [cmpRow] = await tx
+                .select({ cmup: stocks.coutUnitaireMoyen })
+                .from(stocks)
+                .where(and(eq(stocks.produitId, ligne.produitId), eq(stocks.agenceId, ctx.user.agenceId)))
+                .limit(1);
+              coutUnitaire = cmpRow?.cmup != null ? String(Number(cmpRow.cmup)) : null;
+            }
+            await tx.insert(ventesLignes).values({
+              venteId: vente.id,
+              produitId: ligne.produitId ?? null,
+              libelle: ligne.libelle,
+              quantite: Number(ligne.quantite),
+              prixUnitaire: String(Number(ligne.prixUnitaire) * (1 + Number(ligne.tva ?? 0) / 100)),
+              totalLigne: String(montantLigne(ligne)),
+              coutUnitaire,
+            } as any);
           }
+        } else {
+          // Complément de facturation : ligne synthétique du restant
           await tx.insert(ventesLignes).values({
             venteId: vente.id,
-            produitId: ligne.produitId ?? null,
-            libelle: ligne.libelle,
-            quantite: Number(ligne.quantite),
-            prixUnitaire: String(Number(ligne.prixUnitaire) * (1 + Number(ligne.tva ?? 0) / 100)),
-            totalLigne: String(montantLigne(ligne)),
-            coutUnitaire,
+            produitId: null,
+            libelle: `Complément de facturation OR ${or.numero} (lignes ajoutées / ajustées)`,
+            quantite: 1,
+            prixUnitaire: String(restant),
+            totalLigne: String(restant),
+            coutUnitaire: null,
           } as any);
         }
 
-await tx
-        .update(ordresReparation)
-        .set({ venteId: vente.id, statut: "LIVRE", dateCloture: new Date(), updatedAt: new Date() } as any)
-        .where(eq(ordresReparation.id, input.id));
-      await tx.update(vehicules).set({ statutImmobilisation: "sorti", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
+        await tx
+          .update(ordresReparation)
+          .set({
+            venteId: or.venteId ?? vente.id,
+            totalFacture: String(dejaFacture + restant),
+            statut: "LIVRE",
+            dateCloture: or.dateCloture ?? new Date(),
+            updatedAt: new Date(),
+          } as any)
+          .where(eq(ordresReparation.id, input.id));
+        await tx.update(vehicules).set({ statutImmobilisation: "sorti", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
 
         // Crédit → dette client (encaissable via Finance → Créances)
-        if (input.modePaiement === "credit" && montantPaye < total) {
+        if (input.modePaiement === "credit" && montantPaye < restant) {
           await tx.insert(dettesClients).values({
             venteId: vente.id,
             clientId: or.clientId ?? null,
             agenceId: ctx.user.agenceId,
-            montantTotal: String(total),
+            montantTotal: String(restant),
             montantPaye: String(montantPaye),
-            montantRestant: String(total - montantPaye),
+            montantRestant: String(restant - montantPaye),
             statut: montantPaye > 0 ? "partiel" : "impaye",
             echeanceLe: new Date(`${calculerEcheance(delaiJours)}T00:00:00`),
           } as any);
         }
 
-        return { venteId: vente.id, reference, montantTotal: total, statut: "LIVRE" };
+        return { venteId: vente.id, reference, montantTotal: restant, statut: "LIVRE", resteAFacturer: totalComplet - (dejaFacture + restant) };
+      }) as any;
+    }),
+
+  // ─── Facturation CUMULATIVE (MVP) : plusieurs OR du même client sur une facture ───
+  facturerGroupe: requirePermissionProcedure("or.facturer")
+    .input(z.object({
+      orIds: z.array(z.number().int()).min(1),
+      modePaiement: z.enum(MODES_PAIEMENT).default("especes"),
+      montantPaye: z.number().min(0).optional(),
+      remisePourcent: z.number().min(0).max(100).optional(),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const ors = await tx
+          .select()
+          .from(ordresReparation)
+          .where(and(inArray(ordresReparation.id, input.orIds), eq(ordresReparation.agenceId, ctx.user.agenceId)));
+        if (ors.length !== input.orIds.length) throw new TRPCError({ code: "BAD_REQUEST", message: "Un des dossiers est introuvable." });
+        const clientsIds = new Set(ors.map((o) => o.clientId).filter(Boolean));
+        if (clientsIds.size > 1) throw new TRPCError({ code: "BAD_REQUEST", message: "La facture groupée exige des dossiers du MÊME client." });
+        for (const o of ors) {
+          if (o.statut === "ferme_definitif") throw new TRPCError({ code: "BAD_REQUEST", message: `Le dossier ${o.numero} est fermé définitivement.` });
+          if (!STATUTS_FACTURABLES.includes(o.statut as any)) throw new TRPCError({ code: "BAD_REQUEST", message: `Le dossier ${o.numero} n'est pas facturable (${o.statut}).` });
+        }
+
+        const clientId = ors[0]?.clientId ?? null;
+        let remisePourcent = input.remisePourcent ?? 0;
+        let delaiJours = 0;
+        const [client] = clientId ? await tx.select({ remiseDefautPct: clients.remiseDefautPct, delaiPaiementJours: clients.delaiPaiementJours, plafondCredit: clients.plafondCredit }).from(clients).where(eq(clients.id, clientId)).limit(1) : [];
+        if (client && remisePourcent === 0) remisePourcent = Number(client.remiseDefautPct ?? 0);
+        if (client) delaiJours = Number(client.delaiPaiementJours ?? 0);
+
+        // Lignes groupées avec sous-total par OR (facturation cumulative et distinguée)
+        const lignesGroupes: { orId: number; numero: string; lignes: any[]; total: number }[] = [];
+        let totalGroupe = 0;
+        for (const o of ors) {
+          if (Number(o.totalFacture ?? 0) > 0) continue; // déjà facturé → exclu du groupe
+          const lignes = await tx.select().from(lignesOrdreReparation).where(eq(lignesOrdreReparation.ordreId, o.id));
+          const totalOr = calculerTotalFacture(lignes as any[], 0);
+          if (totalOr <= 0) continue;
+          lignesGroupes.push({ orId: o.id, numero: o.numero, lignes, total: totalOr });
+          totalGroupe += totalOr;
+        }
+        if (totalGroupe <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Aucun montant à facturer (dossiers déjà facturés)." });
+        const totalAvecRemise = Math.round(totalGroupe * (1 - remisePourcent / 100));
+
+        const [last] = await tx.select({ n: sql<number>`count(*)::int` }).from(ventes).where(sql`${ventes.reference} LIKE ${`FAC-${new Date().getFullYear()}-%`}`);
+        const reference = genererReferenceFacture((last?.n ?? 0) + 1);
+        const montantPaye = input.modePaiement === "credit" ? (input.montantPaye ?? 0) : (input.montantPaye ?? totalAvecRemise);
+
+        if (input.modePaiement === "credit" && client) {
+          const [encoursRow] = await tx.select({ n: sql<number>`COALESCE(SUM(${dettesClients.montantRestant}), 0)::int` }).from(dettesClients).where(eq(dettesClients.clientId, clientId));
+          if (!respectePlafondCredit(Number(encoursRow?.n ?? 0), totalAvecRemise, client.plafondCredit ? Number(client.plafondCredit) : null)) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Plafond de crédit dépassé pour ce client." });
+          }
+        }
+
+        const [vente] = await tx.insert(ventes).values({
+          agenceId: ctx.user.agenceId,
+          reference,
+          operateurId: Number(ctx.user.id),
+          clientId,
+          sessionCaisseId: null,
+          modePaiement: input.modePaiement,
+          remise: String(remisePourcent > 0 ? Math.round(totalGroupe * remisePourcent / 100) : 0),
+          montantTotal: String(totalAvecRemise),
+          montantPaye: String(montantPaye),
+          statut: "termine",
+          notes: input.notes ?? `Facture groupée — ${ors.map((o) => o.numero).join(", ")}`,
+        } as any).returning();
+
+        for (const g of lignesGroupes) {
+          // Sous-total par OR dans les lignes (facturation cumulative et distinguée)
+          await tx.insert(ventesLignes).values({
+            venteId: vente.id,
+            produitId: null,
+            libelle: `═ ${g.numero} — TOTAL INTERVENTION`,
+            quantite: 1,
+            prixUnitaire: String(g.total),
+            totalLigne: String(g.total),
+            coutUnitaire: null,
+          } as any);
+          for (const ligne of g.lignes) {
+            await tx.insert(ventesLignes).values({
+              venteId: vente.id,
+              produitId: ligne.produitId ?? null,
+              libelle: `${g.numero} · ${ligne.libelle}`,
+              quantite: Number(ligne.quantite),
+              prixUnitaire: String(Number(ligne.prixUnitaire) * (1 + Number(ligne.tva ?? 0) / 100)),
+              totalLigne: String(montantLigne(ligne)),
+              coutUnitaire: null,
+            } as any);
+          }
+          await tx.update(ordresReparation).set({
+            venteId: vente.id,
+            totalFacture: String(g.total),
+            statut: "LIVRE",
+            dateCloture: new Date(),
+            updatedAt: new Date(),
+          } as any).where(eq(ordresReparation.id, g.orId));
+          await tx.update(vehicules).set({ statutImmobilisation: "sorti", updatedAt: new Date() } as any).where(eq(vehicules.id, ors.find((o) => o.id === g.orId)!.vehiculeId));
+        }
+
+        if (input.modePaiement === "credit" && montantPaye < totalAvecRemise) {
+          await tx.insert(dettesClients).values({
+            venteId: vente.id,
+            clientId,
+            agenceId: ctx.user.agenceId,
+            montantTotal: String(totalAvecRemise),
+            montantPaye: String(montantPaye),
+            montantRestant: String(totalAvecRemise - montantPaye),
+            statut: montantPaye > 0 ? "partiel" : "impaye",
+            echeanceLe: new Date(`${calculerEcheance(delaiJours)}T00:00:00`),
+          } as any);
+        }
+
+        return { venteId: vente.id, reference, montantTotal: totalAvecRemise, ors: ors.length };
       }) as any;
     }),
 

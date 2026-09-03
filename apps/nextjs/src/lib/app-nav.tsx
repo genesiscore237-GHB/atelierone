@@ -30,6 +30,7 @@ import {
   PackageCheck,
   Building2,
   ClipboardList,
+  ClipboardCheck,
   BookOpen,
   FileText,
   Banknote,
@@ -308,6 +309,14 @@ export const DOMAINS: AppDomain[] = [
     desc: "Cœur métier : véhicules, ordres de réparation, planning",
     href: "/dashboard/atelier",
     modules: [
+      {
+        id: "atelier-reception",
+        label: "Réception véhicule",
+        href: "/dashboard/atelier/reception",
+        icon: ClipboardCheck,
+        desc: "Fiche de réception : véhicule, client, outillage, pannes, photos",
+        moduleId: "atelier",
+      },
       {
         id: "atelier-vehicules",
         label: "Véhicules",

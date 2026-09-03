@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, varchar, text, numeric, timestamp, date, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, varchar, text, numeric, timestamp, date, boolean, jsonb } from "drizzle-orm/pg-core";
 import { agences } from "./agences";
 import { clients } from "./clients";
 import { vehicules } from "./vehicules";
@@ -39,6 +39,7 @@ export const ordresReparation = pgTable("ordres_reparation", {
   totalMainOeuvre: numeric("total_main_oeuvre", { precision: 12, scale: 2 }).default("0"),
   totalTTC: numeric("total_ttc", { precision: 12, scale: 2 }).default("0"),
   venteId: integer("vente_id"),
+  totalFacture: numeric("total_facture", { precision: 12, scale: 2 }).default("0"), // montant déjà facturé (facturation cumulative/restant)
   // Suivi de facturation client (module Client 360° période) :
   // NON_TRANSMISE → TRANSMISE (facture_transmise_le) → attente BC (attente_bon_commande) → attente paiement → avance → payée
   factureTransmiseLe: timestamp("facture_transmise_le"), // date d'envoi de la facture au client
@@ -52,6 +53,21 @@ export const ordresReparation = pgTable("ordres_reparation", {
   satisfactionCommentaire: text("satisfaction_commentaire"),
   creePar: integer("cree_par").references(() => utilisateurs.id),
   notes: text("notes"),
+  // ─── Module Véhicule + Atelier (MVP — fiche de réception) ───
+  typeIntervention: varchar("type_intervention", { length: 30 }).default("ATELIER"), // ATELIER | DEPANNAGE | ENTRETIEN | CARROSSERIE
+  lieuDepannage: varchar("lieu_depannage", { length: 255 }), // lieu d'intervention (dépannage sur site)
+  dateReception: timestamp("date_reception"), // date & heure de réception (défaut = maintenant)
+  kilometrageEntree: integer("kilometrage_entree"),
+  kilometrageSortie: integer("kilometrage_sortie"),
+  niveauCarburantEntree: varchar("niveau_carburant_entree", { length: 20 }), // vide | 1/4 | 1/2 | 3/4 | plein
+  pannesDeclarees: text("pannes_declarees"), // zone « pannes déclarées » de la fiche
+  observationsReception: text("observations_reception"),
+  receptionnisteId: integer("receptionniste_id").references(() => utilisateurs.id),
+  outillage: jsonb("outillage"), // check-list outillage/accessoires : { cric: {present, observation}, ... , autres: "" }
+  signatureDeposant: varchar("signature_deposant", { length: 255 }), // nom tapé du déposant
+  validationVerbale: boolean("validation_verbale").default(false), // « validé verbalement »
+  dateFermeture: timestamp("date_fermeture"), // fermeture définitive du dossier
+  fermeDefinitivementPar: integer("ferme_definitivement_par").references(() => utilisateurs.id),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

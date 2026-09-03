@@ -16,6 +16,7 @@ export const vehicules = pgTable("vehicules", {
   immatriculation: varchar("immatriculation", { length: 50 }).notNull(),
   marque: varchar("marque", { length: 100 }),
   modele: varchar("modele", { length: 100 }),
+  version: varchar("version", { length: 100 }), // version / finition (fiche de réception)
   annee: integer("annee"),
   couleur: varchar("couleur", { length: 50 }),
   numeroChassis: varchar("numero_chassis", { length: 100 }),

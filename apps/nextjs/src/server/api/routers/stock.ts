@@ -1450,7 +1450,7 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Ordre de réparation introuvable." });
-        if (["LIVRE", "ANNULE", "PRET_A_LIVRER", "termine", "facture", "annule"].includes(or.statut)) {
+        if (["LIVRE", "ANNULE", "PRET_A_LIVRER", "ferme_definitif", "termine", "facture", "annule"].includes(or.statut)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de sortir des pièces sur un OR ${or.statut}.` });
         }
 
@@ -1493,6 +1493,7 @@ export const stockRouter = createTRPCRouter({
       uniteId: z.string().optional(),
       emplacementId: z.number().int().optional(),
       motif: z.string().min(3),
+      vehiculeId: z.number().int().optional(), // MVP : une PIÈCE doit être justifiée par un véhicule en réparation
     }))
     .mutation(async ({ ctx, input }) => {
       return db.transaction(async (tx) => {
@@ -1503,6 +1504,13 @@ export const stockRouter = createTRPCRouter({
           .limit(1);
         if (!prod) throw new TRPCError({ code: "BAD_REQUEST", message: "Produit introuvable." });
         if (prod.typeProduit === "SERVICE") throw new TRPCError({ code: "BAD_REQUEST", message: "Un service ne peut pas être sorti du stock." });
+
+        // MVP règle 1.1 : aucune pièce sans justification véhicule en réparation
+        if (prod.typeProduit === "PIECE") {
+          if (!input.vehiculeId) throw new TRPCError({ code: "BAD_REQUEST", message: "Une pièce ne peut pas sortir sans préciser le véhicule en réparation (ou créez un OR pour cette voiture)." });
+          const [veh] = await tx.select({ id: vehicules.id }).from(vehicules).where(and(eq(vehicules.id, input.vehiculeId), eq(vehicules.agenceId, ctx.user.agenceId))).limit(1);
+          if (!veh) throw new TRPCError({ code: "BAD_REQUEST", message: "Véhicule introuvable." });
+        }
 
         await verifierDispoNonPerimee(tx as any, {
           produitId: input.produitId,
@@ -1516,6 +1524,8 @@ export const stockRouter = createTRPCRouter({
           quantite: input.quantite,
           uniteId: input.uniteId,
           emplacementId: input.emplacementId,
+          vehiculeId: input.vehiculeId ?? null,
+          documentLie: input.vehiculeId ? `UTILISATION-VEH-${input.vehiculeId}` : "UTILISATION_INTERNE",
           motif: input.motif,
           effectuePar: Number(ctx.user.id),
         });
@@ -1757,7 +1767,7 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Ordre de réparation introuvable." });
-        if (["LIVRE", "ANNULE", "PRET_A_LIVRER", "termine", "facture", "annule"].includes(or.statut)) {
+        if (["LIVRE", "ANNULE", "PRET_A_LIVRER", "ferme_definitif", "termine", "facture", "annule"].includes(or.statut)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de réserver des pièces sur un OR ${or.statut}.` });
         }
         // Specs V2 §05 règle 8 : on ne réserve pas de stock périmé
@@ -1838,7 +1848,7 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!or) throw new TRPCError({ code: "BAD_REQUEST", message: "Ordre de réparation introuvable." });
-        if (["LIVRE", "ANNULE", "PRET_A_LIVRER", "termine", "facture", "annule"].includes(or.statut)) {
+        if (["LIVRE", "ANNULE", "PRET_A_LIVRER", "ferme_definitif", "termine", "facture", "annule"].includes(or.statut)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de créer un échange sur un OR ${or.statut}.` });
         }
         await verifierDispoNonPerimee(tx as any, {
