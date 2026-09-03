@@ -20,6 +20,12 @@ import {
   orRapportsDiagnostic,
   orDemandesPieces,
   orDemandesPiecesLignes,
+  orInspections,
+  orInspectionPoints,
+  orDevisVersions,
+  orAutorisations,
+  orControlesQualite,
+  orRestitutions,
   retoursFournisseur,
   retoursFournisseurLignes,
   achats,
@@ -282,6 +288,21 @@ export const orRouter = createTRPCRouter({
           clientNom: clients.nom,
           clientPrenom: clients.prenom,
           clientTelephone: clients.telephone,
+          // Données de réception (fiche de réception + cycle de vie)
+          typeIntervention: ordresReparation.typeIntervention,
+          lieuDepannage: ordresReparation.lieuDepannage,
+          dateReception: ordresReparation.dateReception,
+          kilometrageEntree: ordresReparation.kilometrageEntree,
+          kilometrageSortie: ordresReparation.kilometrageSortie,
+          niveauCarburantEntree: ordresReparation.niveauCarburantEntree,
+          pannesDeclarees: ordresReparation.pannesDeclarees,
+          observationsReception: ordresReparation.observationsReception,
+          receptionnisteId: ordresReparation.receptionnisteId,
+          outillage: ordresReparation.outillage,
+          signatureDeposant: ordresReparation.signatureDeposant,
+          validationVerbale: ordresReparation.validationVerbale,
+          totalFacture: ordresReparation.totalFacture,
+          dateFermeture: ordresReparation.dateFermeture,
         })
         .from(ordresReparation)
         .innerJoin(vehicules, eq(ordresReparation.vehiculeId, vehicules.id))
@@ -302,6 +323,12 @@ export const orRouter = createTRPCRouter({
           tva: lignesOrdreReparation.tva,
           totalLigne: lignesOrdreReparation.totalLigne,
           statut: lignesOrdreReparation.statut,
+          statutAutorisation: lignesOrdreReparation.statutAutorisation,
+          origine: lignesOrdreReparation.origine,
+          bloque: lignesOrdreReparation.bloque,
+          raisonBlocageLigne: lignesOrdreReparation.raisonBlocageLigne,
+          technicienId: lignesOrdreReparation.technicienId,
+          dureeHeures: lignesOrdreReparation.dureeHeures,
           produitTitre: produits.titre,
           produitCode: produits.codeArticle,
         })
@@ -683,6 +710,367 @@ export const orRouter = createTRPCRouter({
       return { success: true, numero: or.numero };
     }),
 
+  // ─── DVI — Digital Vehicle Inspection (inspection multi-points, preuve visuelle) ───
+  sauvegarderInspection: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      template: z.string().default("MULTI_POINTS"),
+      titre: z.string().optional(),
+      points: z.array(z.object({
+        groupe: z.string().min(1),
+        libelle: z.string().min(1),
+        statut: z.enum(["OK", "SURVEILLER", "DEFECTUEUX", "URGENT", "NON_INSPECTE"]).default("NON_INSPECTE"),
+        mesure: z.string().optional(),
+        notes: z.string().optional(),
+        photo: z.string().optional(),
+        annotation: z.string().optional(),
+        recommandation: z.string().optional(),
+        priorite: z.enum(["IMMEDIATE", "PROCHE_VISITE", "CONSEIL"]).default("CONSEIL"),
+      })).min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        await verifierDossierOuvert(input.orId, ctx.user.agenceId);
+        const [inspection] = await tx.insert(orInspections).values({
+          orId: input.orId,
+          template: input.template,
+          titre: input.titre ?? "Inspection multi-points",
+          statut: "BROUILLON",
+          technicienId: Number(ctx.user.id),
+        } as any).returning();
+        for (const p of input.points) {
+          await tx.insert(orInspectionPoints).values({
+            inspectionId: inspection.id,
+            groupe: p.groupe,
+            libelle: p.libelle,
+            statut: p.statut,
+            mesure: p.mesure ?? null,
+            notes: p.notes ?? null,
+            photo: p.photo ?? null,
+            annotation: p.annotation ?? null,
+            recommandation: p.recommandation ?? null,
+            priorite: p.priorite,
+          } as any);
+        }
+        return { inspectionId: inspection.id };
+      }) as any;
+    }),
+
+  envoyerInspection: requirePermissionProcedure("or.modifier")
+    .input(z.object({ inspectionId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      const [inspection] = await db.select().from(orInspections).where(eq(orInspections.id, input.inspectionId)).limit(1);
+      if (!inspection) throw new TRPCError({ code: "NOT_FOUND", message: "Inspection introuvable." });
+      if (inspection.statut === "ENVOYE") throw new TRPCError({ code: "BAD_REQUEST", message: "Cette inspection est déjà envoyée (figée)." });
+      await db.update(orInspections).set({ statut: "ENVOYE", envoyeeLe: new Date(), envoyeePar: Number(ctx.user.id) } as any).where(eq(orInspections.id, input.inspectionId));
+      await db.insert(orHistorique).values({
+        orId: inspection.orId,
+        type: "DVI",
+        nouvelleValeur: "ENVOYE",
+        commentaire: `Inspection DVI envoyée (${inspection.titre})`,
+        changePar: Number(ctx.user.id),
+      } as any);
+      return { success: true };
+    }),
+
+  listerInspections: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ input }) => {
+      const inspections = await db.select().from(orInspections).where(eq(orInspections.orId, input.orId)).orderBy(sql`${orInspections.id} DESC`);
+      const ids = inspections.map((i) => i.id);
+      const points = ids.length
+        ? await db.select().from(orInspectionPoints).where(sql`${orInspectionPoints.inspectionId} IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`).orderBy(orInspectionPoints.id)
+        : [];
+      const parInspection = new Map<number, any[]>();
+      for (const p of points) {
+        const cur = parInspection.get(p.inspectionId) ?? [];
+        cur.push(p);
+        parInspection.set(p.inspectionId, cur);
+      }
+      return inspections.map((i) => ({ ...i, points: parInspection.get(i.id) ?? [] }));
+    }),
+
+  convertirPointsEnLignes: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      pointIds: z.array(z.number().int()).min(1),
+      prixUnitaire: z.number().min(0).default(0),
+      type: z.enum(["PIECE", "SERVICE"]).default("SERVICE"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        await verifierDossierOuvert(input.orId, ctx.user.agenceId);
+        const points = await tx.select().from(orInspectionPoints).where(sql`${orInspectionPoints.id} IN (${sql.join(input.pointIds.map((i) => sql`${i}`), sql`, `)})`);
+        for (const p of points) {
+          await tx.insert(lignesOrdreReparation).values({
+            ordreId: input.orId,
+            type: input.type,
+            libelle: `[DVI ${p.groupe}] ${p.libelle}`,
+            quantite: "1",
+            prixUnitaire: String(input.prixUnitaire),
+            tva: "0",
+            totalLigne: String(input.prixUnitaire),
+            statut: "a_faire",
+            statutAutorisation: "PROPOSE",
+            origine: "DVI",
+          } as any);
+        }
+        await tx.insert(orHistorique).values({
+          orId: input.orId,
+          type: "DVI",
+          nouvelleValeur: "LIGNES",
+          commentaire: `Conversion de ${points.length} point(s) DVI en lignes de devis`,
+          changePar: Number(ctx.user.id),
+        } as any);
+        return { lignes: points.length };
+      }) as any;
+    }),
+
+  // ─── Devis versionné + autorisation LIGNE PAR LIGNE (normes DMS) ───
+  creerVersionDevis: requirePermissionProcedure("or.modifier")
+    .input(z.object({ orId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        await verifierDossierOuvert(input.orId, ctx.user.agenceId);
+        const lignes = await tx.select().from(lignesOrdreReparation).where(eq(lignesOrdreReparation.ordreId, input.orId));
+        if (lignes.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Aucune ligne à deviser." });
+        const [dernier] = await tx.select({ v: sql<number>`COALESCE(MAX(${orDevisVersions.version}), 0)::int` }).from(orDevisVersions).where(eq(orDevisVersions.orId, input.orId));
+        const version = (dernier?.v ?? 0) + 1;
+        const total = calculerTotalFacture(lignes as any[], 0);
+        await tx.insert(orDevisVersions).values({
+          orId: input.orId,
+          version,
+          montantHT: String(total),
+          montantTTC: String(total),
+          statut: "BROUILLON",
+          creePar: Number(ctx.user.id),
+        } as any);
+        await tx.insert(orHistorique).values({
+          orId: input.orId,
+          type: "VALIDATION_DEVIS",
+          nouvelleValeur: `v${version}`,
+          commentaire: `Devis v${version} créé (${total} F)`,
+          changePar: Number(ctx.user.id),
+        } as any);
+        return { version };
+      }) as any;
+    }),
+
+  envoyerVersionDevis: requirePermissionProcedure("or.valider")
+    .input(z.object({ devisVersionId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      const [v] = await db.select().from(orDevisVersions).where(eq(orDevisVersions.id, input.devisVersionId)).limit(1);
+      if (!v) throw new TRPCError({ code: "NOT_FOUND", message: "Version introuvable." });
+      if (v.statut === "ENVOYE") throw new TRPCError({ code: "BAD_REQUEST", message: "Cette version est déjà envoyée." });
+      await db.update(orDevisVersions).set({ statut: "ENVOYE", envoyeLe: new Date(), envoyePar: Number(ctx.user.id) } as any).where(eq(orDevisVersions.id, input.devisVersionId));
+      await db.update(ordresReparation).set({ statut: "EN_ATTENTE_VALIDATION", devisAccepte: false, updatedAt: new Date() } as any).where(eq(ordresReparation.id, v.orId));
+      await db.insert(orHistorique).values({
+        orId: v.orId,
+        type: "VALIDATION_DEVIS",
+        nouvelleValeur: "EN_ATTENTE_VALIDATION",
+        commentaire: `Devis v${v.version} envoyé au client`,
+        changePar: Number(ctx.user.id),
+      } as any);
+      return { success: true };
+    }),
+
+  autoriserLignes: requirePermissionProcedure("or.valider")
+    .input(z.object({
+      orId: z.number().int(),
+      devisVersionId: z.number().int().optional(),
+      lignes: z.array(z.object({
+        ligneId: z.number().int(),
+        statut: z.enum(["AUTORISE", "DECLINE", "REPORTE"]),
+      })).min(1),
+      methode: z.enum(["WEB", "SMS", "SIGNATURE", "ORAL", "EMAIL"]).default("ORAL"),
+      qui: z.string().optional(),
+      commentaire: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [or] = await tx.select({ id: ordresReparation.id, statut: ordresReparation.statut }).from(ordresReparation).where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId))).limit(1);
+        if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+        if (or.statut === "ferme_definitif") throw new TRPCError({ code: "BAD_REQUEST", message: "Dossier fermé définitivement." });
+
+        let autorises = 0, declines = 0, reportes = 0;
+        for (const l of input.lignes) {
+          await tx.insert(orAutorisations).values({
+            orId: input.orId,
+            devisVersionId: input.devisVersionId ?? null,
+            ligneId: l.ligneId,
+            statut: l.statut,
+            methode: input.methode,
+            qui: input.qui ?? null,
+            commentaire: input.commentaire ?? null,
+            dateAutorisation: new Date(),
+          } as any);
+          const statutLigne = l.statut === "AUTORISE" ? "AUTORISE" : l.statut === "DECLINE" ? "DECLINE" : "REPORTE";
+          await tx.update(lignesOrdreReparation).set({ statutAutorisation: statutLigne } as any).where(eq(lignesOrdreReparation.id, l.ligneId));
+          if (l.statut === "AUTORISE") autorises++;
+          if (l.statut === "DECLINE") declines++;
+          if (l.statut === "REPORTE") reportes++;
+        }
+
+        // Statut de la version de devis
+        if (input.devisVersionId) {
+          const versionStatut = autorises > 0 && declines === 0 && reportes === 0 ? "AUTORISE_TOTAL" : autorises > 0 ? "AUTORISE_PARTIEL" : "REFUSE";
+          await tx.update(orDevisVersions).set({ statut: versionStatut, dateAutorisation: new Date(), methodeAutorisation: input.methode } as any).where(eq(orDevisVersions.id, input.devisVersionId));
+        }
+
+        // Transition : au moins une ligne autorisée → EN_COURS ; sinon EN_ATTENTE_VALIDATION (refus)
+        if (autorises > 0) {
+          await tx.update(ordresReparation).set({ statut: "EN_COURS", devisAccepte: true, updatedAt: new Date() } as any).where(eq(ordresReparation.id, input.orId));
+        }
+        await tx.insert(orHistorique).values({
+          orId: input.orId,
+          type: "VALIDATION_DEVIS",
+          ancienneValeur: or.statut ?? null,
+          nouvelleValeur: autorises > 0 ? "EN_COURS" : "EN_ATTENTE_VALIDATION",
+          commentaire: `Autorisation client (${input.methode}) : ${autorises} autorisée(s), ${declines} déclinée(s), ${reportes} reportée(s)${input.qui ? ` — ${input.qui}` : ""}`,
+          changePar: Number(ctx.user.id),
+        } as any);
+        return { autorises, declines, reportes };
+      }) as any;
+    }),
+
+  listerDevisVersions: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ input }) => {
+      return db.select().from(orDevisVersions).where(eq(orDevisVersions.orId, input.orId)).orderBy(desc(orDevisVersions.version));
+    }),
+
+  listerAutorisations: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ input }) => {
+      return db
+        .select({
+          id: orAutorisations.id,
+          ligneId: orAutorisations.ligneId,
+          libelle: lignesOrdreReparation.libelle,
+          statut: orAutorisations.statut,
+          methode: orAutorisations.methode,
+          qui: orAutorisations.qui,
+          commentaire: orAutorisations.commentaire,
+          dateAutorisation: orAutorisations.dateAutorisation,
+          devisVersionId: orAutorisations.devisVersionId,
+          version: orDevisVersions.version,
+        })
+        .from(orAutorisations)
+        .leftJoin(lignesOrdreReparation, eq(orAutorisations.ligneId, lignesOrdreReparation.id))
+        .leftJoin(orDevisVersions, eq(orAutorisations.devisVersionId, orDevisVersions.id))
+        .where(eq(orAutorisations.orId, input.orId))
+        .orderBy(desc(orAutorisations.dateAutorisation));
+    }),
+
+  // ─── Contrôle qualité (checklist + essai routier) — normes DMS ───
+  validerControleQualite: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      checklist: z.array(z.object({ libelle: z.string().min(1), ok: z.boolean() })).min(1),
+      essaiRoutier: z.boolean().default(false),
+      distanceEssai: z.string().optional(),
+      observations: z.string().optional(),
+      resultat: z.enum(["VALIDE", "REJETE"]),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        await verifierDossierOuvert(input.orId, ctx.user.agenceId);
+        const [or] = await tx.select({ id: ordresReparation.id, statut: ordresReparation.statut }).from(ordresReparation).where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId))).limit(1);
+        if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+        const nonConformes = input.checklist.filter((c) => !c.ok);
+        if (input.resultat === "VALIDE" && nonConformes.length > 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de valider : ${nonConformes.length} point(s) non conforme(s).` });
+        }
+        await tx.insert(orControlesQualite).values({
+          orId: input.orId,
+          checklist: input.checklist,
+          essaiRoutier: input.essaiRoutier,
+          distanceEssai: input.distanceEssai ?? null,
+          observations: input.observations ?? null,
+          resultat: input.resultat,
+          controlePar: Number(ctx.user.id),
+          dateControle: new Date(),
+        } as any);
+        const nouveauStatut = input.resultat === "VALIDE" ? "PRET_A_LIVRER" : "EN_COURS";
+        await tx.update(ordresReparation).set({ statut: nouveauStatut, updatedAt: new Date() } as any).where(eq(ordresReparation.id, input.orId));
+        await tx.insert(orHistorique).values({
+          orId: input.orId,
+          type: "CONTROLE_QUALITE",
+          ancienneValeur: or.statut ?? null,
+          nouvelleValeur: nouveauStatut,
+          commentaire: `Contrôle qualité ${input.resultat === "VALIDE" ? "validé" : "REJETÉ"}${input.essaiRoutier ? " (essai routier)" : ""}${input.observations ? ` — ${input.observations}` : ""}`,
+          changePar: Number(ctx.user.id),
+        } as any);
+        return { success: true, nouveauStatut };
+      }) as any;
+    }),
+
+  listerControlesQualite: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ input }) => {
+      return db.select().from(orControlesQualite).where(eq(orControlesQualite.orId, input.orId)).orderBy(desc(orControlesQualite.dateControle));
+    }),
+
+  // ─── Restitution (handover) — check-list de sortie + signature, y compris véhicule non réparé ───
+  restituerVehicule: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      kilometrageSortie: z.number().int().min(0),
+      niveauCarburantSortie: z.string().optional(),
+      checklist: z.array(z.object({ libelle: z.string().min(1), ok: z.boolean(), observation: z.string().optional() })).min(1),
+      recuperateurNom: z.string().min(2),
+      signatureClient: z.string().min(2),
+      observations: z.string().optional(),
+      motifNonRepare: z.string().optional(), // REFUS_CLIENT | PIECES_INDISPONIBLES | ABANDON | AUTRE — si non/partiellement réparé
+      travauxNonRealises: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        await verifierDossierOuvert(input.orId, ctx.user.agenceId);
+        const [or] = await tx
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, statut: ordresReparation.statut, vehiculeId: ordresReparation.vehiculeId, dateCloture: ordresReparation.dateCloture })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+        await tx.insert(orRestitutions).values({
+          orId: input.orId,
+          kilometrageSortie: input.kilometrageSortie,
+          niveauCarburantSortie: input.niveauCarburantSortie ?? null,
+          checklist: input.checklist,
+          recuperateurNom: input.recuperateurNom,
+          signatureClient: input.signatureClient,
+          observations: input.observations ?? null,
+          motifNonRepare: input.motifNonRepare ?? null,
+          travauxNonRealises: input.travauxNonRealises ?? null,
+          restituePar: Number(ctx.user.id),
+          dateRestitution: new Date(),
+        } as any);
+        await tx.update(ordresReparation).set({
+          statut: "LIVRE",
+          kilometrageSortie: input.kilometrageSortie,
+          dateCloture: or.dateCloture ?? new Date(),
+          updatedAt: new Date(),
+        } as any).where(eq(ordresReparation.id, input.orId));
+        await tx.update(vehicules).set({ statutImmobilisation: "sorti", kilometrage: input.kilometrageSortie, updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
+        await tx.insert(orHistorique).values({
+          orId: input.orId,
+          type: "RESTITUTION",
+          ancienneValeur: or.statut ?? null,
+          nouvelleValeur: "LIVRE",
+          commentaire: `Véhicule restitué à ${input.recuperateurNom}${input.motifNonRepare ? ` — NON RÉPARÉ (${input.motifNonRepare})` : ""} — km sortie ${input.kilometrageSortie}`,
+          changePar: Number(ctx.user.id),
+        } as any);
+        return { success: true };
+      }) as any;
+    }),
+
+  listerRestitutions: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ input }) => {
+      return db.select().from(orRestitutions).where(eq(orRestitutions.orId, input.orId)).orderBy(desc(orRestitutions.dateRestitution));
+    }),
+
   // ─── Cycle de vie : changement de statut (règles + historique + véhicule) ───
   changerStatut: requirePermissionProcedure("or.modifier")
     .input(z.object({
@@ -881,17 +1269,27 @@ export const orRouter = createTRPCRouter({
       prixUnitaire: z.number().min(0).optional(),
       statut: z.string().optional(),
       technicienId: z.number().int().nullable().optional(),
+      bloque: z.boolean().optional(),
+      raisonBlocageLigne: z.string().optional(),
+      statutAutorisation: z.enum(["PROPOSE", "AUTORISE", "DECLINE", "REPORTE"]).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const { id, ...rest } = input;
       const [ligne] = await db
-        .select({ ordreId: lignesOrdreReparation.ordreId })
+        .select({ ordreId: lignesOrdreReparation.ordreId, libelle: lignesOrdreReparation.libelle })
         .from(lignesOrdreReparation)
         .where(eq(lignesOrdreReparation.id, id))
         .limit(1);
       if (!ligne) throw new TRPCError({ code: "BAD_REQUEST", message: "Ligne introuvable." });
       await verifierDossierOuvert(ligne.ordreId, ctx.user.agenceId);
       await db.update(lignesOrdreReparation).set(rest as any).where(eq(lignesOrdreReparation.id, id));
+      // Audit : modification de ligne tracée (qui, quand, quoi)
+      await db.insert(orHistorique).values({
+        orId: ligne.ordreId,
+        type: "LIGNE",
+        commentaire: `Ligne modifiée : ${ligne.libelle} (${Object.keys(rest).join(", ")})`,
+        changePar: Number(ctx.user.id),
+      } as any);
       await recalculerTotaux(ctx.user.agenceId, ligne.ordreId);
       return { success: true };
     }),
@@ -900,12 +1298,18 @@ export const orRouter = createTRPCRouter({
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       const [ligne] = await db
-        .select({ ordreId: lignesOrdreReparation.ordreId })
+        .select({ ordreId: lignesOrdreReparation.ordreId, libelle: lignesOrdreReparation.libelle })
         .from(lignesOrdreReparation)
         .where(eq(lignesOrdreReparation.id, input.id))
         .limit(1);
       if (!ligne) throw new TRPCError({ code: "BAD_REQUEST", message: "Ligne introuvable." });
       await verifierDossierOuvert(ligne.ordreId, ctx.user.agenceId);
+      await db.insert(orHistorique).values({
+        orId: ligne.ordreId,
+        type: "LIGNE",
+        commentaire: `Ligne supprimée : ${ligne.libelle}`,
+        changePar: Number(ctx.user.id),
+      } as any);
       await db.delete(lignesOrdreReparation).where(eq(lignesOrdreReparation.id, input.id));
       if (ligne) await recalculerTotaux(ctx.user.agenceId, ligne.ordreId);
       return { success: true };
@@ -963,6 +1367,8 @@ export const orRouter = createTRPCRouter({
       orId: z.number().int(),
       constat: z.string().min(3),
       cause: z.string().optional(),
+      codesDTC: z.string().optional(),
+      tests: z.string().optional(),
       lignes: z.array(z.object({
         type: z.enum(["PIECE", "SERVICE"]).default("PIECE"),
         produitId: z.number().int().optional(),
@@ -986,7 +1392,7 @@ export const orRouter = createTRPCRouter({
         }
         const [rapport] = await tx
           .insert(orRapportsDiagnostic)
-          .values({ orId: input.orId, technicienId: Number(ctx.user.id) ?? null, constat: input.constat, cause: input.cause ?? null, statut: "SOUMIS", dateSoumission: new Date() } as any)
+          .values({ orId: input.orId, technicienId: Number(ctx.user.id) ?? null, constat: input.constat, cause: input.cause ?? null, codesDTC: input.codesDTC ?? null, tests: input.tests ?? null, statut: "SOUMIS", dateSoumission: new Date() } as any)
           .returning();
         let order = 0;
         for (const l of input.lignes) {
@@ -1001,6 +1407,8 @@ export const orRouter = createTRPCRouter({
             totalLigne: String(l.quantite * l.prixUnitaire * (1 + l.tva / 100)),
             rapportId: rapport.id,
             statut: "a_faire",
+            origine: "DIAGNOSTIC",
+            statutAutorisation: "PROPOSE",
           } as any);
         }
         await tx.update(ordresReparation).set({ statut: "EN_ATTENTE_VALIDATION_DIAGNOSTIC", updatedAt: new Date() } as any).where(eq(ordresReparation.id, input.orId));
@@ -1783,6 +2191,7 @@ export const orRouter = createTRPCRouter({
       dureeHeures: z.number().min(0).max(24).optional(),
       description: z.string().optional(),
       ligneId: z.number().int().optional(),
+      heureFin: z.boolean().optional(), // timer : terminer le pointage en cours
     }))
     .mutation(async ({ ctx, input }) => {
       const [or] = await db
@@ -1791,6 +2200,25 @@ export const orRouter = createTRPCRouter({
         .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
         .limit(1);
       if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      if (input.heureFin) {
+        // Timer : terminer le pointage en cours (heureFin = maintenant, durée calculée)
+        const [open] = await db
+          .select({ id: interventionsTechniciens.id, heureDebut: interventionsTechniciens.heureDebut })
+          .from(interventionsTechniciens)
+          .where(and(eq(interventionsTechniciens.ordreId, input.orId), eq(interventionsTechniciens.technicienId, input.technicienId), sql`${interventionsTechniciens.heureFin} IS NULL`))
+          .orderBy(desc(interventionsTechniciens.id))
+          .limit(1);
+        if (!open) throw new TRPCError({ code: "BAD_REQUEST", message: "Aucun pointage en cours pour ce technicien." });
+        const duree = Math.max(0.1, (new Date().getTime() - new Date(open.heureDebut).getTime()) / 3600000);
+        await db.update(interventionsTechniciens).set({ heureFin: new Date(), dureeHeures: String(Math.round(duree * 100) / 100) } as any).where(eq(interventionsTechniciens.id, open.id));
+        await db.insert(orHistorique).values({
+          orId: input.orId,
+          type: "TEMPS",
+          commentaire: `Pointage terminé — technicien ${input.technicienId} (${Math.round(duree * 100) / 100} h)`,
+          changePar: Number(ctx.user.id),
+        } as any);
+        return { id: open.id, dureeHeures: Math.round(duree * 100) / 100 };
+      }
       const [row] = await db
         .insert(interventionsTechniciens)
         .values({
@@ -1804,6 +2232,12 @@ export const orRouter = createTRPCRouter({
           heureDebut: new Date(),
         } as any)
         .returning();
+      await db.insert(orHistorique).values({
+        orId: input.orId,
+        type: "TEMPS",
+        commentaire: `Pointage démarré — technicien ${input.technicienId}${input.ligneId ? ` (ligne #${input.ligneId})` : ""}${input.description ? ` — ${input.description}` : ""}`,
+        changePar: Number(ctx.user.id),
+      } as any);
       return row;
     }),
 

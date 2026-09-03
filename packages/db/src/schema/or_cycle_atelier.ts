@@ -44,12 +44,16 @@ export const kpiCibles = pgTable("kpi_cibles", {
 export const orRapportsDiagnostic = pgTable("or_rapports_diagnostic", {
   id: serial("id").primaryKey(),
   orId: integer("or_id").notNull().references(() => ordresReparation.id, { onDelete: "cascade" }),
-  technicienId: integer("technicien_id").references(() => employes.id),
-  constat: text("constat"),
+  technicienId: integer("technicien_id"),
+  constat: text("constat").notNull(),
   cause: text("cause"),
+  // Diagnostic approfondi (normes DMS) : codes défaut DTC + tests effectués
+  codesDTC: text("codes_dtc"),
+  tests: text("tests"),
+  inspectionId: integer("inspection_id"), // lien vers le DVI concerné
   statut: varchar("statut", { length: 20 }).default("BROUILLON"), // BROUILLON | SOUMIS | VALIDE | RETOURNE
   dateSoumission: timestamp("date_soumission"),
-  validePar: integer("valide_par").references(() => employes.id),
+  validePar: integer("valide_par"),
   valideLe: timestamp("valide_le"),
   commentaireValidateur: text("commentaire_validateur"),
   createdAt: timestamp("created_at").defaultNow(),

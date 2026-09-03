@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   Car,
   ClipboardList,
+  X,
   Package,
   Plus,
   Search,
@@ -611,8 +612,6 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
 
       <CycleAtelierSections or={or} id={id} />
 
-<CycleAtelierSections or={or} id={id} />
-
       {/* E5/E4 — Accusé de réception client + marge */}
       <AccuseReceptionBlock or={or} id={id} />
 
@@ -964,6 +963,60 @@ function CycleAtelierSections({ or, id }: { or: any; id: number }) {
   const cmd = (commandes ?? []) as any[];
   const ret = (retours ?? []) as any[];
 
+  // Cycle de vie complet (DMS) : DVI, devis versionné + autorisation ligne par ligne, QC, restitution
+  const { data: inspections } = api.or.listerInspections.useQuery({ orId: id }, { enabled: !!id });
+  const { data: devisVersions } = api.or.listerDevisVersions.useQuery({ orId: id }, { enabled: !!id });
+  const { data: autorisations } = api.or.listerAutorisations.useQuery({ orId: id }, { enabled: !!id });
+  const { data: controles } = api.or.listerControlesQualite.useQuery({ orId: id }, { enabled: !!id });
+  const { data: restitutions } = api.or.listerRestitutions.useQuery({ orId: id }, { enabled: !!id });
+  const [showDvi, setShowDvi] = useState(false);
+  const [dviForm, setDviForm] = useState<{ groupe: string; libelle: string; statut: string; mesure: string; notes: string; priorite: string }>({ groupe: "Extérieur", libelle: "", statut: "OK", mesure: "", notes: "", priorite: "CONSEIL" });
+  const [dviPoints, setDviPoints] = useState<Array<{ groupe: string; libelle: string; statut: string; mesure: string; notes: string; priorite: string }>>([]);
+  const [autorisationLignes, setAutorisationLignes] = useState<Record<number, string>>({});
+  const [methodeAutorisation, setMethodeAutorisation] = useState("ORAL");
+  const [quiAutorisation, setQuiAutorisation] = useState("");
+  const [showQc, setShowQc] = useState(false);
+  const [qcChecklist, setQcChecklist] = useState<Array<{ libelle: string; ok: boolean }>>([
+    { libelle: "Travaux conformes au devis autorisé", ok: false },
+    { libelle: "Niveaux de liquides", ok: false },
+    { libelle: "Absence de fuite", ok: false },
+    { libelle: "Codes défaut effacés / recontrôlés", ok: false },
+    { libelle: "Essai des systèmes réparés", ok: false },
+    { libelle: "Propreté intérieure / extérieure", ok: false },
+    { libelle: "Outils et protections retirés", ok: false },
+  ]);
+  const [qcEssai, setQcEssai] = useState(false);
+  const [qcObservations, setQcObservations] = useState("");
+  const [showRestitution, setShowRestitution] = useState(false);
+  const [restitForm, setRestitForm] = useState<{ kilometrageSortie: string; carburantSortie: string; recuperateur: string; signature: string; motifNonRepare: string; travauxNonRealises: string; observations: string; checklist: Array<{ libelle: string; ok: boolean }> }>({
+    kilometrageSortie: "", carburantSortie: "", recuperateur: "", signature: "", motifNonRepare: "", travauxNonRealises: "", observations: "",
+    checklist: [
+      { libelle: "Outillage / accessoires vérifiés (vs entrée)", ok: false },
+      { libelle: "Clés (nombre de jeux rendus)", ok: false },
+      { libelle: "Documents du véhicule (carte grise, assurance…)", ok: false },
+      { libelle: "Anciennes pièces remises si demandé", ok: false },
+      { libelle: "Propreté OK", ok: false },
+      { libelle: "Objets personnels remis", ok: false },
+    ],
+  });
+  const sauverInspection = api.or.sauvegarderInspection.useMutation({
+    onSuccess: () => { toast.success("Inspection DVI enregistrée"); invalidateAll(); setShowDvi(false); setDviPoints([]); },
+    onError: (e) => toast.error(e.message),
+  });
+  const envoyerInspection = api.or.envoyerInspection.useMutation({ onSuccess: () => { toast.success("Inspection envoyée (figée)"); invalidateAll(); }, onError: (e) => toast.error(e.message) });
+  const convertirPoints = api.or.convertirPointsEnLignes.useMutation({
+    onSuccess: (r) => { toast.success(`${r.lignes} recommandation(s) converties en lignes de devis`); invalidateAll(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const creerVersion = api.or.creerVersionDevis.useMutation({ onSuccess: (r) => { toast.success(`Devis v${r.version} créé`); invalidateAll(); }, onError: (e) => toast.error(e.message) });
+  const envoyerVersion = api.or.envoyerVersionDevis.useMutation({ onSuccess: () => { toast.success("Devis envoyé au client"); invalidateAll(); }, onError: (e) => toast.error(e.message) });
+  const autoriser = api.or.autoriserLignes.useMutation({
+    onSuccess: (r) => { toast.success(`Autorisation : ${r.autorises} autorisée(s), ${r.declines} déclinée(s), ${r.reportes} reportée(s)`); invalidateAll(); setAutorisationLignes({}); },
+    onError: (e) => toast.error(e.message),
+  });
+  const validerQc = api.or.validerControleQualite.useMutation({ onSuccess: (r) => { toast.success(r.resultat === "VALIDE" ? "Contrôle qualité validé — prêt pour restitution" : "Contrôle rejeté — retour en travaux"); invalidateAll(); setShowQc(false); }, onError: (e) => toast.error(e.message) });
+  const restituer = api.or.restituerVehicule.useMutation({ onSuccess: () => { toast.success("Véhicule restitué — dossier livré"); invalidateAll(); setShowRestitution(false); }, onError: (e) => toast.error(e.message) });
+
   return (
     <div className="space-y-4">
       {/* Diagnostic & devis */}
@@ -1008,6 +1061,149 @@ function CycleAtelierSections({ or, id }: { or: any; id: number }) {
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">Aucun rapport de diagnostic. Le technicien qualifié soumet son constat, ses préconisations et les pièces nécessaires.</p>
+        )}
+      </div>
+
+      {/* Inspection DVI (Digital Vehicle Inspection) */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Inspection DVI (preuve visuelle)</h3>
+          {canModifier && <Button size="sm" variant="outline" onClick={() => setShowDvi(true)}>Nouvelle inspection</Button>}
+        </div>
+        {(inspections ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucune inspection. L'inspection multi-points avec photos sert de preuve visuelle pour l'autorisation client.</p>
+        ) : (
+          <div className="space-y-2">
+            {(inspections ?? []).map((insp: any) => (
+              <div key={insp.id} className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${insp.statut === "ENVOYE" ? "bg-sky-500/15 text-sky-400" : "bg-muted text-muted-foreground"}`}>{insp.statut}</span>
+                  <span className="font-semibold">{insp.titre}</span>
+                  {insp.statut !== "ENVOYE" && canModifier && <Button size="sm" variant="outline" className="ml-auto h-6 px-2 text-[10px]" onClick={() => envoyerInspection.mutate({ inspectionId: insp.id })}>Envoyer (figer)</Button>}
+                </div>
+                <div className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
+                  {(insp.points ?? []).map((p: any) => (
+                    <div key={p.id} className={`flex items-center gap-2 rounded px-2 py-1 text-xs ${p.statut === "URGENT" ? "bg-destructive/10 text-destructive" : p.statut === "DEFECTUEUX" ? "bg-orange-500/10 text-orange-600" : p.statut === "SURVEILLER" ? "bg-warning/10 text-warning-foreground" : ""}`}>
+                      <span className={`size-2 shrink-0 rounded-full ${p.statut === "OK" ? "bg-success" : p.statut === "SURVEILLER" ? "bg-warning" : p.statut === "URGENT" ? "bg-destructive" : p.statut === "DEFECTUEUX" ? "bg-orange-500" : "bg-muted"}`} />
+                      <span className="font-semibold">[{p.groupe}]</span> {p.libelle}
+                      {p.mesure && <span className="font-mono text-[10px] text-muted-foreground">· {p.mesure}</span>}
+                      {p.notes && <span className="text-muted-foreground">· {p.notes}</span>}
+                    </div>
+                  ))}
+                </div>
+                {insp.statut === "BROUILLON" && (insp.points ?? []).some((p: any) => p.statut === "DEFECTUEUX" || p.statut === "URGENT") && canModifier && (
+                  <Button size="sm" variant="outline" className="mt-2 h-6 px-2 text-[10px]" onClick={() => convertirPoints.mutate({ orId: id, pointIds: (insp.points ?? []).filter((p: any) => p.statut === "DEFECTUEUX" || p.statut === "URGENT").map((p: any) => p.id), prixUnitaire: 0 })}>
+                    Convertir les défauts en lignes de devis
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Devis : versions + autorisation ligne par ligne */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Devis (versions) & autorisation ligne par ligne</h3>
+          <div className="flex gap-2">
+            {canModifier && <Button size="sm" variant="outline" onClick={() => creerVersion.mutate({ orId: id })}>Créer une version</Button>}
+            {(devisVersions ?? []).length > 0 && canValider && (or.statut === "EN_ATTENTE_VALIDATION" || (devisVersions ?? []).some((v: any) => v.statut === "BROUILLON")) && (
+              <Button size="sm" variant="outline" onClick={() => envoyerVersion.mutate({ devisVersionId: (devisVersions ?? []).find((v: any) => v.statut !== "ENVOYE" && v.statut !== "AUTORISE_TOTAL" && v.statut !== "AUTORISE_PARTIEL" && v.statut !== "REFUSE")?.id ?? (devisVersions ?? [])[0].id })}>
+                Envoyer la version
+              </Button>
+            )}
+          </div>
+        </div>
+        {(devisVersions ?? []).length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-2">
+            {(devisVersions ?? []).map((v: any) => (
+              <span key={v.id} className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${v.statut === "AUTORISE_TOTAL" ? "bg-success/15 text-success-foreground" : v.statut === "AUTORISE_PARTIEL" ? "bg-warning/15 text-warning-foreground" : v.statut === "REFUSE" ? "bg-destructive/15 text-destructive" : v.statut === "ENVOYE" ? "bg-sky-500/15 text-sky-400" : "bg-muted text-muted-foreground"}`}>
+                v{v.version} — {v.statut} — {Number(v.montantTTC).toLocaleString("fr-FR")} F
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="space-y-1.5">
+          {((or.lignes ?? []) as any[]).map((l: any) => (
+            <div key={l.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-1.5 text-xs">
+              <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase ${l.statutAutorisation === "AUTORISE" ? "bg-success/15 text-success-foreground" : l.statutAutorisation === "DECLINE" ? "bg-destructive/15 text-destructive" : l.statutAutorisation === "REPORTE" ? "bg-warning/15 text-warning-foreground" : "bg-muted text-muted-foreground"}`}>{l.statutAutorisation}</span>
+              <span className={`font-semibold ${l.statutAutorisation === "DECLINE" ? "line-through opacity-60" : ""}`}>{l.libelle}</span>
+              <span className="font-mono text-muted-foreground">{Number(l.quantite)} × {Number(l.prixUnitaire).toLocaleString("fr-FR")} F</span>
+              <span className="text-[10px] text-muted-foreground">· {l.origine}</span>
+              {l.statutAutorisation === "DECLINE" && <span className="text-[10px] italic text-muted-foreground">travail décliné (conservé dans l'historique)</span>}
+              {canValider && or.statut === "EN_ATTENTE_VALIDATION" && (
+                <select
+                  value={autorisationLignes[l.id] ?? ""}
+                  onChange={(e) => setAutorisationLignes({ ...autorisationLignes, [l.id]: e.target.value })}
+                  className="ml-auto h-7 rounded border border-border bg-background px-2 text-[11px]"
+                >
+                  <option value="">— autoriser —</option>
+                  <option value="AUTORISE">Autoriser</option>
+                  <option value="DECLINE">Décliner</option>
+                  <option value="REPORTE">Reporter</option>
+                </select>
+              )}
+            </div>
+          ))}
+        </div>
+        {canValider && or.statut === "EN_ATTENTE_VALIDATION" && Object.keys(autorisationLignes).length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+            <select value={methodeAutorisation} onChange={(e) => setMethodeAutorisation(e.target.value)} className="h-8 rounded border border-border bg-background px-2 text-xs">
+              {["ORAL", "SIGNATURE", "SMS", "WEB", "EMAIL"].map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <input value={quiAutorisation} onChange={(e) => setQuiAutorisation(e.target.value)} placeholder="Qui a autorisé (client) ?" className="h-8 w-52 rounded border border-border bg-background px-2 text-xs" />
+            <Button size="sm" onClick={() => autoriser.mutate({ orId: id, devisVersionId: ((devisVersions ?? []) as any[])[0]?.id, lignes: Object.entries(autorisationLignes).map(([ligneId, statut]) => ({ ligneId: Number(ligneId), statut: statut as any })), methode: methodeAutorisation as any, qui: quiAutorisation || undefined })}>
+              Enregistrer l'autorisation
+            </Button>
+          </div>
+        )}
+        {(autorisations ?? []).length > 0 && (
+          <div className="mt-2 text-[10px] text-muted-foreground">
+            Historique des autorisations : {(autorisations ?? []).slice(0, 6).map((a: any) => `${a.libelle} → ${a.statut} (${a.methode}${a.qui ? `, ${a.qui}` : ""})`).join(" · ")}
+          </div>
+        )}
+      </div>
+
+      {/* Contrôle qualité */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Contrôle qualité (QC)</h3>
+          {canModifier && (or.statut === "EN_COURS" || or.statut === "CONTROLE_QUALITE") && <Button size="sm" variant="outline" onClick={() => setShowQc(true)}>Saisir le contrôle</Button>}
+        </div>
+        {(controles ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucun contrôle. Un véhicule ne doit pas être restitué sans contrôle qualité formalisé.</p>
+        ) : (
+          <div className="space-y-1">
+            {(controles ?? []).map((qc: any) => (
+              <div key={qc.id} className="rounded-lg border border-border/60 bg-muted/20 px-3 py-1.5 text-xs">
+                <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase ${qc.resultat === "VALIDE" ? "bg-success/15 text-success-foreground" : "bg-destructive/15 text-destructive"}`}>{qc.resultat}</span>
+                <span className="ml-1">contrôle du {new Date(qc.dateControle).toLocaleString("fr-FR")}{qc.essaiRoutier ? " · essai routier" : ""}</span>
+                {qc.observations && <span className="text-muted-foreground"> · {qc.observations}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Restitution (handover) */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Restitution du véhicule</h3>
+          {canModifier && or.statut === "PRET_A_LIVRER" && <Button size="sm" variant="outline" onClick={() => setShowRestitution(true)}>Restituer le véhicule</Button>}
+        </div>
+        {(restitutions ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucune restitution. La check-list de sortie (km, carburant, outillage, clés, documents) et la signature client sont obligatoires.</p>
+        ) : (
+          <div className="space-y-1">
+            {(restitutions ?? []).map((r: any) => (
+              <div key={r.id} className="rounded-lg border border-border/60 bg-muted/20 px-3 py-1.5 text-xs">
+                <span className="font-semibold">{r.recuperateurNom}</span> · km sortie <b className="font-mono">{r.kilometrageSortie}</b>{r.niveauCarburantSortie ? ` · carburant ${r.niveauCarburantSortie}` : ""}
+                {r.motifNonRepare && <span className="ml-1 rounded-full bg-destructive/15 px-1.5 py-0.5 text-[9px] font-bold uppercase text-destructive">NON RÉPARÉ — {r.motifNonRepare}</span>}
+                <span className="block text-[10px] text-muted-foreground">signé par {r.signatureClient} le {new Date(r.dateRestitution).toLocaleString("fr-FR")}</span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
@@ -1337,6 +1533,112 @@ function CycleAtelierSections({ or, id }: { or: any; id: number }) {
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setConfirmRefus(false)}>Annuler</Button>
               <Button className="bg-destructive text-destructive-foreground" disabled={refusMotif.trim().length < 3} onClick={() => validerDevis.mutate({ orId: id, accepte: false, motif: refusMotif.trim() })}>Refuser</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal : nouvelle inspection DVI */}
+      {showDvi && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowDvi(false)}>
+          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-3 text-lg font-bold text-foreground">Inspection DVI — ajouter des points</h3>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <select value={dviForm.groupe} onChange={(e) => setDviForm({ ...dviForm, groupe: e.target.value })} className="h-9 rounded-lg border border-border bg-background px-2 text-sm">
+                {["Extérieur", "Moteur", "Habitacle", "Freinage", "Pneumatiques", "Suspension", "Éclairage", "Autre"].map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+              <input value={dviForm.libelle} onChange={(e) => setDviForm({ ...dviForm, libelle: e.target.value })} placeholder="Point inspecté *" className="h-9 rounded-lg border border-border bg-background px-2 text-sm" />
+              <select value={dviForm.statut} onChange={(e) => setDviForm({ ...dviForm, statut: e.target.value })} className="h-9 rounded-lg border border-border bg-background px-2 text-sm">
+                {["OK", "SURVEILLER", "DEFECTUEUX", "URGENT", "NON_INSPECTE"].map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <div className="flex gap-2">
+                <input value={dviForm.mesure} onChange={(e) => setDviForm({ ...dviForm, mesure: e.target.value })} placeholder="Mesure" className="h-9 w-full rounded-lg border border-border bg-background px-2 text-sm" />
+                <Button size="icon" className="h-9 w-9 shrink-0" onClick={() => { if (!dviForm.libelle.trim()) return; setDviPoints([...dviPoints, { ...dviForm, libelle: dviForm.libelle.trim() }]); setDviForm({ groupe: dviForm.groupe, libelle: "", statut: "OK", mesure: "", notes: "", priorite: "CONSEIL" }); }}><Plus className="size-4" /></Button>
+              </div>
+            </div>
+            {dviPoints.length > 0 && (
+              <div className="mt-3 space-y-1">
+                {dviPoints.map((p, i) => (
+                  <div key={i} className="flex items-center gap-2 rounded-lg bg-muted/20 px-3 py-1.5 text-xs">
+                    <span className={`size-2 shrink-0 rounded-full ${p.statut === "OK" ? "bg-success" : p.statut === "SURVEILLER" ? "bg-warning" : p.statut === "URGENT" ? "bg-destructive" : p.statut === "DEFECTUEUX" ? "bg-orange-500" : "bg-muted"}`} />
+                    <span className="font-semibold">[{p.groupe}]</span> {p.libelle}{p.mesure ? ` — ${p.mesure}` : ""}
+                    <Button size="sm" variant="ghost" className="ml-auto h-6 px-1" onClick={() => setDviPoints(dviPoints.filter((_, j) => j !== i))}><X className="size-3" /></Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowDvi(false)}>Annuler</Button>
+              <Button disabled={dviPoints.length === 0 || sauverInspection.isPending} onClick={() => sauverInspection.mutate({ orId: id, template: "MULTI_POINTS", points: dviPoints as any })}>
+                Enregistrer l'inspection
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal : contrôle qualité */}
+      {showQc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowQc(false)}>
+          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-3 text-lg font-bold text-foreground">Contrôle qualité</h3>
+            <div className="space-y-1.5">
+              {qcChecklist.map((c, i) => (
+                <label key={i} className="flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
+                  <input type="checkbox" checked={c.ok} onChange={(e) => setQcChecklist(qcChecklist.map((x, j) => (j === i ? { ...x, ok: e.target.checked } : x)))} className="size-4 accent-primary" />
+                  {c.libelle}
+                </label>
+              ))}
+            </div>
+            <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={qcEssai} onChange={(e) => setQcEssai(e.target.checked)} className="size-4 accent-primary" /> Essai routier effectué</label>
+            <input value={qcObservations} onChange={(e) => setQcObservations(e.target.value)} placeholder="Observations" className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowQc(false)}>Annuler</Button>
+              <Button variant="destructive" className="mr-auto" onClick={() => validerQc.mutate({ orId: id, checklist: qcChecklist, essaiRoutier: qcEssai, observations: qcObservations || undefined, resultat: "REJETE" })}>Rejeter (retour travaux)</Button>
+              <Button disabled={qcChecklist.some((c) => !c.ok)} onClick={() => validerQc.mutate({ orId: id, checklist: qcChecklist, essaiRoutier: qcEssai, observations: qcObservations || undefined, resultat: "VALIDE" })}>Valider le contrôle</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal : restitution */}
+      {showRestitution && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowRestitution(false)}>
+          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-3 text-lg font-bold text-foreground">Restitution du véhicule</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="text-xs text-muted-foreground">Kilométrage de sortie *</Label><Input type="number" value={restitForm.kilometrageSortie} onChange={(e) => setRestitForm({ ...restitForm, kilometrageSortie: e.target.value })} /></div>
+              <div><Label className="text-xs text-muted-foreground">Niveau carburant</Label>
+                <select value={restitForm.carburantSortie} onChange={(e) => setRestitForm({ ...restitForm, carburantSortie: e.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm">
+                  <option value="">—</option>{["vide", "1/4", "1/2", "3/4", "plein"].map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+              <div><Label className="text-xs text-muted-foreground">Récupérateur (si différent du propriétaire)</Label><Input value={restitForm.recuperateur} onChange={(e) => setRestitForm({ ...restitForm, recuperateur: e.target.value })} /></div>
+              <div><Label className="text-xs text-muted-foreground">Signature client *</Label><Input value={restitForm.signature} onChange={(e) => setRestitForm({ ...restitForm, signature: e.target.value })} placeholder="Nom tapé" /></div>
+            </div>
+            <div className="mt-3 space-y-1.5">
+              {restitForm.checklist.map((c, i) => (
+                <label key={i} className="flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm">
+                  <input type="checkbox" checked={c.ok} onChange={(e) => setRestitForm({ ...restitForm, checklist: restitForm.checklist.map((x, j) => (j === i ? { ...x, ok: e.target.checked } : x)) })} className="size-4 accent-primary" />
+                  {c.libelle}
+                </label>
+              ))}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div><Label className="text-xs text-muted-foreground">Motif si NON réparé</Label>
+                <select value={restitForm.motifNonRepare} onChange={(e) => setRestitForm({ ...restitForm, motifNonRepare: e.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm">
+                  <option value="">Véhicule réparé</option>
+                  {["REFUS_CLIENT", "PIECES_INDISPONIBLES", "ABANDON", "AUTRE"].map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div><Label className="text-xs text-muted-foreground">Travaux non réalisés</Label><Input value={restitForm.travauxNonRealises} onChange={(e) => setRestitForm({ ...restitForm, travauxNonRealises: e.target.value })} /></div>
+            </div>
+            <input value={restitForm.observations} onChange={(e) => setRestitForm({ ...restitForm, observations: e.target.value })} placeholder="Observations" className="mt-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowRestitution(false)}>Annuler</Button>
+              <Button disabled={!Number(restitForm.kilometrageSortie) || restitForm.signature.trim().length < 2 || restitForm.checklist.some((c) => !c.ok)} onClick={() => restituer.mutate({ orId: id, kilometrageSortie: Number(restitForm.kilometrageSortie), niveauCarburantSortie: restitForm.carburantSortie || undefined, checklist: restitForm.checklist, recuperateurNom: restitForm.recuperateur.trim() || restitForm.signature.trim(), signatureClient: restitForm.signature.trim(), observations: restitForm.observations || undefined, motifNonRepare: restitForm.motifNonRepare || undefined, travauxNonRealises: restitForm.travauxNonRealises || undefined })}>
+                Restituer le véhicule
+              </Button>
             </div>
           </div>
         </div>

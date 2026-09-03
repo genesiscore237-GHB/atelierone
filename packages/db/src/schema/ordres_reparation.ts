@@ -88,7 +88,13 @@ export const lignesOrdreReparation = pgTable("lignes_ordre_reparation", {
 technicienId: integer("technicien_id").references(() => employes.id),
   dureeHeures: numeric("duree_heures", { precision: 6, scale: 2 }),
   statut: varchar("statut", { length: 30 }).default("a_faire"), // a_faire | en_cours | fait | valide
-  rapportId: integer("rapport_id"), // lien vers or_rapports_diagnostic (préconisations du diagnostic)
+rapportId: integer("rapport_id"), // lien vers or_rapports_diagnostic (préconisations du diagnostic)
+  // Cycle de vie complet (DMS 2026) :
+  // autorisation ligne par ligne + origine + blocage de ligne
+  statutAutorisation: varchar("statut_autorisation", { length: 20 }).default("PROPOSE"), // PROPOSE | AUTORISE | DECLINE | REPORTE
+  origine: varchar("origine", { length: 30 }).default("CLIENT"), // DVI | DIAGNOSTIC | CLIENT | DECOUVERT
+  bloque: boolean("bloque").default(false),
+  raisonBlocageLigne: text("raison_blocage_ligne"), // raison si ligne bloquée (attente pièces, validation…)
   // specs MVP — validation admin par ligne : l'extra n'est compté que si validé
   fournieParClient: boolean("fournie_par_client").default(false),
   remiseAuClient: boolean("remise_au_client").default(false),
