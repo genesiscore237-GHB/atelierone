@@ -30,6 +30,7 @@ export const SOCLE_PERMISSIONS = [
   { code: "stock.consulter", nom: "Consulter le stock", module: "stock" },
   { code: "stock.modifier", nom: "Modifier le stock", module: "stock" },
   { code: "stock.inventaire", nom: "Effectuer un inventaire", module: "stock" },
+  { code: "stock.utiliser", nom: "Prêter / retourner les outils et doter les consommables", module: "stock" },
   // Caisse
   { code: "caisse.ouvrir", nom: "Ouvrir la caisse", module: "caisse" },
   { code: "caisse.fermer", nom: "Fermer la caisse", module: "caisse" },
@@ -52,6 +53,12 @@ export const SOCLE_PERMISSIONS = [
   { code: "or.valider", nom: "Valider les travaux (clôture)", module: "or" },
   { code: "or.facturer", nom: "Facturer un OR", module: "or" },
   { code: "or.pieces.servir", nom: "Servir les demandes de pièces des OR (magasin)", module: "or" },
+  // Module parking / garage (GPJ)
+  { code: "parking.consulter", nom: "Consulter le plan du parc et les véhicules en attente", module: "parking" },
+  { code: "parking.vehicule.creer", nom: "Créer un véhicule du registre parking", module: "parking" },
+  { code: "parking.vehicule.modifier", nom: "Modifier un véhicule du registre parking", module: "parking" },
+  { code: "parking.vehicule.exporter", nom: "Exporter les véhicules du registre", module: "parking" },
+  { code: "parking.alertes.gerer", nom: "Gérer les alertes du parking", module: "parking" },
   // Contrats flottes
   { code: "contrats.consulter", nom: "Consulter les contrats", module: "contrats" },
   { code: "contrats.creer", nom: "Créer un contrat flotte", module: "contrats" },
@@ -71,6 +78,33 @@ export const SOCLE_PERMISSIONS = [
   { code: "rh.utilisateur.creer", nom: "Créer un utilisateur", module: "rh" },
   { code: "rh.utilisateur.modifier", nom: "Modifier un utilisateur", module: "rh" },
   { code: "rh.utilisateur.lire", nom: "Consulter les utilisateurs", module: "rh" },
+  { code: "rh.employe.consulter", nom: "Consulter la fiche employé", module: "rh" },
+  { code: "rh.salaire.consulter", nom: "Consulter les salaires (RH strict/Direction)", module: "rh" },
+  { code: "rh.presence.consulter", nom: "Consulter les présences", module: "rh" },
+  { code: "rh.conge.consulter", nom: "Consulter les congés & absences", module: "rh" },
+  { code: "rh.evaluation.consulter", nom: "Consulter les évaluations", module: "rh" },
+  { code: "rh.competence.consulter", nom: "Consulter compétences & formations", module: "rh" },
+  { code: "rh.document.consulter", nom: "Consulter les documents RH", module: "rh" },
+  { code: "rh.historique.consulter", nom: "Consulter l'historique de carrière", module: "rh" },
+  { code: "rh.note.consulter", nom: "Consulter les notes internes", module: "rh" },
+  { code: "rh.employe.modifier", nom: "Créer / modifier les fiches employés (y c. sortie)", module: "rh" },
+  { code: "rh.presence.modifier", nom: "Saisir les présences, valider les HS, clôturer le mois", module: "rh" },
+  { code: "rh.conge.modifier", nom: "Gérer congés, absences et soldes", module: "rh" },
+  { code: "rh.paie.modifier", nom: "Préparer et régler la paie", module: "rh" },
+  { code: "rh.evaluation.modifier", nom: "Mener les évaluations et leurs campagnes", module: "rh" },
+  { code: "rh.competence.modifier", nom: "Gérer compétences, formations et sessions", module: "rh" },
+  { code: "rh.discipline.modifier", nom: "Gérer les sanctions disciplinaires", module: "rh" },
+  { code: "rh.discipline.consulter", nom: "Consulter le registre disciplinaire", module: "rh" },
+  { code: "rh.document.modifier", nom: "Gérer les documents et types de documents RH", module: "rh" },
+  { code: "rh.parametrage.modifier", nom: "Configurer le paramétrage RH (cycles, types, jours fériés)", module: "rh" },
+  // RPT-04 — workflow du justificatif d'absence / retard (séparation des pouvoirs)
+  { code: "rh.absence.justifier", nom: "Déposer un justificatif d'absence ou de retard", module: "rh" },
+  { code: "rh.absence.valider", nom: "Valider ou refuser un justificatif d'absence", module: "rh" },
+  // R6 cycle de vie — situations RH, sortie/réembauche (permissions dédiées, D-R6-16)
+  { code: "rh.situation.consulter", nom: "Consulter les situations RH (cycle de vie)", module: "rh" },
+  { code: "rh.situation.modifier", nom: "Créer / gérer les situations RH (workflow, conflits)", module: "rh" },
+  { code: "rh.employe.sortie", nom: "Sortie définitive d'un employé (transition formelle)", module: "rh" },
+  { code: "rh.employe.reembauche", nom: "Réembaucher un employé sorti", module: "rh" },
   // Comptabilité
   { code: "comptabilite.depense.creer", nom: "Enregistrer une dépense", module: "comptabilite" },
   { code: "comptabilite.depense.lire", nom: "Consulter les dépenses", module: "comptabilite" },
@@ -89,6 +123,30 @@ export const SOCLE_PERMISSIONS = [
 
 const TOUTES = SOCLE_PERMISSIONS.map((p) => p.code);
 
+/** Activités RH de consultation fine (confidentialité visuelle, RH-01 §6) */
+const RH_CONSULTATION = [
+  "rh.employe.consulter", "rh.salaire.consulter", "rh.presence.consulter",
+  "rh.conge.consulter", "rh.evaluation.consulter", "rh.competence.consulter",
+  "rh.document.consulter", "rh.historique.consulter", "rh.note.consulter",
+  "rh.discipline.consulter", "rh.situation.consulter",
+];
+
+/** Activités RH d'écriture par sous-module (grain fin, E7) */
+const RH_ECRITURE = [
+  "rh.employe.modifier", "rh.presence.modifier", "rh.conge.modifier",
+  "rh.paie.modifier", "rh.evaluation.modifier", "rh.competence.modifier",
+  "rh.discipline.modifier", "rh.document.modifier", "rh.parametrage.modifier",
+  "rh.situation.modifier", "rh.employe.sortie", "rh.employe.reembauche",
+];
+
+/**
+ * RPT-04 — dépôt et validation d'un justificatif. Volontairement HORS de
+ * `RH_ECRITURE` : ces deux droits ne sont pas accordés à tous les rôles, et le
+ * rôle `rh` les reçoit explicitement. L'auto-validation est par ailleurs
+ * refusée à l'API : le déposant ne peut pas valider son propre justificatif.
+ */
+const RH_JUSTIFICATION = ["rh.absence.justifier", "rh.absence.valider"];
+
 export const SOCLE_MATRICE: Record<string, string[]> = {
   superadmin: TOUTES,
   directeur: [
@@ -96,18 +154,20 @@ export const SOCLE_MATRICE: Record<string, string[]> = {
     "achats.consulter", "fournisseur.consulter", "vehicules.consulter", "or.consulter",
     "or.valider", "contrats.consulter", "clients.consulter", "creances.consulter",
     "creances.encaisser", "creances.relancer", "planning.consulter", "comptabilite.rapport",
-    "audit.consulter", "export.consulter", "rh.utilisateur.lire",
+    "audit.consulter", "export.consulter", "rh.utilisateur.lire", "parking.consulter",
+    ...RH_CONSULTATION,
   ],
   admin: [
     "admin.parametres", "admin.agence.gerer", "admin.roles.gerer", "admin.permissions.gerer",
     "admin.logs.consulter", "rh.utilisateur.creer", "rh.utilisateur.modifier", "rh.utilisateur.lire",
-    "audit.consulter", "export.consulter",
+"audit.consulter", "export.consulter", "parking.vehicule.exporter",
   ],
   chef_atelier: [
     "vehicules.consulter", "vehicules.creer", "vehicules.modifier",
     "or.consulter", "or.creer", "or.modifier", "or.valider",
     "planning.consulter", "planning.assigner",
     "stock.consulter", "stock.modifier", "contrats.consulter", "clients.consulter", "pos.vente.lire",
+    "parking.consulter", "parking.vehicule.creer", "parking.vehicule.modifier", "parking.vehicule.exporter", "parking.alertes.gerer",
   ],
   secretaire: [
     "clients.consulter", "clients.creer", "clients.modifier",
@@ -116,29 +176,34 @@ export const SOCLE_MATRICE: Record<string, string[]> = {
     "pos.vente.creer", "pos.vente.lire", "pos.vente.annuler",
     "caisse.consulter", "caisse.ouvrir", "caisse.fermer", "caisse.mouvement",
     "creances.consulter", "contrats.consulter", "planning.consulter",
+"parking.consulter", "parking.vehicule.creer", "parking.vehicule.modifier", "parking.vehicule.exporter",
   ],
   magasinier: [
-    "stock.consulter", "stock.modifier", "stock.inventaire",
+    "stock.consulter", "stock.modifier", "stock.inventaire", "stock.utiliser",
     "achats.commander", "achats.recevoir", "achats.consulter",
     "fournisseur.consulter", "fournisseur.gerer", "or.consulter", "or.pieces.servir",
   ],
   technicien: [
-    "or.consulter", "or.modifier", "vehicules.consulter", "stock.consulter", "planning.consulter",
+    "or.consulter", "or.modifier", "vehicules.consulter", "stock.consulter", "stock.utiliser", "planning.consulter",
+    "parking.consulter",
   ],
   comptable: [
     "pos.vente.creer", "pos.vente.lire", "pos.vente.rembourser", "or.facturer",
     "caisse.consulter", "caisse.mouvement", "creances.consulter", "creances.encaisser",
     "comptabilite.depense.creer", "comptabilite.depense.lire", "comptabilite.rapport",
-    "clients.consulter", "fournisseur.consulter", "achats.consulter", "export.consulter",
+    "clients.consulter", "fournisseur.consulter", "achats.consulter", "export.consulter", "parking.vehicule.exporter",
   ],
   rh: [
     "rh.utilisateur.creer", "rh.utilisateur.modifier", "rh.utilisateur.lire", "audit.consulter",
+    ...RH_CONSULTATION,
+    ...RH_ECRITURE,
+    ...RH_JUSTIFICATION,
   ],
   consultation: [
     "pos.vente.lire", "stock.consulter", "caisse.consulter", "achats.consulter",
     "vehicules.consulter", "or.consulter", "contrats.consulter", "creances.consulter",
     "planning.consulter", "direction.tableau_bord", "comptabilite.rapport", "rh.utilisateur.lire",
-    "audit.consulter",
+    "audit.consulter", "parking.consulter", "parking.vehicule.exporter",
   ],
 };
 
