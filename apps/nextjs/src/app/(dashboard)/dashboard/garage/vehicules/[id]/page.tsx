@@ -46,7 +46,7 @@ import {
 } from "../../_components/statuts";
 import { VehiculeFormDialog, type VehiculeFormModel } from "../../_components/VehiculeFormDialog";
 import { PhotoLightbox } from "../../_components/PhotoLightbox";
-import { ExportVehiculesDialog, type LigneExportVehicule } from "../_components/ExportVehiculesDialog";
+import { ExportVehiculesDialog, type LigneExportVehicule } from "@/lib/ExportVehiculesDialog";
 import { PrintVehiculeFiche } from "@/lib/PrintVehiculeFiche";
 import { Printer } from "lucide-react";
 

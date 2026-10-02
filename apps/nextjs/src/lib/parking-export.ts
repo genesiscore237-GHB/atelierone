@@ -21,6 +21,8 @@ import {
   type FormatExport,
 } from "~/app/(dashboard)/dashboard/garage/_components/export-champs";
 
+export { CHAMPS_EXPORT_VEHICULE } from "~/app/(dashboard)/dashboard/garage/_components/export-champs";
+
 /** Forme d'une ligne retournee par `garage.exportVehicules`. */
 export interface LigneExportVehicule {
   id: number;

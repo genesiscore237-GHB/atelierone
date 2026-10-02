@@ -33,3 +33,7 @@ export function DialogHeader({ children }: { children: ReactNode }) {
 export function DialogTitle({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <h2 className={`text-lg font-semibold text-foreground ${className}`}>{children}</h2>;
 }
+
+export function DialogDescription({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <p className={`text-sm text-muted-foreground ${className}`}>{children}</p>;
+}

@@ -23,7 +23,7 @@ import {
   formatDate,
 } from "../_components/statuts";
 import { VehiculeFormDialog, type VehiculeFormModel } from "../_components/VehiculeFormDialog";
-import { ExportVehiculesDialog, type LigneExportVehicule } from "../_components/ExportVehiculesDialog";
+import { ExportVehiculesDialog, type LigneExportVehicule } from "@/lib/ExportVehiculesDialog";
 import { PrintVehiculesList } from "@/lib/PrintVehiculesList";
 import { Printer } from "lucide-react";
 
@@ -392,6 +392,7 @@ export default function GarageVehiculesPage() {
         requiresReason
       />
       <ExportVehiculesDialog
+        isOpen={exportOpen}
         vehicules={vehicules}
         onExport={(resultat) => {
           toast.success(

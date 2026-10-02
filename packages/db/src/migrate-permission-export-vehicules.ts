@@ -87,8 +87,7 @@ export async function migratePermissionExportVehicules(db: PostgresJsDatabase<ty
 /**
  * Script standalone pour exécution directe
  */
-if (require.main === module) {
-  // Import dynamique pour éviter les problèmes de bundling
+if (import.meta.url === `file://${process.argv[1]}`) {
   const { db } = await import("./index");
   await migratePermissionExportVehicules(db);
   process.exit(0);
