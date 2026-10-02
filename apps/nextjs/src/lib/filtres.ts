@@ -31,7 +31,7 @@ export type CleFiltre =
   | "modele"
   | "immatriculation";
 
-/** Interface describee : chaque composant peut importer seulement ce dont il a besoin. */
+/** Interface decrite : chaque composant peut importer seulement ce dont il a besoin. */
 export interface FiltresVehicules {
   statut: string | null;
   provenance: string | null;
@@ -39,21 +39,105 @@ export interface FiltresVehicules {
   dateEntreeDeb: Date | null;
   dateEntreeFin: Date | null;
   marque: string | null;
-  modele: string |  Continue reading all the way through the file. I need to find the specific lines.
+  modele: string | null;
+  immatriculation: string | null;
+}
 
-Let me look for key terms.
+/** Lit les filtres depuis l'URL et retourne un objet FiltresVehicules type. */
+export function lireFiltres(searchParams: URLSearchParams): FiltresVehicules {
+  const get = (key: string) => searchParams.get(key) ?? null;
+  const getDate = (key: string): Date | null => {
+    const v = searchParams.get(key);
+    if (!v) return null;
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  };
 
-Actually, the user asked "What did we do so far? Let me summarize the work completed:
+  return {
+    statut: get("statut"),
+    provenance: get("provenance"),
+    client: get("client"),
+    dateEntreeDeb: getDate("dateEntreeDeb"),
+    dateEntreeFin: getDate("dateEntreeFin"),
+    marque: get("marque"),
+    modele: get("modele"),
+    immatriculation: get("immatriculation"),
+  };
+}
 
-1. Export-chexport-champs.ts - already completed
-2. parking-export.ts - created
-3. ExportVehiculesDialog.tsx - created
-4. PhotoLightbox.tsx - created
-5. vehicule-form-model.ts - created
-6. filtres.ts - created
+/** Ecrit les filtres dans l'URL (remplace les params existants). */
+export function ecrireFiltres(
+  searchParams: URLSearchParams,
+  filtres: Partial<FiltresVehicules>,
+): URLSearchParams {
+  const next = new URLSearchParams(searchParams);
+  for (const [key, value] of Object.entries(filtres)) {
+    if (value === null || value === undefined || value === "") {
+      next.delete(key);
+    } else if (value instanceof Date) {
+      next.set(key, value.toISOString().split("T")[0]);
+    } else {
+      next.set(key, String(value));
+    }
+  }
+  return next;
+}
 
-I've also created the other files needed: parking-export.ts, ExportVehiculesDialog.tsx, PhotoLightbox.tsx, vehicule-form-model.ts. I just need to finish adapting garage-router.ts, security-socle.ts, page.tsx, and [id]/page.tsx, plus add the new permission. I also created new parking-export.ts, ExportVehiculesDialog.tsx, PhotoLightbox.tsx, vehicule-form-model.ts, and filtres.ts files. I'm in the process of updating garage-router.ts, adding exportVehicules query, and adding permission parking.vehicule.exporter into security-socle.ts, which is a new permission added to the security-socle module. I need to verify. Let me proceed with the solution. I have navigated to the target site and I can see the content. Let me proceed. I will click on the login button.Now I'll verify the files I've created are correct by checking their content:
-<tool_call>
-<function=bash>
-<parameter=command>
-cd C:\Users\FAYA COMPUTER\Desktop\MES PROJETS\SAAS\atelierone\apps\nextjs\src && FindString.py parking-export.ts "import" | head -20
+/** Compte le nombre de filtres actifs (non null/vides). */
+export function compterFiltres(filtres: FiltresVehicules): number {
+  return Object.values(filtres).filter((v) => v !== null && v !== undefined && v !== "").length;
+}
+
+/** Genere un label lisible pour un filtre donne. */
+export function libelleFiltre(key: string, value: string): string {
+  const labels: Record<string, string> = {
+    statut: "Statut",
+    provenance: "Provenance",
+    client: "Client",
+    dateEntreeDeb: "Entrée ≥",
+    dateEntreeFin: "Entrée ≤",
+    marque: "Marque",
+    modele: "Modèle",
+    immatriculation: "Immatriculation",
+  };
+  return `${labels[key] ?? key} : ${value}`;
+}
+
+/** Hook React pour lire/gerer les filtres via l'URL. */
+export function useFiltresVehicules() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const filtres = React.useMemo(() => lireFiltres(searchParams), [searchParams]);
+
+  const setFiltre = React.useCallback(
+    (key: CleFiltre, value: ValeurFiltre) => {
+      const next = ecrireFiltres(searchParams, { [key]: value as string | Date | null });
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
+
+  const clearFiltre = React.useCallback(
+    (key: CleFiltre) => {
+      const next = new URLSearchParams(searchParams);
+      next.delete(key);
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
+
+  const clearAll = React.useCallback(() => {
+    setSearchParams({}, { replace: true });
+  }, [setSearchParams]);
+
+  return {
+    filtres,
+    setFiltre,
+    clearFiltre,
+    clearAll,
+    nbFiltresActifs: compterFiltres(lireFiltres(searchParams)),
+  };
+}
+
+// Re-export React for useFiltresVehicules
+import * as React from "react";

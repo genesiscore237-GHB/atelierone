@@ -1,0 +1,515 @@
+/**
+ * Feuilles de style pour l'impression des documents Garage/Parking.
+ * Inclus via @import dans globals.css ou importe dans les composants d'impression.
+ *
+ * Cible : A4 paysage (inventaire) et A4 portrait (fiche).
+ * Navigateurs cibles : Chrome, Edge (prioritaire), Firefox (degradation propre).
+ */
+
+@media print {
+  /* ===== RESET GLOBAL ===== */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Masquer tout l'UI applicative : sidebar, header, boutons, filtres, modales */
+  .sidebar,
+  .header,
+  .navbar,
+  .footer,
+  button,
+  .btn,
+  [role="button"],
+  .action-buttons,
+  .filters-bar,
+  .search-input,
+  .pagination,
+  .toast-container,
+  .modal-overlay,
+  .dialog,
+  [data-print-hide] {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    width: 0 !important;
+    overflow: hidden !important;
+  }
+
+  /* Conteneur principal d'impression */
+  .print-container {
+    display: block !important;
+    visibility: visible !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    color: #000 !important;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+    font-size: 10pt !important;
+    line-height: 1.3 !important;
+  }
+
+  /* ===== PAGE A4 ===== */
+  @page {
+    size: A4;
+    margin: 15mm 12mm 15mm 12mm;
+  }
+
+  @page :first {
+    margin-top: 20mm;
+  }
+
+  /* ===== EN-TETE DE PAGE (repetee sur chaque page) ===== */
+  .print-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding-bottom: 8px !important;
+    border-bottom: 2px solid #1e293b !important;
+    margin-bottom: 12px !important;
+    page-break-inside: avoid !important;
+  }
+
+  .print-header__left {
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+  }
+
+  .print-header__logo {
+    width: 48px !important;
+    height: 48px !important;
+    object-fit: contain !important;
+  }
+
+  .print-header__title-block {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .print-header__title {
+    font-size: 16pt !important;
+    font-weight: 700 !important;
+    color: #0f172a !important;
+    line-height: 1.2 !important;
+    margin: 0 !important;
+  }
+
+  .print-header__subtitle {
+    font-size: 9pt !important;
+    color: #475569 !important;
+    margin: 2px 0 0 !important;
+  }
+
+  .print-header__right {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-end !important;
+    gap: 2px !important;
+    font-size: 8pt !important;
+    color: #334155 !important;
+  }
+
+  .print-header__meta {
+    display: flex !important;
+    gap: 16px !important;
+    flex-wrap: wrap !important;
+  }
+
+  .print-header__meta-item {
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+  }
+
+  .print-header__meta-label {
+    font-weight: 600 !important;
+    color: #1e293b !important;
+  }
+
+  .print-header__meta-value {
+    color: #334155 !important;
+  }
+
+  /* ===== FILTRES APPLIQUES ===== */
+  .print-filters {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    padding: 8px 0 !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+    margin-bottom: 12px !important;
+    font-size: 8pt !important;
+    page-break-inside: avoid !important;
+  }
+
+  .print-filters__label {
+    font-weight: 600 !important;
+    color: #1e293b !important;
+  }
+
+  .print-filters__tag {
+    display: inline-flex !important;
+    align-items: center !important;
+    padding: 2px 6px !important;
+    background: #f1f5f9 !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 3px !important;
+    font-size: 7.5pt !important;
+    color: #334155 !important;
+  }
+
+  /* ===== TABLEAU INVENTAIRE (A4 PAYSAGE) ===== */
+  .print-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 7.5pt !important;
+    table-layout: fixed !important;
+  }
+
+  .print-table thead {
+    display: table-header-group !important;
+  }
+
+  .print-table th {
+    background: #0f172a !important;
+    color: white !important;
+    font-weight: 600 !important;
+    font-size: 7pt !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.02em !important;
+    padding: 5px 4px !important;
+    border: 1px solid #1e293b !important;
+    text-align: left !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .print-table td {
+    padding: 4px 4px !important;
+    border: 1px solid #e2e8f0 !important;
+    vertical-align: top !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .print-table tbody tr:nth-child(even) td {
+    background: #f8fafc !important;
+  }
+
+  .print-table tbody tr {
+    page-break-inside: avoid !important;
+  }
+
+  .print-table .text-right {
+    text-align: right !important;
+  }
+
+  .print-table .text-center {
+    text-align: center !important;
+  }
+
+  .print-table .cell-photo {
+    width: 48px !important;
+    text-align: center !important;
+    padding: 2px !important;
+  }
+
+  .print-table .cell-photo img {
+    width: 40px !important;
+    height: 30px !important;
+    object-fit: cover !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 2px !important;
+  }
+
+  .print-table .cell-photo .placeholder {
+    width: 40px !important;
+    height: 30px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: #f1f5f9 !important;
+    border: 1px dashed #cbd5e1 !important;
+    border-radius: 2px !important;
+    font-size: 6pt !important;
+    color: #94a3b8 !important;
+    text-align: center !important;
+  }
+
+  /* Colonne largeur fixe pour photo */
+  .print-table col.col-photo { width: 48px !important; }
+  .print-table col.col-num { width: 40px !important; }
+  .print-table col.col-immat { width: 70px !important; }
+  .print-table col.col-vehicule { width: 100px !important; }
+  .print-table col.col-client { width: 90px !important; }
+  .print-table col.col-statut { width: 70px !important; }
+  .print-table col.col-position { width: 60px !important; }
+  .print-table col.col-entree { width: 65px !important; }
+
+  /* ===== FICHE VEHICULE (A4 PORTRAIT) ===== */
+  .print-fiche {
+    padding: 0 !important;
+  }
+
+  .print-fiche__header {
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 16px !important;
+    padding-bottom: 12px !important;
+    border-bottom: 2px solid #1e293b !important;
+    margin-bottom: 16px !important;
+    page-break-inside: avoid !important;
+  }
+
+  .print-fiche__photo {
+    width: 160px !important;
+    height: 120px !important;
+    flex-shrink: 0 !important;
+    object-fit: cover !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 4px !important;
+    background: #f8fafc !important;
+  }
+
+  .print-fiche__photo-placeholder {
+    width: 160px !important;
+    height: 120px !important;
+    flex-shrink: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: #f1f5f9 !important;
+    border: 1px dashed #cbd5e1 !important;
+    border-radius: 4px !important;
+    font-size: 8pt !important;
+    color: #94a3b8 !important;
+    text-align: center !important;
+  }
+
+  .print-fiche__title-block {
+    flex: 1 !important;
+    min-width: 0 !important;
+  }
+
+  .print-fiche__num {
+    font-size: 10pt !important;
+    font-weight: 600 !important;
+    color: #3b82f6 !important;
+    margin: 0 0 4px !important;
+  }
+
+  .print-fiche__title {
+    font-size: 14pt !important;
+    font-weight: 700 !important;
+    color: #0f172a !important;
+    margin: 0 0 8px !important;
+    line-height: 1.3 !important;
+  }
+
+  .print-fiche__badges {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+
+  .print-fiche__badge {
+    display: inline-flex !important;
+    align-items: center !important;
+    padding: 2px 8px !important;
+    font-size: 7pt !important;
+    font-weight: 600 !important;
+    border-radius: 3px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.02em !important;
+  }
+
+  .print-fiche__badge--statut {
+    background: #dbeafe !important;
+    color: #1e40af !important;
+    border: 1px solid #93c5fd !important;
+  }
+
+  .print-fiche__badge--position {
+    background: #dcfce7 !important;
+    color: #166534 !important;
+    border: 1px solid #86efac !important;
+  }
+
+  .print-fiche__badge--position--absent {
+    background: #fef3c7 !important;
+    color: #92400e !important;
+    border: 1px solid #fcd34d !important;
+  }
+
+  .print-fiche__grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px 16px !important;
+    font-size: 8.5pt !important;
+  }
+
+  .print-fiche__field {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+  }
+
+  .print-fiche__field--full {
+    grid-column: span 2 !important;
+  }
+
+  .print-fiche__label {
+    font-size: 6.5pt !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.03em !important;
+    color: #64748b !important;
+  }
+
+  .print-fiche__value {
+    font-size: 8.5pt !important;
+    color: #0f172a !important;
+    word-break: break-word !important;
+  }
+
+  .print-fiche__value--empty {
+    color: #94a3b8 !important;
+    font-style: italic !important;
+  }
+
+  .print-fiche__section {
+    margin-top: 16px !important;
+    page-break-inside: avoid !important;
+  }
+
+  .print-fiche__section-title {
+    font-size: 9pt !important;
+    font-weight: 700 !important;
+    color: #0f172a !important;
+    padding-bottom: 4px !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+    margin-bottom: 8px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.02em !important;
+  }
+
+  .print-fiche__notes {
+    white-space: pre-wrap !important;
+    font-size: 8.5pt !important;
+    line-height: 1.5 !important;
+    color: #334155 !important;
+  }
+
+  .print-fiche__photos-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 8px !important;
+    margin-top: 8px !important;
+  }
+
+  .print-fiche__photo-item {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+  }
+
+  .print-fiche__photo-item img {
+    width: 100% !important;
+    aspect-ratio: 4/3 !important;
+    object-fit: cover !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 3px !important;
+  }
+
+  .print-fiche__photo-item .placeholder {
+    aspect-ratio: 4/3 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: #f1f5f9 !important;
+    border: 1px dashed #cbd5e1 !important;
+    border-radius: 3px !important;
+    font-size: 7pt !important;
+    color: #94a3b8 !important;
+  }
+
+  .print-fiche__photo-caption {
+    font-size: 6.5pt !important;
+    color: #64748b !important;
+    text-align: center !important;
+  }
+
+  /* ===== PIED DE PAGE ===== */
+  .print-footer {
+    margin-top: 16px !important;
+    padding-top: 8px !important;
+    border-top: 1px solid #e2e8f0 !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    font-size: 7pt !important;
+    color: #64748b !important;
+    page-break-inside: avoid !important;
+  }
+
+  .print-footer__left {
+    display: flex !important;
+    align-items: center !important;
+    gap: 16px !important;
+    flex-wrap: wrap !important;
+  }
+
+  .print-footer__right {
+    text-align: right !important;
+  }
+
+  .print-footer__page {
+    font-weight: 600 !important;
+  }
+
+  /* ===== UTILITAIRES ===== */
+  .print-only {
+    display: none !important;
+  }
+
+  .screen-only {
+    display: inherit !important;
+  }
+
+  @media print {
+    .print-only {
+      display: inherit !important;
+    }
+    .screen-only {
+      display: none !important;
+    }
+  }
+
+  /* Eviter les coupures dans les elements critiques */
+  .no-break {
+    page-break-inside: avoid !important;
+  }
+
+  .break-before {
+    page-break-before: always !important;
+  }
+
+  .break-after {
+    page-break-after: always !important;
+  }
+
+  /* Liens : ne pas afficher les URLs */
+  a[href]::after {
+    content: "" !important;
+  }
+
+  /* Forcer fond blanc */
+  body {
+    background: white !important;
+  }
+}

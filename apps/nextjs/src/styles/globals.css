@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./print.css";
 
 @theme {
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
@@ -741,5 +742,25 @@
   }
   .sepia .sepia-serif {
     font-family: 'Merriweather', Georgia, serif;
+  }
+}
+
+/* Impression des listes/états (N16/F25) : on masque la coquille applicative
+   et on ne garde que le contenu imprimable. Les boutons « Imprimer »
+   s'auto-masquent via la classe Tailwind print:hidden. */
+@media print {
+  header,
+  aside,
+  footer,
+  nav[aria-label="Navigation mobile"],
+  .no-print {
+    display: none !important;
+  }
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  body {
+    background: #fff !important;
   }
 }

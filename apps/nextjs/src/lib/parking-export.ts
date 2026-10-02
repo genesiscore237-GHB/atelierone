@@ -617,6 +617,144 @@ export function estimerPoidsExport(
   return photos + texte;
 }
 
+/** Mesure reelle du volume d'export (instrumentation diagnostique E4). */
+export interface DiagnostiqueExport {
+  nombreVehicules: number;
+  nombrePhotosTotal: number;
+  tailleJsonPhotosOctets: number;
+  tailleMoyennePhotoOctets: number;
+  tailleMaxPhotoOctets: number;
+  dureeGenerationCsvMs: number;
+  dureeGenerationXlsxMs: number;
+  dureeGenerationPdfMs: number;
+  tailleBlobCsvOctets: number;
+  tailleBlobXlsxOctets: number;
+  tailleBlobPdfOctets: number;
+  memoireNavigateurMo?: number;
+  avertissements: string[];
+}
+
+/** Mesure complete du volume et performance d'un export. */
+export async function diagnostiquerExport(
+  vehicules: LigneExportVehicule[],
+  options: OptionsGenerationExport,
+): Promise<DiagnostiqueExport> {
+  const debutGlobal = Date.now();
+  const avertissements: string[] = [];
+
+  // 1. Mesure photos
+  let nombrePhotosTotal = 0;
+  let tailleJsonPhotosOctets = 0;
+  let tailleMaxPhotoOctets = 0;
+  for (const v of vehicules) {
+    for (const p of v.photos) {
+      const taille = new TextEncoder().encode(p.url).length;
+      tailleJsonPhotosOctets += taille;
+      if (taille > tailleMaxPhotoOctets) tailleMaxPhotoOctets = taille;
+      nombrePhotosTotal++;
+    }
+  }
+  const tailleMoyennePhotoOctets = nombrePhotosTotal > 0 ? Math.round(tailleJsonPhotosOctets / nombrePhotosTotal) : 0;
+
+  if (tailleJsonPhotosOctets > 50_000_000) {
+    avertissements.push(`Payload photos > 50 Mo (${Math.round(tailleJsonPhotosOctets / 1_000_000)} Mo) : risque timeout tRPC / OOM navigateur`);
+  }
+  if (tailleMaxPhotoOctets > 6_000_000) {
+    avertissements.push(`Photo unique > 6 Mo : depasse limite validation`);
+  }
+
+  // 2. Test generation CSV
+  const debutCsv = Date.now();
+  const champsCsv = options.champs.map((cle) => getChampExport(cle)).filter((c): c is ChampExportVehicule => Boolean(c));
+  const blobCsv = genererCsv(vehicules, champsCsv);
+  const dureeGenerationCsvMs = Date.now() - debutCsv;
+
+  // 3. Test generation XLSX
+  const debutXlsx = Date.now();
+  const vignettesXlsx = await construireVignettes(vehicules, options.photosParVehicule);
+  const blobXlsx = await genererXlsx(vehicules, champsCsv, vignettesXlsx, options.contexte);
+  const dureeGenerationXlsxMs = Date.now() - debutXlsx;
+
+  // 4. Test generation PDF
+  const debutPdf = Date.now();
+  const vignettesPdf = await construireVignettes(vehicules, options.photosParVehicule);
+  const blobPdf = await genererPdf(vehicules, champsCsv, vignettesPdf, options.contexte);
+  const dureeGenerationPdfMs = Date.now() - debutPdf;
+
+  // 5. Memoire navigateur (approximatif)
+  let memoireNavigateurMo: number | undefined;
+  if (typeof performance !== "undefined" && "memory" in performance) {
+    const mem = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
+    if (mem) memoireNavigateurMo = Math.round(mem.usedJSHeapSize / 1_048_576);
+  }
+
+  const dureeTotaleMs = Date.now() - debutGlobal;
+
+  return {
+    nombreVehicules: vehicules.length,
+    nombrePhotosTotal,
+    tailleJsonPhotosOctets,
+    tailleMoyennePhotoOctets,
+    tailleMaxPhotoOctets,
+    dureeGenerationCsvMs,
+    dureeGenerationXlsxMs,
+    dureeGenerationPdfMs,
+    tailleBlobCsvOctets: blobCsv.size,
+    tailleBlobXlsxOctets: blobXlsx.size,
+    tailleBlobPdfOctets: blobPdf.size,
+    memoireNavigateurMo,
+    avertissements,
+  };
+}
+
+/** Seuils recommandes pour generation frontend vs backend asynchrone. */
+export const SEUILS_EXPORT = {
+  /** Au-dela : generation frontend acceptable sans photos. */
+  frontendSansPhotosMaxVehicules: 5000,
+  /** Au-dela : generation frontend avec miniatures risque OOM/timeout. */
+  frontendAvecMiniaturesMaxVehicules: 200,
+  /** Au-dela : generation frontend avec photos completes tres risque. */
+  frontendAvecPhotosMaxVehicules: 50,
+  /** Au-dela payload JSON photos : generation backend asynchrone recommandee. */
+  payloadJsonPhotosMaxOctets: 20_000_000,
+  /** Au-dela duree generation : UX degradee, backend async recommande. */
+  dureeGenerationMaxMs: 30_000,
+  /** Au-dela memoire navigateur : risque crash onglet. */
+  memoireNavigateurMaxMo: 1500,
+} as const;
+
+/** Evalue si la generation frontend est recommandee. */
+export function evaluerModeGeneration(
+  vehicules: LigneExportVehicule[],
+  options: OptionsGenerationExport,
+): { recommandation: "frontend" | "backend-async"; raisons: string[] } {
+  const raisons: string[] = [];
+  const avecPhotos = options.champs.some((c) => c === "photos") && options.photosParVehicule > 0;
+
+  if (avecPhotos) {
+    if (vehicules.length > SEUILS_EXPORT.frontendAvecPhotosMaxVehicules) {
+      raisons.push(`Vehicules (${vehicules.length}) > seuil photos frontend (${SEUILS_EXPORT.frontendAvecPhotosMaxVehicules})`);
+    }
+    if (vehicules.length > SEUILS_EXPORT.frontendAvecMiniaturesMaxVehicules && options.photosParVehicule > 0) {
+      raisons.push(`Vehicules (${vehicules.length}) > seuil miniatures frontend (${SEUILS_EXPORT.frontendAvecMiniaturesMaxVehicules})`);
+    }
+  } else {
+    if (vehicules.length > SEUILS_EXPORT.frontendSansPhotosMaxVehicules) {
+      raisons.push(`Vehicules (${vehicules.length}) > seuil sans photos (${SEUILS_EXPORT.frontendSansPhotosMaxVehicules})`);
+    }
+  }
+
+  const estimationPhotos = vehicules.length * options.photosParVehicule * 35_000;
+  if (estimationPhotos > SEUILS_EXPORT.payloadJsonPhotosMaxOctets) {
+    raisons.push(`Estimation payload photos (${Math.round(estimationPhotos / 1_000_000)} Mo) > seuil backend (${SEUILS_EXPORT.payloadJsonPhotosMaxOctets / 1_000_000} Mo)`);
+  }
+
+  if (raisons.length > 0) {
+    return { recommandation: "backend-async", raisons };
+  }
+  return { recommandation: "frontend", raisons: [] };
+}
+
 /** Liste des champs disponibles, regroupes pour la modale de selection. */
 export function champsParGroupe(): { groupe: string; champs: ChampExportVehicule[] }[] {
   const parGroupe = new Map<string, ChampExportVehicule[]>();

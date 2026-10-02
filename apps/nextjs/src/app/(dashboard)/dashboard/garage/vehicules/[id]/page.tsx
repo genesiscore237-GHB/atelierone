@@ -47,6 +47,8 @@ import {
 import { VehiculeFormDialog, type VehiculeFormModel } from "../../_components/VehiculeFormDialog";
 import { PhotoLightbox } from "../../_components/PhotoLightbox";
 import { ExportVehiculesDialog, type LigneExportVehicule } from "../_components/ExportVehiculesDialog";
+import { PrintVehiculeFiche } from "@/lib/PrintVehiculeFiche";
+import { Printer } from "lucide-react";
 
 export default function GarageVehiculeFichePage() {
   const { id } = useParams<{ id: string }>();
@@ -315,7 +317,16 @@ export default function GarageVehiculeFichePage() {
                       </span>
                     </button>
                   ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <History size={16} /> Mouvements
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {data.mouvements.length === 0 && (
@@ -458,6 +469,13 @@ export default function GarageVehiculeFichePage() {
         confirmText="Sortir"
         variant="destructive"
         requiresReason
+      />
+      <PrintVehiculeFiche
+        vehicule={v}
+        garageNom="Garage"
+        utilisateur="Utilisateur"
+        isOpen={printFicheOpen}
+        onClose={() => setPrintFicheOpen(false)}
       />
     </motion.div>
   );

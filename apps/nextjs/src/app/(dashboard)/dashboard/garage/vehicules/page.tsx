@@ -24,6 +24,8 @@ import {
 } from "../_components/statuts";
 import { VehiculeFormDialog, type VehiculeFormModel } from "../_components/VehiculeFormDialog";
 import { ExportVehiculesDialog, type LigneExportVehicule } from "../_components/ExportVehiculesDialog";
+import { PrintVehiculesList } from "@/lib/PrintVehiculesList";
+import { Printer } from "lucide-react";
 
 export default function GarageVehiculesPage() {
   const searchParams = useSearchParams();
@@ -48,6 +50,7 @@ export default function GarageVehiculesPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [aSortir, setASortir] = useState<{ id: number; numRegistre: number } | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
 
   const { data: editDetail } = api.garage.vehicule.useQuery(
     { id: editingId as number },
@@ -143,6 +146,16 @@ export default function GarageVehiculesPage() {
             className="ml-2"
           >
             <Export size={16} className="mr-1" /> Exporter
+          </Button>
+        )}
+        {hasPermission("parking.vehicule.exporter") && (
+          <Button
+            onClick={() => setPrintOpen(true)}
+            variant="outline"
+            size="sm"
+            className="ml-2"
+          >
+            <Printer size={16} className="mr-1" /> Imprimer
           </Button>
         )}
       </div>
@@ -387,6 +400,19 @@ export default function GarageVehiculesPage() {
           setExportOpen(false);
         }}
         onClose={() => setExportOpen(false)}
+      />
+      <PrintVehiculesList
+        vehicules={vehicules}
+        filtres={{
+          search: debouncedSearch.trim() || undefined,
+          statut: statut || undefined,
+          siteId: siteId ? Number(siteId) : undefined,
+          nonPositionnes: nonPositionnes ? true : undefined,
+        }}
+        garageNom="Garage"
+        utilisateur="Utilisateur"
+        isOpen={printOpen}
+        onClose={() => setPrintOpen(false)}
       />
     </motion.div>
   );
