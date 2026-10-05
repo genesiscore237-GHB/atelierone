@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Plus, Search, MapPin, Pencil, LogOut, ArrowRight, Loader2, Car } from "lucide-react";
+import { Plus, Search, MapPin, Pencil, LogOut, ArrowRight, ArrowDownToLine, Loader2, Car } from "lucide-react";
 import { api } from "~/trpc/react";
 import { Card } from "~/components/ui/card";
 import { EmptyState } from "~/components/ui/empty-state";
@@ -23,7 +23,7 @@ import {
   formatDate,
 } from "../_components/statuts";
 import { VehiculeFormDialog, type VehiculeFormModel } from "../_components/VehiculeFormDialog";
-import { ExportVehiculesDialog, type LigneExportVehicule } from "@/lib/ExportVehiculesDialog";
+import { ExportVehiculesDialog } from "@/lib/ExportVehiculesDialog";
 import { PrintVehiculesList } from "@/lib/PrintVehiculesList";
 import { Printer } from "lucide-react";
 
@@ -145,7 +145,7 @@ export default function GarageVehiculesPage() {
             size="sm"
             className="ml-2"
           >
-            <Export size={16} className="mr-1" /> Exporter
+            <ArrowDownToLine size={16} className="mr-1" /> Exporter
           </Button>
         )}
         {hasPermission("parking.vehicule.exporter") && (

@@ -11,7 +11,6 @@ import {
   MapPin,
   BellRing,
   RefreshCw,
-  Phone,
   Ruler,
   Weight,
   History,
@@ -25,7 +24,6 @@ import {
 } from "lucide-react";
 import { api } from "~/trpc/react";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
-import { EmptyState } from "~/components/ui/empty-state";
 import { ErrorState } from "~/components/ui/error-state";
 import { Button } from "~/components/ui/button";
 import { ConfirmationDialog } from "~/components/ui/confirmation-dialog";
@@ -45,8 +43,7 @@ import {
   formatMeters,
 } from "../../_components/statuts";
 import { VehiculeFormDialog, type VehiculeFormModel } from "../../_components/VehiculeFormDialog";
-import { PhotoLightbox } from "../../_components/PhotoLightbox";
-import { ExportVehiculesDialog, type LigneExportVehicule } from "@/lib/ExportVehiculesDialog";
+import { ExportVehiculesDialog } from "@/lib/ExportVehiculesDialog";
 import { PrintVehiculeFiche } from "@/lib/PrintVehiculeFiche";
 import { Printer } from "lucide-react";
 
@@ -231,7 +228,7 @@ export default function GarageVehiculeFichePage() {
               onClick={() => setExportFicheOpen(true)}
               className="ml-2"
             >
-              <Export size={16} className="mr-1" /> Exporter
+              <ArrowDownToLine size={16} className="mr-1" /> Exporter
             </Button>
           )}
           {hasPermission("parking.vehicule.exporter") && (
@@ -241,7 +238,7 @@ export default function GarageVehiculeFichePage() {
               onClick={() => setPrintFicheOpen(true)}
               className="ml-2"
             >
-              <Print size={16} className="mr-1" /> Imprimer
+              <Printer size={16} className="mr-1" /> Imprimer
             </Button>
           )}
         </div>
@@ -469,6 +466,17 @@ export default function GarageVehiculeFichePage() {
         confirmText="Sortir"
         variant="destructive"
         requiresReason
+      />
+      <ExportVehiculesDialog
+        vehicules={[v]}
+        isOpen={exportFicheOpen}
+        onExport={(resultat) => {
+          toast.success(
+            `Export terminé : ${resultat.lignes} véhicule${resultat.lignes > 1 ? "s" : ""} • ${resultat.nomFichier}`
+          );
+          setExportFicheOpen(false);
+        }}
+        onClose={() => setExportFicheOpen(false)}
       />
       <PrintVehiculeFiche
         vehicule={v}

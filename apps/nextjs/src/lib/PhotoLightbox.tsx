@@ -38,10 +38,10 @@ export function PhotoLightbox({
   const [isZoomed, setIsZoomed] = React.useState(false);
 
   const total = photos.length;
-  if (total === 0) return null;
 
   // Clavier : next/prev/escape
   useEffect(() => {
+    if (total === 0) return;
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowRight") {
         e.preventDefault();
