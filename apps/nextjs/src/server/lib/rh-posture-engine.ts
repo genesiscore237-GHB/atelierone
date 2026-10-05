@@ -33,9 +33,24 @@ export interface SalaireIntervalleResult {
   detailsParJour: { heures: number; hs: number; primes: number; absent: boolean }[];
 }
 
-export function tauxHoraire(salaireBase: number, standardMonthlyHours: number): number {
+/**
+ * Taux horaire de référence.
+ *
+ * RPT-03 §29 : `precision` permet de conserver la précision native pour une
+ * ESTIMATION. Sans `precision`, l'arrondi historique à 2 décimales est
+ * conservé à l'identique (non-régression).
+ */
+export function tauxHoraire(
+  salaireBase: number,
+  standardMonthlyHours: number,
+  options: { precision?: number } = {}
+): number {
   const h = standardMonthlyHours > 0 ? standardMonthlyHours : 225.3;
-  return Math.round((salaireBase / h) * 100) / 100;
+  const rate = salaireBase / h;
+  const p = options.precision;
+  if (p === undefined) return Math.round(rate * 100) / 100;
+  const f = 10 ** p;
+  return Math.round(rate * f) / f;
 }
 
 export function calculerSalaireIntervalle(input: SalaireIntervalleInput): SalaireIntervalleResult {

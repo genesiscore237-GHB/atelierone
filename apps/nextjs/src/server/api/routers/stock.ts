@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, stocks, produits, categories, unitesMesure, mouvementsStock, inventaires, inventairesSessions, deconditionnements, reconditionnements, emplacements, stocksUnites, ventesLignes, ventes, demandesCommande } from "@atelierone/db";
+import { db, stocks, produits, categories, unitesMesure, mouvementsStock, inventaires, inventairesSessions, deconditionnements, reconditionnements, emplacements, stocksUnites, stocksLots, produitUnites, ventesLignes, ventes, demandesCommande } from "@atelierone/db";
 import { eq, and, desc, sql, lt, lte, gte, isNotNull, isNull, count, sum, avg, asc, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSortieUnite, mouvementEntreeUnite, TYPES_MOUVEMENT, sortirPourOR, retourAtelier, reserverStock, libererStock } from "~/server/lib/stock-engine";
 import { PertesService } from "~/server/lib/pertes-service";
-import { sortirStockFIFO, verifierDispoNonPerimee, listerAlertesDlc } from "~/server/lib/lot-service";
+import { sortirStockFIFO, sortirLotSpecifique, verifierDispoNonPerimee, listerAlertesDlc } from "~/server/lib/lot-service";
 import { creerEchangeCore, retournerCoquille, listerCores } from "~/server/lib/core-service";
 import { sortirKit } from "~/server/lib/kit-service";
 import { comptageAutorise, transitionAutorisee, demarrerSessionInventaire, cloturerSessionInventaire } from "~/server/lib/inventaire-service";
@@ -312,15 +312,17 @@ export const stockRouter = createTRPCRouter({
     .input(z.object({
       produitId: z.string().optional(),
       type: z.string().optional(),
+      types: z.array(z.string()).optional(),
       dateDebut: z.string().optional(),
       dateFin: z.string().optional(),
-      limit: z.number().default(50),
+      limit: z.number().default(200),
       offset: z.number().default(0),
     }))
     .query(async ({ ctx, input }) => {
       const conditions = [eq(mouvementsStock.agenceId, ctx.user.agenceId)];
       if (input.produitId) conditions.push(eq(mouvementsStock.produitId, Number(input.produitId)));
       if (input.type) conditions.push(eq(mouvementsStock.type, input.type));
+      if (input.types && input.types.length > 0) conditions.push(inArray(mouvementsStock.type, input.types));
       if (input.dateDebut) conditions.push(gte(mouvementsStock.dateMouvement, new Date(input.dateDebut)));
       if (input.dateFin) conditions.push(lte(mouvementsStock.dateMouvement, new Date(input.dateFin)));
 
@@ -919,6 +921,76 @@ export const stockRouter = createTRPCRouter({
         }, tx as any);
 
         return { type: input.typePerte, quantite: input.quantite, quantiteBase: qteBase, montantPerte, lotId: lotLie };
+      }) as any;
+    }),
+
+  // ─── Sortie d'un lot précis (retour fournisseur, mise au rebut, qualité…) ───
+  // Expose `sortirLotSpecifique` à l'interface pour choisir LE lot à consommer
+  // (au lieu de la sortie FEFO automatique). Le stock global est débité UNE fois
+  // (niveau unité + niveau lot), cohérent avec ajustementManuel / declarerPerte.
+  sortirLotExact: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      produitId: z.string(),
+      lotId: z.number().int(),
+      uniteId: z.string().optional(),
+      quantite: z.number().positive(),
+      motif: z.string().min(3, "Motif requis (min. 3 caractères)"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        if (!input.uniteId) {
+          const [defaut] = await tx.select({ uniteId: produitUnites.uniteId }).from(produitUnites)
+            .where(and(eq(produitUnites.produitId, Number(input.produitId)), eq(produitUnites.estUniteBase, true))).limit(1);
+          if (!defaut) throw new TRPCError({ code: "BAD_REQUEST", message: "Aucune unité de base définie pour ce produit." });
+          input.uniteId = defaut.uniteId;
+        }
+        const facteur = await getFacteurVersBase(tx as any, Number(input.produitId), input.uniteId);
+        const qteBase = input.quantite * facteur;
+        const typeMvt = "ECHANGE_RETOUR_BLANC" as any;
+
+        const [lotRow] = await tx.select({ q: stocksLots.quantite }).from(stocksLots)
+          .where(and(eq(stocksLots.produitId, Number(input.produitId)), eq(stocksLots.lotId, input.lotId)))
+          .for("update") as any[];
+        const disponibleLot = Number(lotRow?.q ?? 0);
+        if (disponibleLot < qteBase) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Stock insuffisant dans ce lot (disponible : ${disponibleLot}, demandé : ${qteBase})` });
+        }
+
+        await mouvementSortieUnite(tx as any, {
+          produitId: Number(input.produitId),
+          agenceId: ctx.user.agenceId,
+          uniteId: input.uniteId,
+          quantite: input.quantite,
+          type: typeMvt,
+          motif: input.motif,
+          effectuePar: Number(ctx.user.id),
+          audit: false,
+        });
+
+        await sortirLotSpecifique(tx as any, {
+          lotId: input.lotId,
+          produitId: Number(input.produitId),
+          agenceId: ctx.user.agenceId,
+          quantite: qteBase,
+          type: typeMvt as any,
+          motif: input.motif,
+          effectuePar: Number(ctx.user.id),
+        });
+
+        await enregistrerMouvement(tx, {
+          produitId: Number(input.produitId),
+          agenceId: ctx.user.agenceId,
+          type: typeMvt,
+          sens: "S",
+          quantite: qteBase,
+          uniteId: input.uniteId,
+          lotId: input.lotId,
+          motif: input.motif,
+          effectuePar: Number(ctx.user.id),
+          audit: false,
+        });
+
+        return { success: true, lotId: input.lotId, quantiteBase: qteBase };
       }) as any;
     }),
 
@@ -1563,6 +1635,7 @@ export const stockRouter = createTRPCRouter({
           motif: input.motif,
           coutUnitaireBase: input.prixAchat ?? null,
           effectuePar: Number(ctx.user.id),
+          synchroniserStocksUnites: true,
         });
         return { stockAvant: res.stockAvant, stockApres: res.stockApres, produitTitre: prod.titre };
       }) as any;

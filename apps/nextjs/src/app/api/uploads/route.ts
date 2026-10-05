@@ -11,6 +11,11 @@ const ALLOWED_TYPES: Record<string, string> = {
   "image/png": ".png",
   "image/webp": ".webp",
   "video/mp4": ".mp4",
+  "application/pdf": ".pdf",
+  "application/msword": ".doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+  "application/vnd.ms-excel": ".xls",
 };
 
 export async function POST(req: NextRequest) {

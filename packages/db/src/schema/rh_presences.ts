@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { employes } from "./employes";
 import { utilisateurs } from "./utilisateurs";
+import { agences } from "./agences";
 
 // ─── RH-02 : présences, autorisations HS, calculs, résumés mensuels ───
 
@@ -26,7 +27,10 @@ export const attendanceEntries = pgTable("attendance_entries", {
   timeOutBreak: time("time_out_break"), // retour de pause (pointage en direct)
   timeOut: time("time_out"),
   source: varchar("source", { length: 20 }).default("manual"), // manual | biometric | import
-  status: varchar("status", { length: 20 }).default("present"), // present | absent | conge | maladie | mission
+  status: varchar("status", { length: 30 }).default("PRESENT"), // PRESENT | ABSENCE_JUSTIFIEE | ABSENCE_INJUSTIFIEE | CONGE | MALADIE | MISSION | FORMATION | NON_POINTÉ | JOUR_INCOMPLET | HORS_PERIODE_EMPLOI
+  absenceType: varchar("absence_type", { length: 30 }), // JUSTIFIEE_REMUNEREE | JUSTIFIEE_NON_REMUNEREE | INJUSTIFIEE | CONGE | MALADIE | MISSION | FORMATION
+  absenceMotif: text("absence_motif"),
+  absenceJustificatif: text("absence_justificatif"),
   notes: text("notes"),
   // specs MVP — validation admin par ligne : l'extra n'est compté que si validé
   validateEarlyArrival: boolean("validate_early_arrival").default(false), // Oui = l'arrivée anticipée compte
@@ -36,6 +40,19 @@ export const attendanceEntries = pgTable("attendance_entries", {
   validatedBy: integer("validated_by").references(() => utilisateurs.id),
   validatedAt: timestamp("validated_at"),
   createdBy: integer("created_by").references(() => utilisateurs.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+/** Configuration des règles de retenue pour retards (paramétrable) */
+export const lateDeductionRules = pgTable("late_deduction_rules", {
+  id: serial("id").primaryKey(),
+  agenceId: integer("agence_id").notNull().references(() => agences.id),
+  name: varchar("name", { length: 120 }).notNull(),
+  method: varchar("method", { length: 30 }).notNull(), // TAUX_HORAIRE | TAUX_JOURNALIER | POURCENTAGE_SALAIRE | FORFAIT_MINUTE | AUTRE
+  params: jsonb("params").default({}), // { tauxHoraire, tauxJournalier, pourcentage, forfaitParMinute, regleInterne }
+  isActive: boolean("is_active").default(true),
+  isDefault: boolean("is_default").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -64,10 +81,13 @@ export const attendanceCalculations = pgTable("attendance_calculations", {
   workedMinutes: integer("worked_minutes").default(0),
   normalMinutes: integer("normal_minutes").default(0),
   overtimeMinutes: integer("overtime_minutes").default(0),
-  lateMinutes: integer("late_minutes").default(0),
+  lateMinutes: integer("late_minutes").default(0), // retard CONSTATÉ (brut)
+  lateDeductibleMinutes: integer("late_deductible_minutes").default(0), // retard DÉDUCTIBLE (après règle)
+  lateDeductionAmount: numeric("late_deduction_amount", { precision: 12, scale: 2 }).default("0"), // impact financier
   earlyDepartureMinutes: integer("early_departure_minutes").default(0),
   isAbsent: boolean("is_absent").default(false),
   codePresence: varchar("code_presence", { length: 2 }).default("P"), // A | HS | R | P (specs MVP)
+  absenceFinancialImpact: numeric("absence_financial_impact", { precision: 12, scale: 2 }).default("0"), // impact salarial absence
   calculationDetails: jsonb("calculation_details"),
   calculatedAt: timestamp("calculated_at").defaultNow(),
 });
@@ -81,6 +101,9 @@ export const attendanceMonthlySummaries = pgTable("attendance_monthly_summaries"
   totalNormalMinutes: integer("total_normal_minutes").default(0),
   totalOvertimeMinutes: integer("total_overtime_minutes").default(0),
   totalLateMinutes: integer("total_late_minutes").default(0),
+  totalLateDeductibleMinutes: integer("total_late_deductible_minutes").default(0),
+  totalLateDeductionAmount: numeric("total_late_deduction_amount", { precision: 12, scale: 2 }).default("0"),
+  totalAbsenceFinancialImpact: numeric("total_absence_financial_impact", { precision: 12, scale: 2 }).default("0"),
   totalTaskBonus: numeric("total_task_bonus", { precision: 12, scale: 2 }).default("0"), // Σ primes de tâche (specs MVP 02/03)
   daysPresent: integer("days_present").default(0),
   daysAbsent: integer("days_absent").default(0),

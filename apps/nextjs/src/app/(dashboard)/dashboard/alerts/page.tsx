@@ -3,6 +3,7 @@
 import { api } from "~/trpc/react";
 import { motion } from "framer-motion";
 import { Bell, AlertTriangle, CheckCircle, Clock } from "lucide-react";
+import { toast } from "sonner";
 
 const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } };
 const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
@@ -13,7 +14,7 @@ export default function AlertsPage() {
 
   const resolveAlert = api.alert.resolveAlert.useMutation({
     onSuccess: () => utils.alert.getActiveAlerts.invalidate(),
-    onError: (e) => alert(e.message),
+    onError: (e) => toast.error(e.message),
   });
 
   function getSeverityBadge(severity: string) {

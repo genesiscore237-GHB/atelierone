@@ -1,12 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
-import { CalendarDays, Check, ClipboardList, Plus, X } from "lucide-react";
+import { useEmployeFromUrl } from "~/hooks/useEmployeFromUrl";
+import { CalendarDays, Check, ClipboardList, History, Loader2, Plus, RefreshCw, X } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { usePermissions } from "~/hooks/usePermissions";
+import HistoriqueDialog from "./HistoriqueDialog";
 
 const TABS = [
   { id: "demandes", label: "Demandes", icon: ClipboardList },
@@ -74,6 +77,8 @@ function DemandesSection() {
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [reason, setReason] = useState("");
+  const employeUrl = useEmployeFromUrl();
+  useEffect(() => { if (employeUrl) setEmployeeId(String(employeUrl)); }, [employeUrl]);
 
   const create = api.rhLeave.createRequest.useMutation({
     onSuccess: () => {
@@ -197,7 +202,10 @@ function DemandesSection() {
 function SoldesSection() {
   const year = new Date().getFullYear();
   const utils = api.useUtils();
-  const { data: balances } = api.rhLeave.getBalances.useQuery({ year });
+  const { hasPermission } = usePermissions();
+  const [histOpen, setHistOpen] = useState(false);
+  const { data: snapshots, isLoading: histLoading, isError: histError, refetch: histRefetch } = api.rhLeave.listBalanceSnapshots.useQuery(undefined, { enabled: histOpen });
+  const { data: balances, isLoading } = api.rhLeave.getBalances.useQuery({ year });
   const [adjusting, setAdjusting] = useState<{ id: number; label: string } | null>(null);
   const [amount, setAmount] = useState("1");
   const [reason, setReason] = useState("");
@@ -212,13 +220,42 @@ function SoldesSection() {
     onError: (e) => toast.error(e.message),
   });
 
+  // P15 : les soldes manquants sont virtuels (id null) — création explicite
+  const sync = api.rhLeave.ensureBalances.useMutation({
+    onSuccess: (res) => {
+      toast.success(res.created > 0 ? `${res.created} solde(s) créé(s)` : "Soldes déjà à jour");
+      utils.rhLeave.getBalances.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const list = (balances ?? []) as unknown as Array<{
-    id: number; employeNom: string; employePrenom: string; matricule: string;
+    id: number | null; employeeId: number; employeNom: string; employePrenom: string; matricule: string;
     leaveTypeName: string; acquiredDays: string; takenDays: string; adjustedDays: string; balance: string;
+    isVirtual: boolean;
   }>;
+
+  const onAdjustClick = (b: (typeof list)[number]) => {
+    if (b.id == null) {
+      toast.error("Soldes virtuels — cliquez sur « Synchroniser les soldes » avant ajustement");
+      return;
+    }
+    setAdjusting({ id: b.id, label: `${b.employePrenom} ${b.employeNom} — ${b.leaveTypeName}` });
+  };
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-end gap-3">
+        {hasPermission("rh.conge.modifier") && (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setHistOpen(true)}>
+            <History size={14} /> Historique des soldes
+          </Button>
+        )}
+        <Button variant="outline" size="sm" disabled={sync.isPending} onClick={() => sync.mutate({ year })}>
+          {sync.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw size={14} />}
+          Synchroniser les soldes
+        </Button>
+      </div>
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
         <table className="w-full">
           <thead className="bg-muted/40 text-left text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
@@ -234,21 +271,28 @@ function SoldesSection() {
           </thead>
           <tbody className="divide-y divide-border/60">
             {list.map((b) => (
-              <tr key={b.id} className="text-sm text-foreground">
-                <td className="px-4 py-2">{b.employePrenom} {b.employeNom} <span className="ml-1 font-mono text-[10px] text-muted-foreground">{b.matricule}</span></td>
+              <tr key={`${b.id ?? "v"}-${b.employeeId ?? b.leaveTypeName}-${b.leaveTypeName}`} className="text-sm text-foreground">
+                <td className="px-4 py-2">
+                  {b.employePrenom} {b.employeNom} <span className="ml-1 font-mono text-[10px] text-muted-foreground">{b.matricule}</span>
+                  {b.isVirtual && (
+                    <span className="ml-2 rounded bg-warning/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-warning-foreground" title="Non persisté — synchronisez pour créer la ligne">Virtuel</span>
+                  )}
+                </td>
                 <td className="px-4 py-2">{b.leaveTypeName}</td>
                 <td className="px-4 py-2 text-right font-mono text-xs">{b.acquiredDays}</td>
                 <td className="px-4 py-2 text-right font-mono text-xs text-destructive">{b.takenDays}</td>
                 <td className="px-4 py-2 text-right font-mono text-xs text-warning-foreground">{b.adjustedDays}</td>
                 <td className="px-4 py-2 text-right font-mono text-xs font-bold">{b.balance}</td>
                 <td className="px-4 py-2">
-                  <Button size="sm" variant="outline" onClick={() => setAdjusting({ id: b.id, label: `${b.employePrenom} ${b.employeNom} — ${b.leaveTypeName}` })}>
+                  <Button size="sm" variant="outline" disabled={b.id == null} onClick={() => onAdjustClick(b)}>
                     Ajuster
                   </Button>
                 </td>
               </tr>
             ))}
-            {list.length === 0 && (
+            {isLoading ? (
+              <tr><td colSpan={7} className="px-4 py-8 text-center"><Loader2 className="mx-auto size-5 animate-spin text-muted-foreground" /></td></tr>
+            ) : list.length === 0 && (
               <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">Aucun solde pour cette année.</td></tr>
             )}
           </tbody>
@@ -279,6 +323,26 @@ function SoldesSection() {
           </div>
         </div>
       )}
+
+      <HistoriqueDialog
+        open={histOpen}
+        onClose={() => setHistOpen(false)}
+        title="Historique des soldes de congés (versionné)"
+        emptyLabel="Aucun solde archivé — chaque décision ou ajustement conservera le solde antérieur."
+        rows={(snapshots ?? []).map((s: any) => ({
+          id: s.id,
+          version: s.version,
+          raison: s.raison,
+          creatorPrenom: s.creatorPrenom,
+          creatorName: s.creatorName,
+          createdBy: s.createdBy,
+          createdAt: s.createdAt,
+          detail: s.entityJson,
+        }))}
+        isLoading={histLoading}
+        isError={histError}
+        onRetry={() => histRefetch()}
+      />
     </div>
   );
 }

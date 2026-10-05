@@ -1,12 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   AlertTriangle, Filter, Loader2, Plus, Search, Users, X,
 } from "lucide-react";
 import { api } from "~/trpc/react";
 import { usePermissions } from "~/hooks/usePermissions";
+import { statutColor, statutLabel, typeLabel } from "~/lib/rh-labels";
 import { EmployeeForm } from "./EmployeeForm";
 import { ModuleHeader } from "../../governance/_components/ModuleHeader";
 
@@ -28,32 +31,30 @@ interface Employee {
   createdAt: string;
 }
 
-const statutColors: Record<string, string> = {
-  actif: "text-success-foreground bg-success/10",
-  conge: "text-warning-foreground bg-warning/10",
-  suspendu: "text-destructive bg-destructive/10",
-  archive: "text-muted-foreground bg-muted/10",
-};
-
-const typeLabels: Record<string, string> = {
-  permanent: "CDI",
-  contractuel: "CDD",
-  stagiaire: "Stage",
-  temporaire: "Temporaire",
-  apprenti: "Apprenti",
-  prestataire: "Prestataire",
-};
-
 export function EmployeesPageClient() {
   const { hasPermission } = usePermissions();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
-  const [filterStatut, setFilterStatut] = useState<string>("all");
-  const [filterType, setFilterType] = useState<string>("all");
+  const [filterStatut, setFilterStatut] = useState<string>(() => searchParams.get("statut") ?? "all");
+  const [filterType, setFilterType] = useState<string>(() => searchParams.get("type") ?? "all");
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [panelOpen, setPanelOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const limit = 50;
+
+  const syncFilters = (statut: string, type: string) => {
+    const p = new URLSearchParams(searchParams.toString());
+    if (statut !== "all") p.set("statut", statut); else p.delete("statut");
+    if (type !== "all") p.set("type", type); else p.delete("type");
+    const qs = p.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
+
+  const changeStatut = (v: string) => { setFilterStatut(v); setPage(1); syncFilters(v, filterType); };
+  const changeType = (v: string) => { setFilterType(v); setPage(1); syncFilters(filterStatut, v); };
 
   const { data, isLoading, error } = api.rh.list.useQuery({
     page,
@@ -84,9 +85,9 @@ export function EmployeesPageClient() {
     <div className="animate-in fade-in duration-500 p-6">
       <ModuleHeader
         title="Employés"
-        description="Gérez les employés de votre librairie"
+        description="Gérez les employés de votre structure"
         actions={
-          hasPermission("rh.utilisateur.creer") && (
+          hasPermission("rh.employe.modifier") && (
             <button
               onClick={openCreate}
               className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-foreground shadow-lg shadow-primary/20 transition-all hover:bg-primary/90"
@@ -99,19 +100,33 @@ export function EmployeesPageClient() {
       />
 
       {stats && (
-        <div className="mb-6 grid grid-cols-5 gap-3">
+        <div className="mb-6 grid grid-cols-6 gap-3">
           {[
-            { label: "Total", value: stats.total, color: "text-foreground" },
-            { label: "Actifs", value: stats.actif, color: "text-success-foreground" },
-            { label: "Congé", value: stats.conge, color: "text-warning-foreground" },
-            { label: "Suspendus", value: stats.suspendu, color: "text-destructive" },
-            { label: "Archivés", value: stats.archive, color: "text-muted-foreground" },
-          ].map((s) => (
-            <div key={s.label} className="rounded-xl border border-border bg-accent/5 p-4">
-              <p className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">{s.label}</p>
-              <p className={`mt-1 text-2xl font-black ${s.color}`}>{s.value}</p>
-            </div>
-          ))}
+            { label: "Total", value: stats.total, color: "text-foreground", statut: "all" },
+            { label: "Actifs", value: stats.actif, color: "text-success-foreground", statut: "actif" },
+            { label: "Congé", value: stats.conge, color: "text-warning-foreground", derive: true },
+            { label: "Suspendus", value: stats.suspendu, color: "text-destructive", statut: "suspendu" },
+            { label: "Archivés", value: stats.archive, color: "text-muted-foreground", statut: "archive" },
+            { label: "Sortis", value: stats.sorti, color: "text-muted-foreground", statut: "sorti" },
+          ].map((s) =>
+            s.derive ? (
+              <div key={s.label} className="rounded-xl border border-border bg-accent/5 p-4" title="Situation dérivée (R6) — pas un statut administratif">
+                <p className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">{s.label} *</p>
+                <p className={`mt-1 text-2xl font-black ${s.color}`}>{s.value}</p>
+              </div>
+            ) : (
+              <button
+                key={s.label}
+                type="button"
+                onClick={() => changeStatut(s.statut)}
+                title={`Filtrer la liste : statut ${s.label}`}
+                className={`rounded-xl border border-border bg-accent/5 p-4 text-left transition-colors hover:border-primary/40 hover:bg-accent/20 ${filterStatut === s.statut ? "border-primary/60" : ""}`}
+              >
+                <p className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase">{s.label}</p>
+                <p className={`mt-1 text-2xl font-black ${s.color}`}>{s.value}</p>
+              </button>
+            )
+          )}
         </div>
       )}
 
@@ -127,18 +142,18 @@ export function EmployeesPageClient() {
         </div>
         <select
           value={filterStatut}
-          onChange={(e) => { setFilterStatut(e.target.value); setPage(1); }}
+          onChange={(e) => changeStatut(e.target.value)}
           className="rounded-lg border border-border bg-accent/5 px-3 py-2 text-xs text-foreground outline-none"
         >
           <option value="all">Tous statuts</option>
           <option value="actif">Actif</option>
-          <option value="conge">Congé</option>
-          <option value="suspendu">Suspendu</option>
+          <option value="suspendu">Suspendu (dérivé)</option>
           <option value="archive">Archivé</option>
+          <option value="sorti">Sorti</option>
         </select>
         <select
           value={filterType}
-          onChange={(e) => { setFilterType(e.target.value); setPage(1); }}
+          onChange={(e) => changeType(e.target.value)}
           className="rounded-lg border border-border bg-accent/5 px-3 py-2 text-xs text-foreground outline-none"
         >
           <option value="all">Tous types</option>
@@ -206,17 +221,19 @@ export function EmployeesPageClient() {
                 >
                   <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{emp.matricule}</td>
                   <td className="px-4 py-3">
-                    <span className="text-sm font-medium text-foreground">{emp.prenom} {emp.nom}</span>
+                    <Link href={`/dashboard/rh/employes/${emp.id}`} className="text-sm font-medium text-foreground hover:text-primary hover:underline">
+                      {emp.prenom} {emp.nom}
+                    </Link>
                   </td>
                   <td className="px-4 py-3 text-sm text-foreground/80">{emp.fonction}</td>
                   <td className="px-4 py-3">
                     <span className="rounded-md border border-border bg-accent/5 px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
-                      {typeLabels[emp.typeEmploye] ?? emp.typeEmploye}
+                      {typeLabel(emp.typeEmploye)}
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${statutColors[emp.statut] ?? "text-muted-foreground"}`}>
-                      {emp.statut}
+                    <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${statutColor(emp.statut)}`}>
+                      {statutLabel(emp.statut)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
@@ -231,9 +248,16 @@ export function EmployeesPageClient() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
+                    <Link
+                      href={`/dashboard/rh/employes/${emp.id}`}
+                      className="mr-2 inline-block rounded-lg border border-primary/30 px-3 py-1 text-[10px] font-bold text-primary transition-colors hover:bg-primary/10"
+                    >
+                      Fiche
+                    </Link>
                     <button
                       onClick={() => openEdit(emp.id)}
-                      className="rounded-lg border border-border px-3 py-1 text-[10px] font-bold text-muted-foreground transition-colors hover:bg-accent/30 hover:text-foreground"
+                      className="rounded-lg border border-border px-3 py-1 text-[10px] font-bold text-muted-foreground transition-colors hover:bg-accent/30 hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+                      disabled={!hasPermission("rh.employe.modifier")}
                     >
                       Modifier
                     </button>

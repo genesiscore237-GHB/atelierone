@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { api } from "~/trpc/react";
 import { motion } from "framer-motion";
+import { toast } from "sonner";
 import { TrendingUp, Calendar, BarChart3, PieChart as PieIcon, AlertTriangle, RotateCcw, Download, Search, Package, Boxes, HelpCircle } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart as RechartsPieChart, Pie, Cell, Legend } from "recharts";
 import LotsTab from "./lots-tab";
@@ -80,7 +81,7 @@ export default function MargePage() {
       URL.revokeObjectURL(url);
     } catch (e) {
       console.error("Export failed:", e);
-      alert("Échec de l'export. Réessayez.");
+      toast.error("Échec de l'export. Réessayez.");
     } finally {
       setExporting(false);
     }

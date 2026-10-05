@@ -19,6 +19,7 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Skeleton } from "~/components/ui/skeleton";
+import { ConfirmationDialog } from "~/components/ui/confirmation-dialog";
 
 const DAY_NAMES = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
 
@@ -205,7 +206,8 @@ function CyclesSection({
   data: RhSettingsUI;
   invalidate: () => void;
 }) {
-  const [editing, setEditing] = useState<CycleDraft | null>(null);
+const [editing, setEditing] = useState<CycleDraft | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<null | { message: string; run: () => void }>(null);
 
   const createMutation = api.rhSettings.createCycle.useMutation({
     onSuccess: () => {
@@ -300,15 +302,11 @@ function CyclesSection({
               >
                 Modifier
               </Button>
-              <Button
+<Button
                 size="sm"
                 variant="ghost"
                 className="text-destructive hover:bg-destructive/10"
-                onClick={() => {
-                  if (window.confirm(`Supprimer le cycle « ${cycle.name} » ?`)) {
-                    deleteMutation.mutate({ id: cycle.id });
-                  }
-                }}
+                onClick={() => setConfirmDelete({ message: `Supprimer le cycle « ${cycle.name} » ?`, run: () => deleteMutation.mutate({ id: cycle.id }) })}
               >
                 <Trash2 size={15} />
               </Button>
@@ -461,9 +459,18 @@ function CyclesSection({
                 <Save size={15} /> Enregistrer
               </Button>
             </div>
-          </div>
+</div>
         </div>
       )}
+      <ConfirmationDialog
+        isOpen={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => confirmDelete?.run()}
+        title="Supprimer le cycle"
+        description={confirmDelete?.message ?? ""}
+        confirmText="Supprimer"
+        variant="destructive"
+      />
     </div>
   );
 }
@@ -594,10 +601,11 @@ function LeaveTypesSection({
     onSuccess: () => { toast.success("Type de congé mis à jour"); invalidate(); setDraft(null); },
     onError: (e) => toast.error(e.message),
   });
-  const deleteMutation = api.rhSettings.deleteLeaveType.useMutation({
+const deleteMutation = api.rhSettings.deleteLeaveType.useMutation({
     onSuccess: () => { toast.success("Type de congé supprimé"); invalidate(); },
     onError: (e) => toast.error(e.message),
   });
+  const [confirmDel, setConfirmDel] = useState<null | { message: string; run: () => void }>(null);
 
   const save = () => {
     if (!draft) return;
@@ -637,7 +645,7 @@ function LeaveTypesSection({
               <Button size="sm" variant="outline" onClick={() => setDraft({ id: lt.id, code: lt.code, name: lt.name, isPaid: lt.isPaid, deductBalance: lt.deductBalance, requiresDocument: lt.requiresDocument, color: lt.color ?? "#6366f1", active: lt.active })}>
                 Modifier
               </Button>
-              <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => { if (window.confirm(`Supprimer « ${lt.name} » ?`)) deleteMutation.mutate({ id: lt.id }); }}>
+<Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => setConfirmDel({ message: `Supprimer « ${lt.name} » ?`, run: () => deleteMutation.mutate({ id: lt.id }) })}>
                 <Trash2 size={15} />
               </Button>
             </div>
@@ -674,7 +682,7 @@ function LeaveTypesSection({
               </label>
             ))}
           </div>
-          <div className="flex gap-2">
+<div className="flex gap-2">
             <Button variant="outline" onClick={() => setDraft(null)}>Annuler</Button>
             <Button onClick={save} disabled={createMutation.isPending || updateMutation.isPending}>
               <Save size={15} /> Enregistrer
@@ -682,6 +690,15 @@ function LeaveTypesSection({
           </div>
         </div>
       )}
+      <ConfirmationDialog
+        isOpen={!!confirmDel}
+        onClose={() => setConfirmDel(null)}
+        onConfirm={() => confirmDel?.run()}
+        title="Supprimer le type de congé"
+        description={confirmDel?.message ?? ""}
+        confirmText="Supprimer"
+        variant="destructive"
+      />
     </div>
   );
 }
@@ -704,10 +721,11 @@ function SanctionsSection({
     onSuccess: () => { toast.success("Type de sanction mis à jour"); invalidate(); setDraft(null); },
     onError: (e) => toast.error(e.message),
   });
-  const deleteMutation = api.rhSettings.deleteSanctionType.useMutation({
+const deleteMutation = api.rhSettings.deleteSanctionType.useMutation({
     onSuccess: () => { toast.success("Type de sanction supprimé"); invalidate(); },
     onError: (e) => toast.error(e.message),
   });
+  const [confirmDel, setConfirmDel] = useState<null | { message: string; run: () => void }>(null);
 
   const save = () => {
     if (!draft) return;
@@ -740,7 +758,7 @@ function SanctionsSection({
               <Button size="sm" variant="outline" onClick={() => setDraft({ id: st.id, code: st.code, name: st.name, severityLevel: st.severityLevel, active: st.active })}>
                 Modifier
               </Button>
-              <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => { if (window.confirm(`Supprimer « ${st.name} » ?`)) deleteMutation.mutate({ id: st.id }); }}>
+<Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => setConfirmDel({ message: `Supprimer « ${st.name} » ?`, run: () => deleteMutation.mutate({ id: st.id }) })}>
                 <Trash2 size={15} />
               </Button>
             </div>
@@ -765,7 +783,7 @@ function SanctionsSection({
               <Input type="number" min={1} max={5} value={draft.severityLevel} onChange={(e) => setDraft({ ...draft, severityLevel: Number(e.target.value) })} />
             </div>
           </div>
-          <div className="flex gap-2">
+<div className="flex gap-2">
             <Button variant="outline" onClick={() => setDraft(null)}>Annuler</Button>
             <Button onClick={save} disabled={createMutation.isPending || updateMutation.isPending}>
               <Save size={15} /> Enregistrer
@@ -773,6 +791,15 @@ function SanctionsSection({
           </div>
         </div>
       )}
+      <ConfirmationDialog
+        isOpen={!!confirmDel}
+        onClose={() => setConfirmDel(null)}
+        onConfirm={() => confirmDel?.run()}
+        title="Supprimer le type de sanction"
+        description={confirmDel?.message ?? ""}
+        confirmText="Supprimer"
+        variant="destructive"
+      />
     </div>
   );
 }
@@ -793,10 +820,11 @@ function HolidaysSection({
     onSuccess: () => { toast.success("Jour férié ajouté"); invalidate(); setDate(""); setName(""); },
     onError: (e) => toast.error(e.message),
   });
-  const deleteMutation = api.rhSettings.deleteHoliday.useMutation({
+const deleteMutation = api.rhSettings.deleteHoliday.useMutation({
     onSuccess: () => { toast.success("Jour férié supprimé"); invalidate(); },
     onError: (e) => toast.error(e.message),
   });
+  const [confirmDel, setConfirmDel] = useState<null | { message: string; run: () => void }>(null);
 
   return (
     <div className="max-w-2xl space-y-4">
@@ -839,15 +867,24 @@ function HolidaysSection({
                 {h.date} {h.isRecurringYearly ? "· récurrent" : ""}
               </span>
             </div>
-            <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => { if (window.confirm(`Supprimer « ${h.name} » ?`)) deleteMutation.mutate({ id: h.id }); }}>
+            <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => setConfirmDel({ message: `Supprimer le jour férié « ${h.name} » ?`, run: () => deleteMutation.mutate({ id: h.id }) })}>
               <Trash2 size={15} />
             </Button>
           </div>
         ))}
-        {data.holidays.length === 0 && (
+{data.holidays.length === 0 && (
           <p className="py-8 text-center text-sm text-muted-foreground">Aucun jour férié enregistré.</p>
         )}
       </div>
+      <ConfirmationDialog
+        isOpen={!!confirmDel}
+        onClose={() => setConfirmDel(null)}
+        onConfirm={() => confirmDel?.run()}
+        title="Supprimer le jour férié"
+        description={confirmDel?.message ?? ""}
+        confirmText="Supprimer"
+        variant="destructive"
+      />
     </div>
   );
 }

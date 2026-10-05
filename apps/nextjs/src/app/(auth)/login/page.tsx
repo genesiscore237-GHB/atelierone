@@ -14,6 +14,8 @@ function LoginContent() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [totp, setTotp] = useState("");
+  const [needTotp, setNeedTotp] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -23,6 +25,21 @@ function LoginContent() {
   useEffect(() => {
     if (activated === "true") setShowActivated(true);
   }, [activated]);
+
+  // Détection 2FA : affiche le champ code quand le compte l'exige
+  useEffect(() => {
+    if (!email.trim().includes("@")) return;
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/auth/2fa-status?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+        const data = await res.json();
+        setNeedTotp(data?.required === true);
+      } catch {
+        setNeedTotp(false);
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [email]);
 
   // Première connexion state
   const [showFirstLogin, setShowFirstLogin] = useState(false);
@@ -42,10 +59,11 @@ function LoginContent() {
     setError("");
     if (!email.trim()) { setError("Email requis"); return; }
     if (!password.trim()) { setError("Mot de passe requis"); return; }
+    if (needTotp && !totp.trim()) { setError("Code 2FA requis"); return; }
     setIsLoading(true);
     try {
-      const result = await signIn("credentials", { email: email.trim().toLowerCase(), password, redirect: false });
-      if (result?.error) { setError("Identifiants incorrects."); setIsLoading(false); return; }
+      const result = await signIn("credentials", { email: email.trim().toLowerCase(), password, totp: needTotp ? totp.trim() : "", redirect: false });
+      if (result?.error) { setError(needTotp ? "Code 2FA invalide ou expiré." : "Identifiants incorrects."); setIsLoading(false); return; }
       router.push("/dashboard");
       router.refresh();
     } catch { setError("Erreur de connexion."); setIsLoading(false); }

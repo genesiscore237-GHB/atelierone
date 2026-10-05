@@ -10,5 +10,5 @@ export default async function CatalogLayout({
   const session = await auth();
   if (!session?.user) redirect("/auth/signin");
 
-  return <ModuleShell domainId="stock">{children}</ModuleShell>;
+  return <ModuleShell domainId="catalogue">{children}</ModuleShell>;
 }

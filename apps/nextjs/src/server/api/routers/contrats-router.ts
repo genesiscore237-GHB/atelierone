@@ -25,6 +25,7 @@ import {
   calculerEcheance,
   genererReferenceFacture,
   montantLigne,
+  verrouillerSequenceFacture,
   MODES_PAIEMENT,
 } from "~/server/lib/facturation-service";
 import { STATUTS_FACTURABLES } from "~/server/lib/atelier-service";
@@ -406,6 +407,9 @@ export const contratsRouter = createTRPCRouter({
         const total = calculerTotalFacture(lignesBrutes, remisePourcent);
         const delaiJours = Number(contrat.delaiPaiementJours ?? 0);
         const montantPaye = input.modePaiement === "credit" ? 0 : total;
+
+        // Verrou anti-doublon FAC- : sérialise le comptage dans la transaction (P2-11).
+        await verrouillerSequenceFacture(tx, ctx.user.agenceId);
 
         const [last] = await tx
           .select({ n: sql<number>`count(*)::int` })

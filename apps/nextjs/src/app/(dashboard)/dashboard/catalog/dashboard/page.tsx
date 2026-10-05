@@ -1,310 +1,483 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { api } from "~/trpc/react";
-import { RefreshCw, Download, Wrench, Clock3, AlertTriangle, TrendingUp } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
-import { toast } from "sonner";
+import {
+  Package, Layers, Wrench, HardHat, Briefcase,
+  CheckCircle2, AlertTriangle, AlertOctagon, Info,
+  PackageX, TrendingDown, ArrowRightLeft, Clock,
+  CalendarClock, ChevronRight, RefreshCw, Plus,
+  Boxes, CircleDot, ShieldCheck, ChevronDown,
+  Droplet, Puzzle, Building2,
+} from "lucide-react";
 import Link from "next/link";
+import { Button } from "~/components/ui/button";
+import { toast } from "sonner";
+import { usePermissions } from "~/hooks/usePermissions";
+import { isDev } from "~/lib/app-nav";
+import { Skeleton } from "~/components/ui/skeleton";
+import { Badge } from "~/components/ui/badge";
 
-const PERIODS = ["Aujourd'hui", "Cette semaine", "Ce mois", "Ce trimestre", "Cette année scolaire", "Personnalisé"];
+const TYPE_LABELS: Record<string, { label: string; icon: typeof Package }> = {
+  PIECE: { label: "Pièces", icon: Package },
+  CONSOMMABLE: { label: "Consommables", icon: Boxes },
+  OUTIL: { label: "Outils", icon: Wrench },
+  EQUIPEMENT: { label: "Équipements", icon: HardHat },
+  SERVICE: { label: "Services", icon: Briefcase },
+};
 
-function getCriticite(stock: number, seuil: number): { label: string; cls: string } {
-  if (stock <= 0) return { label: "Rupture", cls: "text-destructive" };
-  if (stock <= seuil * 0.5) return { label: "Critique", cls: "text-destructive" };
-  return { label: "Bas", cls: "text-warning-foreground" };
-}
+const PROBLEM_ICONS: Record<string, typeof AlertTriangle> = {
+  INCOMPLETE_ARTICLE: AlertOctagon,
+  MISSING_CATEGORY: AlertTriangle,
+  MISSING_BRAND: Info,
+  MISSING_PRIMARY_REFERENCE: Info,
+  DUPLICATE_CANDIDATE: AlertOctagon,
+  ORPHAN_VARIANTE: AlertTriangle,
+};
 
-const BGS = ["bg-primary", "bg-primary", "bg-success", "bg-warning", "bg-destructive", "bg-info"];
+const SEVERITY_COLORS: Record<string, string> = {
+  error: "border-destructive/30 bg-destructive/5",
+  warning: "border-amber-500/30 bg-amber-500/5",
+  info: "border-sky-500/30 bg-sky-500/5",
+};
 
-function computeDateRange(periode: string): { dateDebut?: string; dateFin?: string } {
-  const now = new Date();
-  const fmt = (d: Date) => d.toISOString().split("T")[0];
-  switch (periode) {
-    case "Aujourd'hui": return { dateDebut: fmt(now), dateFin: fmt(now) };
-    case "Cette semaine": {
-      const start = new Date(now); start.setDate(now.getDate() - now.getDay());
-      return { dateDebut: fmt(start), dateFin: fmt(now) };
-    }
-    case "Ce mois": return { dateDebut: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), dateFin: fmt(now) };
-    case "Ce trimestre": {
-      const q = Math.floor(now.getMonth() / 3);
-      return { dateDebut: fmt(new Date(now.getFullYear(), q * 3, 1)), dateFin: fmt(now) };
-    }
-    case "Cette année scolaire": return { dateDebut: fmt(new Date(now.getFullYear() - (now.getMonth() < 8 ? 1 : 0), 9, 1)), dateFin: fmt(now) };
-    default: return {};
-  }
-}
+const SEVERITY_BADGE: Record<string, string> = {
+  error: "bg-destructive/10 text-destructive",
+  warning: "bg-amber-500/10 text-amber-600",
+  info: "bg-sky-500/10 text-sky-600",
+};
 
 export default function CatalogDashboardPage() {
-  const [period, setPeriod] = useState("Ce mois");
+  const { hasPermission } = usePermissions();
+  const peutConsulter = hasPermission("stock.consulter");
+
+  const { data, isLoading, isError, error, refetch } = api.catalog.apercu.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+    retry: 1,
+  });
+
   const [refreshing, setRefreshing] = useState(false);
-  const [dateDebut, setDateDebut] = useState("");
-  const [dateFin, setDateFin] = useState("");
-
-  const [filterType, setFilterType] = useState<string | null>(null);
-
-  const range = period === "Personnalisé" ? { dateDebut, dateFin } : computeDateRange(period);
-  const queryInput = { periode: period, dateDebut: range.dateDebut, dateFin: range.dateFin };
-
-  const { data: agg, refetch } = api.dashboard.getCatalogDashboard.useQuery(queryInput, { refetchOnWindowFocus: false });
-  const { data: lowStock } = api.inventory.getLowStock.useQuery(undefined, { refetchOnWindowFocus: false });
-  const exportMutation = api.dashboard.exportComparatif.useMutation();
-
-  const caTotal = agg?.caTotal ?? 0;
-  const totalItemsVendus = agg?.nbProduitsVendus ?? 0;
-  const valeurStock = agg?.valeurStock ?? 0;
-
-  const critiques = lowStock?.filter((i: any) => Number(i.quantite) <= Number(i.seuilAlerte) * 0.5)?.length ?? 0;
-  const bas = lowStock?.filter((i: any) => Number(i.quantite) > Number(i.seuilAlerte) * 0.5)?.length ?? 0;
-
-  const handleRefresh = useCallback(() => {
-    setRefreshing(true);
-    refetch();
-    setTimeout(() => setRefreshing(false), 1000);
-    toast.success("Données actualisées");
-  }, [refetch]);
+  const [creerOpen, setCreerOpen] = useState(false);
+  const creerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const timer = setInterval(() => refetch(), 60000);
-    return () => clearInterval(timer);
-  }, [refetch]);
+    const onDocClick = (e: MouseEvent) => {
+      if (creerRef.current && !creerRef.current.contains(e.target as Node)) setCreerOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
 
-  const totalCaParType = (agg?.caParType ?? []).reduce((s, r) => s + r.total, 0);
-  const caPieces = (agg?.caParType ?? []).filter(r => r.type === "PIECE" || r.type === "MANUEL").reduce((s, r) => s + r.total, 0);
-  const caServices = totalCaParType - caPieces;
-  const pctPieces = totalCaParType > 0 ? Math.round(caPieces / totalCaParType * 100) : 0;
-  const pctServices = totalCaParType > 0 ? 100 - pctPieces : 0;
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refetch();
+      toast.success("Données actualisées");
+    } catch {
+      toast.error("Impossible d'actualiser les données");
+    } finally {
+      setTimeout(() => setRefreshing(false), 500);
+    }
+  };
 
-  const ventesNiveau = agg?.ventesParNiveau ?? [];
+  if (!peutConsulter) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+        <AlertTriangle size={15} /> Vous n&apos;avez pas la permission de consulter le catalogue.
+      </div>
+    );
+  }
+
+  const CREER_OPTIONS = [
+    { label: "Pièce", icon: Package },
+    { label: "Consommable", icon: Droplet },
+    { label: "Kit", icon: Puzzle },
+    { label: "Outil", icon: Wrench },
+    { label: "Équipement", icon: Building2 },
+    { label: "Service", icon: Briefcase },
+  ];
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
-      <h1 className="text-lg font-semibold text-foreground">Tableau de bord Catalogue</h1>
-
-      {/* FILTRES */}
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <span className="text-foreground/80 font-medium">Période :</span>
-        <Select value={period} onValueChange={v => { setPeriod(v); }}>
-          <SelectTrigger className="h-8 w-44 border-border bg-muted/50 text-foreground text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="border-border bg-card text-foreground">
-            {PERIODS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        {period === "Personnalisé" && (
-          <div className="flex items-center gap-2">
-            <input type="date" value={dateDebut} onChange={e => setDateDebut(e.target.value)}
-              className="h-8 rounded border border-border bg-muted/50 px-2 text-xs text-foreground" />
-            <span className="text-muted-foreground">→</span>
-            <input type="date" value={dateFin} onChange={e => setDateFin(e.target.value)}
-              className="h-8 rounded border border-border bg-muted/50 px-2 text-xs text-foreground" />
-          </div>
-        )}
-
-        <button onClick={handleRefresh} disabled={refreshing}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/50 px-3 py-1.5 text-xs text-foreground/80 hover:text-foreground transition-colors">
-          <RefreshCw className={`size-3 ${refreshing ? "animate-spin" : ""}`} />
-        </button>
-      </div>
-
-      {/* ROW 1 — KPI CARDS */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl border border-border bg-card/50 p-5">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">CA Total</p>
-          <p className="mt-1 text-2xl font-bold text-foreground">{caTotal.toLocaleString()} F</p>
-          {agg?.comparatif?.evolution && (
-            <p className="mt-0.5 text-xs text-success-foreground">vs N-1 : {agg.comparatif.evolution}</p>
-          )}
+    <div className="space-y-6 p-4 md:p-6">
+      {/* ─── HEADER ─── */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Vue d&apos;ensemble — Catalogue</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Référentiel articles, variantes, outillage, équipements et services.
+          </p>
         </div>
-        <div className="rounded-xl border border-border bg-card/50 p-5">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">Produits vendus</p>
-          <p className="mt-1 text-2xl font-bold text-foreground">{totalItemsVendus.toLocaleString()}</p>
-        </div>
-        <div className="rounded-xl border border-border bg-card/50 p-5">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">Valeur stock</p>
-          <p className="mt-1 text-2xl font-bold text-foreground">{valeurStock >= 1_000_000 ? `${(valeurStock / 1_000_000).toFixed(1)} M` : valeurStock.toLocaleString()} F</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">—</p>
-        </div>
-        <Link href="#alertes-stock" className="block rounded-xl border border-border bg-card/50 p-5 hover:border-border transition-colors">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">Alertes stock</p>
-          <p className="mt-1 text-2xl font-bold text-foreground">{lowStock?.length ?? 0}</p>
-          <div className="mt-1 flex gap-1.5 flex-wrap">
-            <span className="inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">{critiques} critiques</span>
-            <span className="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning-foreground">{bas} à surveiller</span>
-          </div>
-        </Link>
-      </div>
-
-      {/* ROW 2 — GRAPHS */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card/50 p-5">
-          <h4 className="text-sm font-semibold text-foreground mb-4">Répartition CA par type</h4>
-          {totalCaParType > 0 ? (
-            <div className="flex items-center gap-6">
-              <div className="shrink-0 size-24 rounded-full"
-                style={{ background: `conic-gradient(#3B82F6 0deg ${pctPieces * 3.6}deg, #F59E0B ${pctPieces * 3.6}deg 360deg)` }} />
-              <div className="text-sm space-y-2">
-                <button onClick={() => setFilterType(filterType === "manuels" ? null : "manuels")}
-                  className={`flex items-center gap-2 transition-colors w-full text-left ${filterType === "manuels" ? "opacity-100" : filterType ? "opacity-40 hover:opacity-70" : "hover:opacity-80"}`}>
-                  <span className="inline-block size-3 rounded-sm bg-primary" />
-                  <span className="text-foreground/80"><Wrench className="inline size-3.5 mr-1" /> Pièces : {pctPieces}% ({caPieces.toLocaleString()} F)</span>
-                </button>
-                <button onClick={() => setFilterType(filterType === "fournitures" ? null : "fournitures")}
-                  className={`flex items-center gap-2 transition-colors w-full text-left ${filterType === "fournitures" ? "opacity-100" : filterType ? "opacity-40 hover:opacity-70" : "hover:opacity-80"}`}>
-                  <span className="inline-block size-3 rounded-sm bg-warning" />
-                  <span className="text-foreground/80"><Clock3 className="inline size-3.5 mr-1" /> Main d'œuvre : {pctServices}% ({caServices.toLocaleString()} F)</span>
-                </button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={handleRefresh}
+            disabled={refreshing || isLoading}
+            aria-label="Actualiser les données"
+            title="Actualiser les données"
+          >
+            <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
+          </Button>
+          <div className="relative" ref={creerRef}>
+            <Button size="sm" className="gap-1.5" onClick={() => setCreerOpen(o => !o)}>
+              <Plus size={14} /> Créer <ChevronDown size={13} />
+            </Button>
+            {creerOpen && (
+              <div className="absolute right-0 z-50 mt-1 w-48 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+                {CREER_OPTIONS.map(opt => (
+                  <Link
+                    key={opt.label}
+                    href="/dashboard/catalog/article/nouveau"
+                    onClick={() => setCreerOpen(false)}
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-foreground transition-colors hover:bg-accent"
+                  >
+                    <opt.icon size={14} className="text-muted-foreground" />
+                    {opt.label}
+                  </Link>
+                ))}
               </div>
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">Aucune donnée pour la période</p>
-          )}
-        </div>
-        <div className="rounded-xl border border-border bg-card/50 p-5">
-          <h4 className="text-sm font-semibold text-foreground mb-4">Ventes par niveau</h4>
-          {ventesNiveau.length > 0 ? (
-            <div className="space-y-3 text-sm">
-              {ventesNiveau.map((item, i) => {
-                const pct = totalCaParType > 0 ? Math.round(item.total / totalCaParType * 100) : 0;
-                return (
-                  <div key={item.typeProduit || i} className="block">
-                    <div className="flex justify-between text-muted-foreground mb-1">
-                      <span>{item.libelle}</span>
-                      <span className="font-mono text-foreground">{item.total.toLocaleString()} F</span>
-                    </div>
-                    <div className="h-4 rounded bg-muted overflow-hidden">
-                      <div className={`h-full rounded ${BGS[i % BGS.length]} text-[10px] text-foreground pl-1.5 leading-4`}
-                        style={{ width: `${pct}%` }}>
-                        {item.total.toLocaleString()} F
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">Aucune donnée pour la période</p>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
-      {/* ROW 3 — ALERTES STOCK BAS */}
-      <div id="alertes-stock" className="rounded-xl border border-border bg-card/50 p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-4"><AlertTriangle className="inline size-4 mr-1.5 text-destructive" /> Alertes stock bas (triées par criticité)</h3>
-        {!lowStock?.length ? (
-          <p className="text-sm text-muted-foreground">Aucune alerte stock</p>
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-muted-foreground uppercase">
-                    <th className="text-left px-3 py-2">Produit</th>
-                    <th className="text-right px-3 py-2">Stock</th>
-                    <th className="text-right px-3 py-2">Seuil</th>
-                    <th className="text-left px-3 py-2">Criticité</th>
-                    <th className="text-left px-3 py-2">Dernière vente</th>
-                    <th className="px-3 py-2">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/50">
-                  {[...(lowStock ?? [])].sort((a: any, b: any) => {
-                    const ca = getCriticite(Number(a.quantite), Number(a.seuilAlerte ?? 5));
-                    const cb = getCriticite(Number(b.quantite), Number(b.seuilAlerte ?? 5));
-                    const order = { Rupture: 0, Critique: 1, Bas: 2 } as const;
-                    return (order[ca.label as keyof typeof order] ?? 3) - (order[cb.label as keyof typeof order] ?? 3);
-                  }).slice(0, 5).map((item: any) => {
-                    const crit = getCriticite(Number(item.quantite), Number(item.seuilAlerte ?? 5));
-                    const derniereVente = item.derniereVente ? new Date(item.derniereVente).toLocaleDateString("fr-FR") : "—";
+      {/* ─── ERREUR ─── */}
+      {isError && (
+        <div className="flex items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3">
+          <AlertTriangle size={16} className="shrink-0 text-destructive" />
+          <div className="flex-1 text-sm text-foreground">
+            Impossible de charger la vue d&apos;ensemble.
+            {error?.message && <span className="text-muted-foreground"> ({error.message})</span>}
+          </div>
+          <Button size="sm" variant="outline" onClick={handleRefresh}>Réessayer</Button>
+        </div>
+      )}
+
+      {/* ─── LOADING ─── */}
+      {isLoading && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="rounded-xl border border-border bg-card p-4">
+              <Skeleton className="mb-2 h-3 w-24" />
+              <Skeleton className="h-8 w-16" />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {data && (
+        <>
+          {/* ═══ SECTION A : STATISTIQUES RÉFÉRENTIEL ═══ */}
+          <section>
+            <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+              <Boxes size={14} className="mr-1.5 inline" />
+              Référentiel
+            </h2>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <StatCard
+                icon={Package}
+                label="Articles"
+                value={data.catalogue.articles}
+                href="/dashboard/catalog"
+                color="text-primary"
+              />
+              <StatCard
+                icon={Layers}
+                label="Variantes"
+                value={data.catalogue.variantes}
+                href="/dashboard/catalog"
+                color="text-primary"
+              />
+              <StatCard
+                icon={Wrench}
+                label="Modèles d'outils"
+                value={data.catalogue.toolModels}
+                href="/dashboard/stock/outillage"
+                color="text-primary"
+              />
+              <StatCard
+                icon={HardHat}
+                label="Équipements"
+                value={data.catalogue.equipment}
+                href="/dashboard/catalog/equipements"
+                color="text-muted-foreground"
+                enConstruction
+              />
+              <StatCard
+                icon={Briefcase}
+                label="Services"
+                value={data.catalogue.services}
+                href="/dashboard/catalog/services"
+                color="text-muted-foreground"
+                enConstruction
+              />
+              <StatCard
+                icon={ShieldCheck}
+                label="Score qualité"
+                value={data.quality.score}
+                suffix="/ 100"
+                href="/dashboard/catalog?tab=qualite"
+                color={data.quality.score >= 80 ? "text-success-foreground" : data.quality.score >= 50 ? "text-amber-600" : "text-destructive"}
+              />
+            </div>
+          </section>
+
+          {/* ═══ SECTION B : QUALITÉ DU RÉFÉRENTIEL ═══ */}
+          <section className="rounded-xl border border-border bg-card">
+            <div className="border-b border-border px-4 py-3">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-foreground">
+                <CheckCircle2 size={14} className="mr-1.5 inline text-primary" />
+                Qualité du référentiel
+              </h2>
+            </div>
+            <div className="p-4">
+              {/* Barre de score */}
+              <div className="mb-4 flex items-center gap-4">
+                <div className="h-3 flex-1 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      data.quality.score >= 80 ? "bg-success" :
+                      data.quality.score >= 50 ? "bg-amber-500" : "bg-destructive"
+                    }`}
+                    style={{ width: `${data.quality.score}%` }}
+                  />
+                </div>
+                <span className="min-w-[3rem] text-right text-lg font-bold tabular-nums text-foreground">
+                  {data.quality.score}
+                </span>
+              </div>
+
+              {/* Liste des problèmes */}
+              {data.quality.problemsSummary.length === 0 ? (
+                <p className="flex items-center gap-2 text-sm text-success-foreground">
+                  <CheckCircle2 size={15} /> Aucun problème détecté — référentiel sain.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {data.quality.problemsSummary.map((p) => {
+                    const Icon = PROBLEM_ICONS[p.code] ?? Info;
                     return (
-                      <tr key={item.id} className="text-foreground/80">
-                        <td className="px-3 py-2">
-                          <Link href={`/dashboard/catalog/${item.produitId}`} className="text-foreground hover:text-primary/80 transition-colors">
-                            {item.titre}
-                          </Link>
-                        </td>
-                        <td className={`px-3 py-2 text-right font-mono font-semibold ${crit.cls}`}>{item.quantite}</td>
-                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">{item.seuilAlerte ?? 5}</td>
-                        <td className="px-3 py-2">
-                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                            crit.label === "Critique" || crit.label === "Rupture"
-                              ? "bg-destructive/10 text-destructive"
-                              : "bg-warning/10 text-warning-foreground"
-                          }`}>{crit.label}</span>
-                        </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{derniereVente}</td>
-                        <td className="px-3 py-2">
-                          <Link
-                            href={`/dashboard/catalog/${item.produitId}`}
-                            className="inline-flex items-center rounded border border-border bg-muted/50 px-2.5 py-1 text-xs text-foreground/80 hover:text-foreground hover:border-border transition-colors">
-                            Voir le produit
-                          </Link>
-                        </td>
-                      </tr>
+                      <Link
+                        key={p.code}
+                        href={`/dashboard/catalog/articles?problem=${p.code}`}
+                        className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors hover:bg-accent/30 ${SEVERITY_COLORS[p.severity] ?? "border-border bg-background"}`}
+                      >
+                        <Icon size={15} className="shrink-0 text-muted-foreground" />
+                        <span className="flex-1 text-sm text-foreground">{p.label}</span>
+                        <Badge variant="secondary" className={`text-xs font-bold ${SEVERITY_BADGE[p.severity] ?? ""}`}>
+                          {p.count}
+                        </Badge>
+                        <ChevronRight size={14} className="shrink-0 text-muted-foreground" />
+                      </Link>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
-            {lowStock.length > 5 && (
-              <Link href="/dashboard/alerts" className="mt-3 block text-center text-xs text-primary hover:text-primary/80">
-                Voir toutes les alertes →
-              </Link>
-            )}
-          </>
-        )}
-      </div>
+                </div>
+              )}
 
-      {/* ROW 4 — COMPARATIF N vs N-1 */}
-      <div className="rounded-xl border border-border bg-card/50 p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-foreground"><TrendingUp className="inline size-4 mr-1.5 text-primary" /> Comparatif année N vs N-1</h3>
-          <button onClick={async () => {
-            try {
-              const res = await exportMutation.mutateAsync();
-              const blob = new Blob([res.csv], { type: "text/csv;charset=utf-8" });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a"); a.href = url; a.download = res.filename; a.click();
-              URL.revokeObjectURL(url);
-              toast.success("Export téléchargé");
-            } catch { toast.error("Erreur d'export"); }
-          }}
-            className="flex items-center gap-1 text-xs text-primary hover:text-primary/80">
-            <Download className="size-3" /> Exporter en Excel
-          </button>
+              <p className="mt-3 text-[10px] text-muted-foreground">
+                Généré il y a {Math.round((Date.now() - new Date(data.quality.generatedAt).getTime()) / 60_000)} min
+                {data.quality.generatedAt && ` · ${data.quality.generatedAt ? new Date(data.quality.generatedAt).toLocaleTimeString("fr-FR") : ""}`}
+              </p>
+            </div>
+          </section>
+
+          {/* ═══ SECTION C : STOCK (APERÇU) ═══ */}
+          <section>
+            <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+              <PackageX size={14} className="mr-1.5 inline" />
+              Stock
+            </h2>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  <PackageX size={13} className="text-destructive" /> Hors stock
+                </div>
+                <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{data.stock.outOfStock}</p>
+                <p className="text-xs text-muted-foreground">articles avec stock = 0</p>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  <TrendingDown size={13} className="text-amber-500" /> Sous seuil
+                </div>
+                <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{data.stock.belowThreshold}</p>
+                <p className="text-xs text-muted-foreground">articles sous le seuil d&apos;alerte</p>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  <ArrowRightLeft size={13} className="text-sky-500" /> Mouvements aujourd&apos;hui
+                </div>
+                <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{data.stock.movementsToday}</p>
+                <p className="text-xs text-muted-foreground">entrées / sorties / transferts</p>
+              </div>
+            </div>
+          </section>
+
+          {/* ═══ SECTION D : OUTILLAGE (APERÇU) ═══ */}
+          <section>
+            <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-muted-foreground">
+              <Wrench size={14} className="mr-1.5 inline" />
+              Outillage
+            </h2>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Link
+                href="/dashboard/stock/outillage?tab=prets"
+                className="rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent/30"
+              >
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  <Clock size={13} className={data.outillage.overdueLoans > 0 ? "text-destructive" : "text-muted-foreground"} />
+                  Prêts en retard
+                </div>
+                <p className={`mt-1 text-2xl font-bold tabular-nums ${data.outillage.overdueLoans > 0 ? "text-destructive" : "text-foreground"}`}>
+                  {data.outillage.overdueLoans}
+                </p>
+                <p className="text-xs text-muted-foreground">outils à relancer</p>
+              </Link>
+              <Link
+                href="/dashboard/stock/outillage?tab=calibration"
+                className="rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent/30"
+              >
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  <CalendarClock size={13} className={data.outillage.calibrationDue > 0 ? "text-amber-500" : "text-muted-foreground"} />
+                  Calibration due
+                </div>
+                <p className={`mt-1 text-2xl font-bold tabular-nums ${data.outillage.calibrationDue > 0 ? "text-amber-600" : "text-foreground"}`}>
+                  {data.outillage.calibrationDue}
+                </p>
+                <p className="text-xs text-muted-foreground">instruments à calibrer</p>
+              </Link>
+            </div>
+          </section>
+
+          {/* ═══ SECTION E : RÉPARTITION PAR TYPE ═══ */}
+          {data.typeRepartition.length > 0 && (
+            <section className="rounded-xl border border-border bg-card">
+              <div className="border-b border-border px-4 py-3">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-foreground">
+                  <CircleDot size={14} className="mr-1.5 inline text-primary" />
+                  Répartition par type
+                </h2>
+              </div>
+              <div className="p-4">
+                <div className="space-y-3">
+                  {data.typeRepartition
+                    .sort((a, b) => b.count - a.count)
+                    .map((item) => {
+                      const total = data.typeRepartition.reduce((s, r) => s + r.count, 0);
+                      const pct = total > 0 ? Math.round(item.count / total * 100) : 0;
+                      const meta = TYPE_LABELS[item.type];
+                      const Icon = meta?.icon ?? Package;
+                      return (
+                        <div key={item.type}>
+                          <div className="mb-1 flex items-center justify-between text-sm">
+                            <span className="flex items-center gap-2 text-foreground">
+                              <Icon size={14} className="text-muted-foreground" />
+                              {meta?.label ?? item.type}
+                            </span>
+                            <span className="font-mono text-xs text-muted-foreground">
+                              {item.count.toLocaleString("fr-FR")} <span className="text-muted-foreground/60">({pct}%)</span>
+                            </span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-muted">
+                            <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* ═══ SECTION F : ACTIVITÉ RÉCENTE ═══ */}
+          {data.recentActivity.length > 0 && (
+            <section className="rounded-xl border border-border bg-card">
+              <div className="border-b border-border px-4 py-3">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-foreground">
+                  <RefreshCw size={14} className="mr-1.5 inline text-primary" />
+                  Activité récente
+                </h2>
+              </div>
+              <div className="divide-y divide-border/50">
+                {data.recentActivity.map((item) => (
+                  <Link
+                    key={item.id}
+                    href={`/dashboard/catalog/${item.id}`}
+                    className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent/30"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-foreground">{item.titre}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {item.codeArticle && <span className="mr-1.5 font-mono">{item.codeArticle}</span>}
+                        {item.typeProduit}
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="shrink-0 text-[10px]">
+                      {item.statutCycleVie ?? "ACTIF"}
+                    </Badge>
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      {item.updatedAt ? new Date(item.updatedAt).toLocaleDateString("fr-FR") : "—"}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ─── Sous-composants ─── */
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  suffix,
+  href,
+  color,
+  enConstruction,
+}: {
+  icon: typeof Package;
+  label: string;
+  value: number | null;
+  suffix?: string;
+  href: string;
+  color: string;
+  enConstruction?: boolean;
+}) {
+  const isHidden = enConstruction && !isDev();
+
+  if (isHidden) {
+    return (
+      <div className="rounded-xl border border-dashed border-border bg-muted/20 p-4 opacity-50">
+        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          <Icon size={13} /> {label}
         </div>
-        {agg?.comparatif ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-muted-foreground uppercase">
-                  <th className="text-left px-3 py-2">Période</th>
-                  <th className="text-right px-3 py-2">CA</th>
-                  <th className="text-right px-3 py-2">Évolution</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/50">
-                <tr className="text-foreground/80">
-                  <td className="px-3 py-2 text-foreground">N-1 (période équivalente)</td>
-                  <td className="px-3 py-2 text-right font-mono">{agg.comparatif.anneePrecedente.toLocaleString()} F</td>
-                  <td className="px-3 py-2 text-right font-mono text-success-foreground">
-                    {agg.comparatif.evolution ? `▲ ${agg.comparatif.evolution}` : "—"}
-                  </td>
-                </tr>
-                <tr className="text-foreground/80">
-                  <td className="px-3 py-2 text-foreground">N (période courante)</td>
-                  <td className="px-3 py-2 text-right font-mono">{agg.comparatif.anneeCourante.toLocaleString()} F</td>
-                  <td className="px-3 py-2 text-right font-mono text-muted-foreground">—</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">Aucune donnée comparative</p>
+        <p className="mt-1 text-sm text-muted-foreground">En construction</p>
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      href={href}
+      className="group rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent/30"
+    >
+      <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+        <Icon size={13} className={color} /> {label}
+        {enConstruction && (
+          <span className="rounded bg-amber-500/20 px-1 py-0.5 text-[9px] font-bold text-amber-600">
+            DEV
+          </span>
         )}
       </div>
-    </div>
+      <p className={`mt-1 text-2xl font-bold tabular-nums ${color}`}>
+        {value !== null ? value.toLocaleString("fr-FR") : "—"}
+        {suffix && <span className="ml-1 text-sm font-normal text-muted-foreground">{suffix}</span>}
+      </p>
+    </Link>
   );
 }

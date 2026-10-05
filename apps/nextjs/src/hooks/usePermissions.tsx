@@ -9,8 +9,14 @@ import { canAccessModule } from "~/lib/module-permissions";
 // Permissions réelles chargées depuis la matrice DB (role_permissions)
 // au moment du login (packages/auth/src/config.ts) et exposées via user.getMe.
 
+const STALE_PERMISSIONS = 5 * 60 * 1000;
+
 export function usePermissions() {
-  const { data: user, isLoading } = api.user.getMe.useQuery();
+  // Permissions chargées au login : quasi-immuables en session. Cache large
+  // pour ne pas refaire un round-trip serveur à chaque navigation.
+  const { data: user, isLoading } = api.user.getMe.useQuery(undefined, {
+    staleTime: STALE_PERMISSIONS,
+  });
 
   const hasPermission = (action: string): boolean => {
     if (isLoading || !user) return false;

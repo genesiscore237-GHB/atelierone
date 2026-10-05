@@ -1,0 +1,2040 @@
+MISSION
+
+Tu affirmes avoir terminé l’implémentation et la vérification du module Catalogue / Produits / Pièces / Consommables / Outillage / Équipements / Services.
+
+Je veux maintenant une validation indépendante, extrêmement agressive et réaliste.
+
+NE PARS PAS DU PRINCIPE QUE L’ARCHITECTURE EST CORRECTE PARCE QUE TU L’AS TOI-MÊME IMPLÉMENTÉE.
+
+Ton objectif est de chercher activement les limites du système.
+
+Tu dois essayer de casser le modèle métier, les formulaires, les validations, la recherche, les relations, le stock, les variantes, les exemplaires, les caractéristiques techniques et les interfaces.
+
+La question centrale est :
+
+« Est-ce que ce système est réellement capable de gérer un garage moderne contenant une très grande diversité de pièces automobiles, consommables, outils, équipements, kits, accessoires, composants électriques/électroniques et services, avec suffisamment de précision pour qu’aucune information métier importante ne soit perdue ? »
+
+==================================================
+1. RÈGLE ABSOLUE : TESTER L’INTERFACE RÉELLE
+==================================================
+
+Tu dois tester PRIORITAIREMENT depuis les interfaces utilisateur réelles.
+
+INTERDICTION de considérer qu’une fonctionnalité est « implémentée » uniquement parce que :
+
+- la table existe ;
+- la colonne existe ;
+- l’API existe ;
+- le service backend existe ;
+- le schéma ORM existe ;
+- le endpoint fonctionne ;
+- le test unitaire passe.
+
+Une fonctionnalité n’est considérée comme réellement disponible que si un utilisateur peut :
+
+1. la trouver ;
+2. la comprendre ;
+3. la saisir ;
+4. la modifier ;
+5. la consulter ;
+6. la rechercher ;
+7. la supprimer ou l’archiver si applicable ;
+8. voir son historique ;
+9. l’utiliser dans les workflows métier concernés.
+
+Teste donc le parcours utilisateur complet.
+
+==================================================
+2. OBJECTIF DU TEST
+==================================================
+
+Nous allons constituer un véritable « catalogue laboratoire » contenant des objets extrêmement différents.
+
+Tu dois tenter d’enregistrer :
+
+A. Pièces mécaniques
+B. Pièces électriques
+C. Pièces électroniques
+D. Pièces de carrosserie
+E. Pièces de freinage
+F. Pièces moteur
+G. Pièces transmission
+H. Pièces suspension/direction
+I. Pièces refroidissement
+J. Pièces climatisation
+K. Pièces échappement
+L. Pièces filtration
+M. Pièces pneumatiques
+N. Jantes
+O. Consommables
+P. Fluides
+Q. Produits chimiques d’atelier
+R. Fixations
+S. Joints
+T. Petits composants
+U. Outillage manuel
+V. Outillage électroportatif
+W. Outillage pneumatique
+X. Outillage hydraulique
+Y. Outillage de mesure
+Z. Outillage électronique/diagnostic
+AA. Coffrets et kits
+AB. Équipements fixes d’atelier
+AC. Équipements de diagnostic
+AD. Équipements de levage
+AE. Équipements de climatisation
+AF. Équipements pneumatiques
+AG. Équipements de carrosserie
+AH. Équipements électriques
+AI. Services
+
+Tu dois rechercher les situations dans lesquelles le modèle devient insuffisant.
+
+==================================================
+3. TEST DE CRÉATION DE PIÈCES — NIVEAU 1
+==================================================
+
+Créer au minimum les articles suivants.
+
+--------------------------------------------------
+3.1 FILTRATION
+--------------------------------------------------
+
+1. Filtre à huile
+
+Exemple :
+
+Article :
+« Filtre à huile moteur »
+
+Variante :
+« Filtre à huile Toyota 90915-YZZD1 »
+
+Caractéristiques possibles :
+
+- marque
+- référence fabricant
+- référence OEM
+- diamètre extérieur
+- diamètre intérieur
+- hauteur
+- filetage
+- type de joint
+- diamètre du joint
+- clapet anti-retour
+- pression de soupape
+- sens de montage
+- matériau
+- type moteur
+- véhicule compatible
+
+Vérifier que toutes ces caractéristiques peuvent être enregistrées proprement.
+
+--------------------------------------------------
+3.2 FREINAGE
+--------------------------------------------------
+
+2. Jeu de plaquettes de frein avant
+
+Tester :
+
+- marque
+- référence
+- OEM
+- position = avant
+- côté = gauche/droite/essieu
+- longueur
+- largeur
+- épaisseur
+- hauteur
+- témoin d’usure
+- nombre de plaquettes
+- matériau
+- système de freinage
+- véhicule compatible
+
+Tester également deux variantes :
+
+- plaquettes avant
+- plaquettes arrière
+
+Puis vérifier qu’elles ne sont PAS fusionnées.
+
+--------------------------------------------------
+3.3 DISQUE DE FREIN
+--------------------------------------------------
+
+Créer un disque avec :
+
+- diamètre extérieur
+- épaisseur
+- hauteur
+- diamètre centrage
+- nombre de trous
+- entraxe
+- diamètre des trous
+- ventilé / plein
+- avant / arrière
+- gauche / droite / commun
+- poids
+- diamètre minimum d’usure
+
+--------------------------------------------------
+3.4 INJECTEUR
+--------------------------------------------------
+
+Créer un injecteur avec :
+
+- référence fabricant
+- OEM
+- type injection
+- essence/diesel
+- débit
+- pression
+- résistance
+- connecteur
+- nombre de broches
+- longueur
+- diamètre
+- moteur compatible
+- code moteur
+- génération véhicule
+
+Tester si les caractéristiques spécifiques à l’injecteur peuvent être ajoutées sans modification du code.
+
+--------------------------------------------------
+3.5 CAPTEUR ABS
+--------------------------------------------------
+
+Créer :
+
+« Capteur ABS roue avant gauche »
+
+Caractéristiques :
+
+- position = avant
+- côté = gauche
+- type
+- actif/passif
+- longueur câble
+- nombre de broches
+- connecteur
+- tension
+- fréquence
+- fixation
+- longueur totale
+
+Vérifier la recherche par ces caractéristiques.
+
+--------------------------------------------------
+3.6 BATTERIE
+--------------------------------------------------
+
+Créer une batterie AGM :
+
+- technologie = AGM
+- tension = 12 V
+- capacité = 70 Ah
+- courant démarrage = 760 A
+- polarité
+- longueur
+- largeur
+- hauteur
+- type de borne
+- position borne positive
+- poids
+- capacité de réserve
+- véhicule compatible
+
+Puis créer une batterie différente :
+
+- 12 V
+- 70 Ah
+- 760 A
+- dimensions différentes.
+
+Vérifier que les deux variantes restent distinctes.
+
+--------------------------------------------------
+3.7 PNEUMATIQUE
+--------------------------------------------------
+
+Créer un pneu :
+
+« 225/45 R17 94W XL »
+
+Tester :
+
+- largeur
+- hauteur
+- diamètre
+- indice charge
+- indice vitesse
+- XL
+- runflat
+- saison
+- type de véhicule
+- marque
+- modèle
+- DOT
+- semaine
+- année
+- profondeur sculpture
+
+Tester ensuite deux pneus ayant la même dimension mais des marques/modèles différents.
+
+--------------------------------------------------
+3.8 JANTE
+--------------------------------------------------
+
+Tester :
+
+- diamètre
+- largeur
+- entraxe
+- nombre trous
+- déport ET
+- alésage central
+- matériau
+- finition
+- couleur
+- type
+- charge maximale
+- avant/arrière
+
+--------------------------------------------------
+3.9 COURROIE
+--------------------------------------------------
+
+Créer une courroie avec :
+
+- longueur
+- largeur
+- nombre nervures
+- profil
+- type
+- nombre de dents
+- pas
+- matériau
+- température de fonctionnement
+- moteur compatible
+
+--------------------------------------------------
+3.10 BOUGIE
+--------------------------------------------------
+
+Créer une bougie :
+
+- diamètre filetage
+- longueur filetage
+- indice thermique
+- nombre électrodes
+- matériau électrode
+- écartement
+- résistance
+- couple de serrage
+- clé
+- moteur compatible
+
+==================================================
+4. TEST DE PIÈCES ÉLECTRIQUES ET ÉLECTRONIQUES
+==================================================
+
+Créer au minimum :
+
+- ECU moteur
+- calculateur ABS
+- alternateur
+- démarreur
+- relais
+- fusible
+- ampoule LED
+- capteur température
+- capteur pression
+- capteur vilebrequin
+- faisceau électrique
+- connecteur
+- batterie
+- bobine d’allumage
+- moteur électrique
+- ventilateur électrique
+
+Pour les composants électroniques, tester :
+
+- nombre de broches
+- type connecteur
+- tension
+- courant
+- puissance
+- résistance
+- protocole
+- CAN
+- LIN
+- fréquence
+- adresse éventuelle
+- référence électronique
+- numéro logiciel
+- version firmware
+- constructeur
+- OEM
+
+Vérifier qu’on peut ajouter des caractéristiques très spécialisées sans créer de nouvelles colonnes SQL.
+
+==================================================
+5. TEST DES PIÈCES DE CARROSSERIE
+==================================================
+
+Créer :
+
+- pare-chocs avant
+- capot
+- aile avant gauche
+- aile avant droite
+- rétroviseur gauche
+- rétroviseur droit
+- phare gauche
+- phare droit
+- feu arrière
+- calandre
+- porte
+- serrure de porte
+- poignée de porte
+
+Tester notamment :
+
+- position
+- côté
+- couleur
+- apprêtée/non apprêtée
+- avec capteur/sans capteur
+- avec caméra/sans caméra
+- avec lave-phare/sans lave-phare
+- LED/halogène
+- adaptable/OEM
+- dimensions
+
+IMPORTANT :
+
+Tester explicitement les variantes gauche/droite.
+
+Tester que :
+
+« Phare avant gauche »
+
+et
+
+« Phare avant droit »
+
+sont deux variantes distinctes.
+
+==================================================
+6. TEST DES CONSOMMABLES
+==================================================
+
+Créer :
+
+- huile moteur 5W30
+- huile moteur 10W40
+- huile boîte
+- liquide frein DOT4
+- liquide refroidissement
+- liquide direction assistée
+- liquide lave-glace
+- graisse
+- pâte à joint
+- frein filet
+- nettoyant frein
+- dégraissant
+- produit de nettoyage
+- peinture
+- apprêt
+- mastic
+- adhésif
+- chiffon
+- papier abrasif
+- disques abrasifs
+- électrodes de soudure
+
+Tester :
+
+- unité
+- litre
+- millilitre
+- kilogramme
+- gramme
+- mètre
+- rouleau
+- boîte
+- sachet
+- carton
+- bidon
+- tube
+- aérosol
+- pièce
+
+Tester les conversions.
+
+Exemple :
+
+1 carton = 12 bidons
+1 bidon = 5 litres
+
+Vérifier que le système comprend correctement :
+
+1 carton = 60 litres.
+
+==================================================
+7. TEST DES LOTS ET DATES
+==================================================
+
+Pour les consommables, tester :
+
+- numéro de lot
+- date fabrication
+- date expiration
+- quantité du lot
+- emplacement
+- date réception
+- fournisseur
+
+Créer plusieurs lots du même produit.
+
+Exemple :
+
+Huile X :
+
+LOT A → expiration 2027
+LOT B → expiration 2028
+LOT C → expiration 2029
+
+Vérifier :
+
+- stock total
+- stock par lot
+- stock par emplacement
+- date expiration
+- FEFO
+- historique
+
+==================================================
+8. TEST DES UNITÉS ET CONDITIONNEMENTS
+==================================================
+
+Tester :
+
+1 pièce
+1 boîte = 10 pièces
+1 carton = 100 pièces
+
+Puis :
+
+1 bidon = 5 L
+1 carton = 4 bidons
+1 carton = 20 L
+
+Puis :
+
+1 rouleau = 25 mètres
+
+Le système doit permettre :
+
+- unité de base
+- unité d’achat
+- unité de stockage
+- unité de vente
+- facteur de conversion
+
+Tester que les calculs de stock restent cohérents.
+
+==================================================
+9. TEST DES RÉFÉRENCES
+==================================================
+
+Pour un même article, enregistrer simultanément :
+
+- référence interne
+- référence fabricant
+- référence OEM
+- référence constructeur
+- référence fournisseur
+- EAN
+- UPC
+- GTIN
+- ancien numéro
+- référence locale
+- numéro de série
+- code-barres
+- QR code
+
+Tester la recherche avec CHAQUE référence.
+
+Tester la normalisation :
+
+« 90915-YZZD1 »
+
+« 90915YZZD1 »
+
+« 90915 YZZD1 »
+
+doivent pouvoir être rapprochés sans détruire la valeur originale affichée.
+
+==================================================
+10. TEST DES ANCIENNES RÉFÉRENCES
+==================================================
+
+Créer :
+
+Référence ancienne :
+ABC-001
+
+Nouvelle référence :
+ABC-002
+
+Déclarer une supersession.
+
+Tester :
+
+- recherche ABC-001
+- résultat ABC-002
+- indication que ABC-001 est remplacée
+- historique
+- commande avec ancienne référence
+- recherche fournisseur
+
+==================================================
+11. TEST ÉQUIVALENCE / SUBSTITUTION
+==================================================
+
+Créer :
+
+Produit A
+Produit B
+Produit C
+Produit D
+
+Définir :
+
+A équivalent à B
+
+B compatible avec C
+
+C substituable par D
+
+D incompatible avec A
+
+Vérifier que le système NE CONFOND PAS :
+
+- équivalent
+- compatible
+- substituable
+- ancienne référence
+- remplacement
+- incompatible
+
+IMPORTANT :
+
+Ne jamais fusionner automatiquement deux variantes simplement parce qu’elles sont compatibles ou équivalentes.
+
+==================================================
+12. TEST DE COMPATIBILITÉ VÉHICULE
+==================================================
+
+Créer des compatibilités très précises.
+
+Exemple :
+
+Toyota
+Hilux
+2020
+2.8 D-4D
+204 ch
+diesel
+automatique
+code moteur XXXX
+
+Puis une autre compatibilité :
+
+Toyota
+Hilux
+2020
+2.4 D-4D
+150 ch
+diesel
+manuelle
+code moteur YYYY
+
+Tester que le produit peut être compatible avec l’une mais pas l’autre.
+
+Tester :
+
+- marque
+- modèle
+- génération
+- année début
+- année fin
+- version
+- finition
+- moteur
+- code moteur
+- cylindrée
+- carburant
+- puissance
+- transmission
+- boîte
+- position
+
+Tester également une compatibilité négative.
+
+==================================================
+13. TEST VIN
+==================================================
+
+Si le système supporte la recherche VIN :
+
+Entrer un VIN réel de test.
+
+Vérifier que :
+
+VIN
+→ véhicule
+→ moteur
+→ pièces compatibles
+
+fonctionne.
+
+Tester également un VIN incomplet ou invalide.
+
+==================================================
+14. TEST DES OUTILS — LOGIQUE COMPLÈTEMENT DIFFÉRENTE
+==================================================
+
+Tester que les outils ne sont PAS traités comme de simples pièces quantitatives.
+
+Créer :
+
+- clé plate
+- clé mixte
+- clé à pipe
+- clé à cliquet
+- clé dynamométrique
+- douille 8 mm
+- douille 10 mm
+- douille 13 mm
+- douille 17 mm
+- douille 19 mm
+- extracteur
+- arrache-rotule
+- tournevis
+- pince
+- pince multiprise
+- pince coupante
+- marteau
+- burin
+- clé à choc
+- perceuse
+- meuleuse
+- visseuse
+- multimètre
+- oscilloscope
+- lampe
+- testeur batterie
+- appareil diagnostic
+
+==================================================
+15. TEST DES CARACTÉRISTIQUES D’OUTILLAGE
+==================================================
+
+Tester des attributs :
+
+- taille
+- longueur
+- largeur
+- hauteur
+- ouverture
+- carré d'entraînement
+- métrique
+- impérial
+- couple minimum
+- couple maximum
+- précision
+- poids
+- matériau
+- isolation
+- tension maximale
+- batterie
+- voltage
+- puissance
+- vitesse
+- capacité
+- pression
+- marque
+- modèle
+- numéro de série
+- date calibration
+
+Vérifier qu’il est possible d’ajouter ces attributs sans modification du schéma.
+
+==================================================
+16. TEST DES EXEMPLAIRES PHYSIQUES
+==================================================
+
+Créer un modèle :
+
+« Clé dynamométrique 40–200 Nm »
+
+Puis créer :
+
+Exemplaire 1
+Inventaire : OUT-0001
+N° série : SN001
+
+Exemplaire 2
+Inventaire : OUT-0002
+N° série : SN002
+
+Exemplaire 3
+Inventaire : OUT-0003
+N° série : SN003
+
+Ils doivent rester trois objets physiques distincts.
+
+Tester :
+
+- localisation
+- état
+- utilisateur actuel
+- disponibilité
+- historique
+- maintenance
+- calibration
+
+==================================================
+17. TEST DES PRÊTS D’OUTILS
+==================================================
+
+Faire réellement le workflow :
+
+OUT-0001
+→ prêt à Mécanicien A
+→ intervention X
+→ retour
+→ contrôle état
+→ rangement
+
+Puis :
+
+OUT-0002
+→ prêt
+→ non retourné
+→ retard
+
+Vérifier :
+
+- qui l’a
+- depuis quand
+- pour quelle intervention
+- pour quel véhicule
+- état avant
+- état après
+- date prévue de retour
+- historique
+
+==================================================
+18. TEST DES ANOMALIES OUTILS
+==================================================
+
+Tester séparément :
+
+1. outil perdu
+2. outil volé
+3. outil cassé
+4. outil usé
+5. outil en maintenance
+6. outil en calibration
+7. outil réparable
+8. outil irréparable
+9. outil retrouvé
+10. outil réformé
+
+IMPORTANT :
+
+Ne jamais supprimer physiquement l’exemplaire pour faire disparaître une perte.
+
+Son historique doit rester disponible.
+
+Tester :
+
+PERDU → RETROUVÉ
+
+et
+
+CASSÉ → RÉPARÉ → DISPONIBLE
+
+==================================================
+19. TEST DES COFFRETS / KITS
+==================================================
+
+Créer :
+
+« Coffret douilles 108 pièces »
+
+Composition :
+
+- douilles
+- rallonges
+- cliquets
+- adaptateurs
+- embouts
+
+Tester :
+
+- coffret complet
+- quantité totale
+- composants
+- composants manquants
+- composant endommagé
+- prêt du coffret
+- retour du coffret
+
+Créer volontairement :
+
+108 pièces
+→ retour avec 106
+
+Vérifier que le système détecte :
+
+2 pièces manquantes.
+
+==================================================
+20. TEST DES ÉQUIPEMENTS D’ATELIER
+==================================================
+
+Créer :
+
+- pont élévateur
+- compresseur
+- démonte-pneu
+- équilibreuse
+- station climatisation
+- presse hydraulique
+- machine de géométrie
+- poste à souder
+- groupe électrogène
+- chargeur batterie
+- machine de diagnostic
+- équipement ADAS
+
+Tester :
+
+- numéro d’actif
+- marque
+- modèle
+- numéro série
+- date acquisition
+- valeur acquisition
+- fournisseur
+- localisation
+- responsable
+- état
+- garantie
+- maintenance
+- panne
+- réparation
+- calibration
+- inspection
+- mise hors service
+- réforme
+
+==================================================
+21. TEST DES SERVICES
+==================================================
+
+Créer :
+
+- diagnostic électronique
+- vidange
+- remplacement plaquettes
+- remplacement embrayage
+- géométrie
+- équilibrage
+- recharge climatisation
+- programmation calculateur
+- recherche panne électrique
+- contrôle véhicule
+
+Tester :
+
+- durée
+- prix
+- unité
+- tarif professionnel
+- tarif particulier
+- main-d’œuvre
+- conditions
+- description
+- catégorie
+
+Vérifier qu’un service ne génère pas de stock physique.
+
+==================================================
+22. TEST DES CATÉGORIES INATTENDUES
+==================================================
+
+Maintenant, essaie volontairement d’enregistrer des objets qui n’étaient probablement PAS prévus initialement.
+
+Exemples :
+
+- capteur de pression de pneu
+- valve TPMS
+- adaptateur OBD
+- câble USB de diagnostic
+- câble électrique
+- fusible miniature
+- collier plastique
+- vis M8
+- écrou M8
+- rondelle
+- joint torique
+- silentbloc
+- support moteur
+- liquide de nettoyage
+- chiffon microfibre
+- bombe aérosol
+- graisse spéciale
+- lampe d’inspection
+- rallonge électrique
+- multiprise
+- chargeur téléphone atelier
+- casque de protection
+- lunettes de sécurité
+- gants
+- extincteur
+- cric
+- chandelle
+- tréteau
+- bac de récupération
+- entonnoir
+- seringue d’huile
+- pompe manuelle
+
+Aucune de ces créations ne doit nécessiter de contournement du modèle.
+
+==================================================
+23. TEST « OBJET TOTALLEMENT INCONNU »
+==================================================
+
+Créer maintenant un objet qui n’existe probablement pas dans les catégories actuelles.
+
+Exemple fictif :
+
+« Module hydraulique spécial XZ-500 »
+
+Attributs :
+
+- pression
+- débit
+- température
+- raccord entrée
+- raccord sortie
+- matériau
+- longueur
+- diamètre
+- tension
+- poids
+- référence fabricant
+
+Le but est de vérifier que le système est réellement extensible.
+
+AUCUNE MODIFICATION DU CODE ne doit être nécessaire pour ajouter simplement une nouvelle caractéristique métier.
+
+==================================================
+24. TEST UNKNOWN vs NON APPLICABLE
+==================================================
+
+Vérifier la distinction entre :
+
+UNKNOWN
+= information inconnue.
+
+NOT_APPLICABLE
+= caractéristique qui ne s’applique pas à cet objet.
+
+Exemple :
+
+Un pneu :
+
+pression maximale = connue
+
+nombre de broches = NOT_APPLICABLE
+
+Un calculateur :
+
+nombre de broches = connu
+
+profondeur de sculpture = NOT_APPLICABLE
+
+Ces deux états ne doivent pas être confondus avec une valeur vide.
+
+==================================================
+25. TEST DES VARIANTES
+==================================================
+
+Créer le même article avec plusieurs variantes :
+
+Produit :
+« Plaquette de frein »
+
+Variantes :
+
+- avant gauche
+- avant droite
+- avant essieu
+- arrière
+- autre référence
+- autre marque
+- autre matériau
+
+Tester que le niveau ARTICLE / VARIANTE / EXEMPLAIRE reste cohérent.
+
+==================================================
+26. TEST DU STOCK DES PIÈCES
+==================================================
+
+Créer :
+
+Filtre X
+
+Stock :
+
+Magasin A = 20
+Magasin B = 10
+Réserve = 5
+Bloqué = 2
+Réservé = 3
+
+Vérifier les formules.
+
+La quantité physique, disponible, réservée, bloquée et affectée doivent rester cohérentes.
+
+Aucune quantité ne doit être comptée deux fois.
+
+==================================================
+27. TEST DES EMPLACEMENTS
+==================================================
+
+Créer une hiérarchie :
+
+Magasin
+→ Rayon A
+→ Étagère 3
+→ Niveau 2
+→ Bac B17
+
+Affecter :
+
+Filtre X
+→ Bac B17
+
+Tester la recherche :
+
+« Où se trouve Filtre X ? »
+
+La réponse doit être précise.
+
+==================================================
+28. TEST DES MOUVEMENTS DE STOCK
+==================================================
+
+Effectuer :
+
+Réception
+→ rangement
+→ déplacement
+→ réservation
+→ sortie
+→ consommation
+→ ajustement
+
+Vérifier l’historique.
+
+Chaque mouvement doit avoir autant que possible :
+
+- date
+- utilisateur
+- quantité
+- produit
+- variante
+- emplacement
+- origine
+- destination
+- intervention
+- véhicule
+- motif
+- référence document
+
+==================================================
+29. TEST AVANT COMMANDE
+==================================================
+
+Créer une pièce déjà en stock.
+
+Puis simuler une demande d’achat.
+
+Le système doit être capable d’indiquer :
+
+« Cet article existe déjà en stock »
+
+et montrer :
+
+- quantité disponible
+- emplacement
+- variante
+- référence
+- éventuellement équivalents/substituts.
+
+==================================================
+30. TEST DES FOURNISSEURS
+==================================================
+
+Pour un même produit :
+
+Fournisseur A :
+REF-A
+conditionnement = 10
+
+Fournisseur B :
+REF-B
+conditionnement = 20
+
+Fournisseur C :
+REF-C
+conditionnement = 1
+
+Tester :
+
+- références fournisseur
+- prix
+- conditionnement
+- délai
+- fournisseur principal
+- fournisseur secondaire
+
+==================================================
+31. TEST DES PRIX
+==================================================
+
+Tester :
+
+- prix achat
+- prix vente
+- prix professionnel
+- prix particulier
+- prix minimum
+- TVA
+- remise
+
+Tester également :
+
+prix fournisseur différent du prix catalogue.
+
+Vérifier les validations :
+
+prix négatif
+TVA > 100
+prix vente inférieur au prix minimum si interdit.
+
+==================================================
+32. TEST DE RECHERCHE EXTRÊME
+==================================================
+
+Tester la recherche globale par :
+
+1. nom exact
+2. nom partiel
+3. référence exacte
+4. référence sans tirets
+5. OEM
+6. référence fournisseur
+7. ancien numéro
+8. code-barres
+9. marque
+10. véhicule
+11. VIN
+12. caractéristique
+13. dimensions
+14. position
+15. combinaison de critères
+
+Exemples :
+
+« filtre Toyota »
+
+« filtre 90915 »
+
+« plaquette avant Toyota Hilux 2020 »
+
+« 225/45 R17 »
+
+« 10 mm 1/2 »
+
+« AGM 70Ah »
+
+« 40-200 Nm »
+
+==================================================
+33. TEST « POURQUOI CE RÉSULTAT ? »
+==================================================
+
+Lorsqu’une recherche renvoie un résultat, vérifier si l’interface peut expliquer pourquoi.
+
+Exemple :
+
+Recherche :
+« 90915 »
+
+Résultat :
+
+✓ Référence OEM correspondante
+
+Recherche :
+« Hilux 2020 2.8 »
+
+Résultat :
+
+✓ Compatibilité véhicule
+
+Recherche :
+« clé 40-200 Nm »
+
+Résultat :
+
+✓ Caractéristique technique
+
+Le système doit éviter de retourner des résultats incompréhensibles.
+
+==================================================
+34. TEST DES DOUBLONS
+==================================================
+
+Créer deux fois le même produit.
+
+Puis tester :
+
+- même nom
+- même référence
+- même OEM
+- référence normalisée
+- référence différente
+- marque différente
+- variante différente
+
+Le système doit :
+
+- détecter les doublons probables ;
+- signaler les correspondances ;
+- permettre la décision de l’utilisateur ;
+- NE PAS fusionner automatiquement deux produits réellement différents.
+
+==================================================
+35. TEST PHOTOS ET DOCUMENTS
+==================================================
+
+Tester l’ajout de :
+
+- photo produit
+- photo étiquette
+- photo référence
+- fiche technique
+- manuel
+- certificat
+- facture
+- certificat calibration
+- document fournisseur
+
+Tester les niveaux :
+
+ARTICLE
+VARIANTE
+EXEMPLAIRE
+LOT
+ÉQUIPEMENT
+
+==================================================
+36. TEST QUALITÉ / PROVENANCE
+==================================================
+
+Pour une caractéristique importante, tester si le système peut conserver :
+
+- valeur
+- source
+- utilisateur
+- date
+- document/preuve
+- niveau de confiance si prévu.
+
+Une donnée critique ne doit pas devenir impossible à expliquer.
+
+==================================================
+37. TEST DE MODIFICATION
+==================================================
+
+Après création, modifier :
+
+- nom
+- catégorie
+- marque
+- référence
+- caractéristique
+- compatibilité
+- emplacement
+- fournisseur
+- prix
+- seuil stock
+
+Vérifier :
+
+- historique
+- traçabilité
+- absence de corruption
+- absence de perte des anciennes données.
+
+==================================================
+38. TEST DE SUPPRESSION
+==================================================
+
+Tester les cas :
+
+- produit jamais utilisé
+- produit utilisé
+- produit avec stock
+- produit avec mouvements
+- outil prêté
+- outil perdu
+- équipement historique
+
+Déterminer quels objets doivent être :
+
+SUPPRIMABLES
+
+et lesquels doivent être :
+
+ARCHIVÉS / DÉSACTIVÉS
+
+Il ne faut jamais permettre une suppression qui détruit la traçabilité historique.
+
+==================================================
+39. TEST DES DONNÉES EXISTANTES
+==================================================
+
+Tester également les données déjà présentes dans l’application.
+
+Vérifier :
+
+- migration
+- compatibilité
+- anciennes références
+- catégories
+- stocks
+- relations
+- recherche
+- interface
+
+Aucune donnée existante ne doit être silencieusement perdue ou déformée.
+
+==================================================
+40. TEST DE CRÉATION RAPIDE
+==================================================
+
+Tester le mode de saisie rapide.
+
+Un magasinier doit pouvoir créer rapidement :
+
+« Filtre huile Toyota »
+
+avec seulement les informations essentielles.
+
+Puis compléter plus tard :
+
+- marque
+- référence
+- OEM
+- dimensions
+- compatibilités
+- fournisseurs
+- photos
+- caractéristiques.
+
+La simplicité de saisie ne doit pas empêcher l’enrichissement ultérieur.
+
+==================================================
+41. TEST DE CRÉATION AVANCÉE
+==================================================
+
+Tester également le formulaire complet.
+
+Pour chaque domaine :
+
+PIÈCE
+CONSOMMABLE
+OUTIL
+ÉQUIPEMENT
+SERVICE
+
+Le formulaire doit afficher les champs pertinents sans noyer l’utilisateur dans des champs inutiles.
+
+Exemple :
+
+Un outil ne doit pas afficher inutilement des champs de stock par lot comme une huile moteur.
+
+Une huile ne doit pas être forcée à avoir un numéro de série individuel.
+
+Un équipement doit pouvoir avoir un numéro d’actif.
+
+==================================================
+42. TEST DE L’ADAPTATION PAR CATÉGORIE
+==================================================
+
+Changer de catégorie.
+
+Observer si les caractéristiques adaptées apparaissent automatiquement.
+
+Exemple :
+
+CATÉGORIE = PNEU
+
+→ dimensions pneu
+
+CATÉGORIE = BATTERIE
+
+→ Ah / CCA / tension / technologie
+
+CATÉGORIE = INJECTEUR
+
+→ débit / pression / connecteur
+
+CATÉGORIE = OUTIL
+
+→ taille / couple / numéro série
+
+CATÉGORIE = ÉQUIPEMENT
+
+→ actif / acquisition / maintenance
+
+CATÉGORIE = SERVICE
+
+→ durée / tarif
+
+Aucun champ spécifique important ne doit nécessiter une modification du code pour chaque nouvelle catégorie.
+
+==================================================
+43. TEST DES NOUVELLES CATÉGORIES SANS CODE
+==================================================
+
+Ceci est un test CRITIQUE.
+
+Depuis l’interface d’administration si elle existe :
+
+Créer une nouvelle catégorie jamais prévue.
+
+Exemple :
+
+« Capteurs ADAS »
+
+Ajouter des attributs :
+
+- type capteur
+- portée
+- fréquence
+- protocole
+- angle
+- tension
+- nombre connecteurs.
+
+Puis créer un produit dans cette catégorie.
+
+Si cela nécessite de modifier le code source, le signaler comme limitation architecturale.
+
+Même test avec :
+
+« Composants hydrauliques »
+
+et :
+
+« Accessoires électriques ».
+
+==================================================
+44. TEST DES NOUVEAUX ATTRIBUTS SANS CODE
+==================================================
+
+Créer un nouvel attribut complètement nouveau :
+
+« Indice de protection IP »
+
+Puis :
+
+« Température maximale »
+
+Puis :
+
+« Nombre de broches »
+
+Puis :
+
+« Couple maximal »
+
+Vérifier qu’ils peuvent être ajoutés et utilisés sans migration SQL spécifique.
+
+==================================================
+45. TEST DE PERFORMANCE
+==================================================
+
+Créer ou simuler un catalogue important.
+
+Objectif :
+
+- 1 000 produits
+- 5 000 variantes
+- 10 000 références
+- 20 000 compatibilités
+- 10 000 mouvements
+- plusieurs milliers de caractéristiques
+
+Tester :
+
+- recherche
+- filtrage
+- ouverture fiche
+- historique
+- stock
+- compatibilité.
+
+Identifier toute requête manifestement non scalable.
+
+Surveiller notamment :
+
+N+1 queries
+full table scans
+JSONB mal indexé
+recherche fuzzy non optimisée
+chargements excessifs.
+
+==================================================
+46. TEST CONCURRENCE
+==================================================
+
+Simuler :
+
+Utilisateur A réserve 5 pièces.
+
+Utilisateur B réserve simultanément 5 pièces.
+
+Vérifier qu'il n'est pas possible de réserver deux fois le même stock disponible.
+
+Même test pour :
+
+- sortie stock
+- ajustement
+- prêt outil
+- retour outil.
+
+==================================================
+47. TEST MOBILE / RESPONSIVE
+==================================================
+
+Tester toutes les interfaces principales sur :
+
+- desktop
+- tablette
+- mobile.
+
+Vérifier :
+
+- création
+- recherche
+- filtres
+- fiche produit
+- stock
+- prêt outil
+- retour
+- historique.
+
+Une fonctionnalité métier importante ne doit pas devenir inutilisable sur petit écran.
+
+==================================================
+48. TEST UX RÉELLE
+==================================================
+
+Adopter successivement les rôles :
+
+MAGASINIER
+MÉCANICIEN
+CHEF D’ATELIER
+GÉRANT
+
+Pour chacun :
+
+Créer
+Rechercher
+Modifier
+Consulter
+Prêter
+Retourner
+Déplacer
+Réserver
+Sortir
+Archiver
+
+Noter toute action :
+
+- ambiguë
+- trop longue
+- cachée
+- incohérente
+- nécessitant un contournement.
+
+==================================================
+49. TEST DES ÉTATS VIDES ET ERREURS
+==================================================
+
+Tester :
+
+- aucun produit
+- aucun stock
+- aucun résultat
+- référence inconnue
+- VIN invalide
+- quantité négative
+- prix invalide
+- doublon
+- référence déjà utilisée
+- exemplaire déjà prêté
+- outil déjà perdu
+- équipement hors service.
+
+Les messages doivent être compréhensibles pour un utilisateur métier.
+
+==================================================
+50. TEST DE TRAÇABILITÉ TOTALE
+==================================================
+
+Pour un produit de test, reconstruire tout son parcours :
+
+CRÉATION
+→ enrichissement
+→ référence ajoutée
+→ fournisseur ajouté
+→ réception
+→ lot
+→ emplacement
+→ déplacement
+→ réservation
+→ sortie
+→ consommation
+→ intervention
+→ véhicule.
+
+Pour un outil :
+
+CRÉATION
+→ exemplaire
+→ emplacement
+→ prêt
+→ utilisateur
+→ intervention
+→ retour
+→ anomalie
+→ maintenance
+→ retour en service.
+
+Pour un équipement :
+
+ACQUISITION
+→ installation
+→ utilisation
+→ maintenance
+→ panne
+→ réparation
+→ calibration
+→ remise en service
+→ réforme.
+
+À la fin, vérifier qu’un historique exploitable peut être reconstruit.
+
+==================================================
+51. TEST DU « MONDE RÉEL »
+==================================================
+
+Maintenant, prends mentalement l’image et l’environnement d’un véritable atelier automobile.
+
+Imagine un magasin contenant plusieurs milliers d’éléments différents.
+
+Pose-toi systématiquement :
+
+« Si le magasinier trouve cet objet demain, peut-il l’enregistrer ? »
+
+« Peut-il le distinguer d’un autre ? »
+
+« Peut-il indiquer sa référence ? »
+
+« Peut-il enregistrer ses caractéristiques ? »
+
+« Peut-il indiquer son emplacement ? »
+
+« Peut-il indiquer sa quantité ? »
+
+« Peut-il savoir s’il s’agit d’une variante ? »
+
+« Peut-il le retrouver rapidement ? »
+
+« Peut-il savoir avec quels véhicules il est compatible ? »
+
+« Peut-il savoir qui l’a utilisé ? »
+
+« Peut-il savoir quand il a été perdu ou cassé ? »
+
+« Peut-il savoir pourquoi le stock a changé ? »
+
+Si la réponse est non pour un cas métier raisonnablement réaliste, documente-le.
+
+==================================================
+52. TEST FINAL — OBJETS JAMAIS PRÉVUS
+==================================================
+
+Invente toi-même au moins 20 objets supplémentaires que les développeurs n’auraient probablement pas anticipés.
+
+Ils doivent appartenir à des domaines différents.
+
+Pour chacun :
+
+1. créer ;
+2. définir ses caractéristiques ;
+3. ajouter une référence ;
+4. rechercher ;
+5. modifier ;
+6. consulter ;
+7. vérifier l’historique.
+
+Le système doit démontrer qu’il est réellement extensible.
+
+==================================================
+53. CRITÈRE DE RÉUSSITE
+==================================================
+
+NE DÉCLARE PAS « TEST RÉUSSI » simplement parce que les données sont enregistrées.
+
+Pour chaque scénario, évalue :
+
+A. Création
+B. Structure métier
+C. Caractéristiques
+D. Variantes
+E. Exemplaires
+F. Références
+G. Compatibilité
+H. Stock
+I. Localisation
+J. Recherche
+K. Historique
+L. Interface
+M. Validation
+N. Extensibilité
+O. Performance
+
+Notation :
+
+🟢 100 % fonctionnel
+🟡 fonctionnel mais limitation
+🟠 contournement nécessaire
+🔴 impossible
+⚫ non implémenté
+
+==================================================
+54. MATRICE DE TEST
+==================================================
+
+Produire à la fin une matrice :
+
+| Domaine | Scénario | UI | Backend | Data model | Recherche | Historique | Résultat | Gravité |
+|---------|----------|----|---------|------------|-----------|------------|----------|---------|
+
+Ne masquer AUCUN échec.
+
+==================================================
+55. BUGS CRITIQUES À RECHERCHER
+==================================================
+
+Accorder une attention particulière aux problèmes suivants :
+
+CRITIQUE :
+
+- impossibilité d’enregistrer une catégorie réelle ;
+- impossibilité d’enregistrer une caractéristique importante ;
+- perte d’une information ;
+- fusion automatique de deux variantes distinctes ;
+- stock faux ;
+- double comptage du stock ;
+- perte de traçabilité ;
+- suppression d’un objet historique ;
+- impossibilité d’identifier un outil physique ;
+- impossibilité de savoir qui possède un outil ;
+- incompatibilité véhicule incorrecte ;
+- recherche qui ne retrouve pas une référence existante.
+
+MAJEUR :
+
+- interface trop rigide ;
+- formulaire trop générique ;
+- attributs uniquement codés en dur ;
+- recherche insuffisante ;
+- absence d’unité ;
+- mauvaise gestion des lots ;
+- mauvaise gestion des conditionnements ;
+- absence de distinction UNKNOWN / NOT_APPLICABLE ;
+- impossibilité d’enrichir progressivement.
+
+MINEUR :
+
+- ergonomie
+- libellé
+- affichage
+- pagination
+- petits défauts visuels.
+
+==================================================
+56. INTERDICTION DE MODIFIER LE CODE AU DÉBUT
+==================================================
+
+IMPORTANT.
+
+Pendant la première phase :
+
+NE MODIFIE PAS LE CODE.
+
+NE MODIFIE PAS LE SCHÉMA.
+
+NE CRÉE PAS DE MIGRATION.
+
+NE « CORRIGE » PAS immédiatement.
+
+Commence par tester ce qui existe réellement.
+
+Je veux d’abord savoir où le système casse.
+
+Si tu rencontres une limitation :
+
+1. reproduis-la ;
+2. documente-la ;
+3. donne les données utilisées ;
+4. donne le parcours UI ;
+5. explique la cause probable ;
+6. classe la gravité.
+
+Ensuite seulement, si nécessaire, propose la correction.
+
+==================================================
+57. RAPPORT FINAL OBLIGATOIRE
+==================================================
+
+À la fin, produire un rapport structuré :
+
+1. RÉSUMÉ EXÉCUTIF
+
+2. NOMBRE TOTAL DE SCÉNARIOS
+
+3. NOMBRE RÉUSSI
+
+4. NOMBRE PARTIEL
+
+5. NOMBRE ÉCHOUÉ
+
+6. NOMBRE IMPOSSIBLE
+
+7. COUVERTURE DES DOMAINES
+
+8. PROBLÈMES DU MODÈLE DE DONNÉES
+
+9. PROBLÈMES BACKEND
+
+10. PROBLÈMES FRONTEND
+
+11. PROBLÈMES UX
+
+12. PROBLÈMES DE RECHERCHE
+
+13. PROBLÈMES DE STOCK
+
+14. PROBLÈMES DE TRAÇABILITÉ
+
+15. PROBLÈMES DE COMPATIBILITÉ
+
+16. PROBLÈMES D’EXTENSIBILITÉ
+
+17. PROBLÈMES DE PERFORMANCE
+
+18. PROBLÈMES DE PERMISSIONS / SÉCURITÉ
+
+19. RISQUES DE PERTE DE DONNÉES
+
+20. LIMITES ARCHITECTURALES
+
+21. CORRECTIONS PRIORITAIRES
+
+22. CORRECTIONS SECONDAIRES
+
+23. AMÉLIORATIONS UX
+
+24. TESTS AUTOMATISÉS MANQUANTS
+
+25. VERDICT FINAL
+
+==================================================
+58. VERDICT FINAL STRICT
+==================================================
+
+Donner obligatoirement l’un des verdicts suivants :
+
+🟢 A — PRÊT POUR PRODUCTION
+
+Le système peut gérer de manière fiable la diversité réelle d’un garage moderne.
+
+🟢 B — TRÈS BON
+
+Quelques améliorations non critiques restent nécessaires.
+
+🟡 C — FONCTIONNEL MAIS LIMITÉ
+
+Le système fonctionne mais présente des limitations importantes.
+
+🟠 D — FRAGILE
+
+Le système fonctionne pour les cas simples mais risque de rencontrer rapidement des limites métier.
+
+🔴 E — INSUFFISANT
+
+L’architecture ou les interfaces ne permettent pas de gérer correctement la diversité réelle du catalogue.
+
+==================================================
+59. RÈGLE FINALE
+==================================================
+
+NE CHERCHE PAS À ME FAIRE PLAISIR.
+
+NE CHERCHE PAS À JUSTIFIER TON IMPLÉMENTATION.
+
+NE SUPPOSE PAS QU’UNE FONCTIONNALITÉ EXISTE PARCE QUE TU L’AS CODÉE.
+
+TON OBJECTIF EST DE TROUVER LES FAILLES.
+
+Si tout fonctionne réellement, démontre-le par les scénarios exécutés.
+
+Si quelque chose est impossible, dis-le clairement.
+
+Si quelque chose fonctionne uniquement grâce à un contournement, indique-le.
+
+Si quelque chose existe dans le backend mais n’est pas accessible depuis l’interface, considère-le comme NON DISPONIBLE POUR L’UTILISATEUR.
+
+Le résultat attendu n’est pas « tout fonctionne ».
+
+Le résultat attendu est :
+
+« Nous savons maintenant exactement jusqu’où le système peut aller, ce qu’il sait gérer, ce qu’il ne sait pas gérer et où se trouvent ses limites. »

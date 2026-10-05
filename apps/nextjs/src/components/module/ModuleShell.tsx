@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronRight, Home } from "lucide-react";
-import { findDomain, findModuleByPath } from "~/lib/app-nav";
+import { ChevronRight, Home, LayoutGrid } from "lucide-react";
+import { findDomain, findModuleByPath, moduleVisible } from "~/lib/app-nav";
 import { usePermissions } from "~/hooks/usePermissions";
 
 interface ModuleShellProps {
@@ -25,7 +25,10 @@ export function ModuleShell({ domainId, children }: ModuleShellProps) {
 
   const isDomainHome = pathname === domain.href;
   const activeModule = findModuleByPath(pathname);
-  const tabs = domain.modules.filter((m) => canAccessModule(m.moduleId ?? domain.id));
+  const tabs = domain.modules.filter(
+    (m) => moduleVisible(m.status) && canAccessModule(m.moduleId ?? domain.id)
+  );
+  const homeHref = domain.homeHref ?? domain.href;
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 md:px-8">
@@ -75,6 +78,18 @@ export function ModuleShell({ domainId, children }: ModuleShellProps) {
       {/* Bandeau de sous-menus du domaine */}
       {!isDomainHome && tabs.length > 0 && (
         <div className="mt-4 flex items-center gap-2 overflow-x-auto rounded-xl border border-border/60 bg-card/60 p-1 backdrop-blur [scrollbar-width:thin]">
+          <Link
+            key="tab-home"
+            href={homeHref}
+            className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors sm:text-sm ${
+              pathname === homeHref
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+            }`}
+          >
+            <LayoutGrid size={14} />
+            Vue d&apos;ensemble
+          </Link>
           {tabs.map((tab) => {
             const isActive = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
             return (

@@ -44,6 +44,7 @@ export const orDevisVersions = pgTable("or_devis_versions", {
   version: integer("version").notNull(),
   montantHT: numeric("montant_ht", { precision: 12, scale: 2 }).default("0"),
   montantTTC: numeric("montant_ttc", { precision: 12, scale: 2 }).default("0"),
+  lignesSnapshot: jsonb("lignes_snapshot").$type<Record<string, unknown>[]>(), // état figé des LIGNES à la création de la version (P2-10)
   statut: varchar("statut", { length: 25 }).default("BROUILLON"), // BROUILLON | ENVOYE | AUTORISE_PARTIEL | AUTORISE_TOTAL | REFUSE
   validiteJours: integer("validite_jours").default(15),
   envoyeLe: timestamp("envoye_le"),

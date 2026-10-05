@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, produits, categories, stocks, stocksUnites, stocksLots, lots, unitesMesure, pretsOutils, employes, mouvementsStock } from "@atelierone/db";
+import { db, produits, categories, stocks, stocksUnites, stocksLots, lots, unitesMesure, pretsOutils, employes, mouvementsStock, emplacements, outillageCalibration, outillageMaintenance } from "@atelierone/db";
 import { eq, and, desc, asc, sql, or, ilike, inArray, lt } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { enregistrerMouvement, TYPES_MOUVEMENT } from "~/server/lib/stock-engine";
@@ -14,11 +14,11 @@ import { enregistrerMouvement, TYPES_MOUVEMENT } from "~/server/lib/stock-engine
  */
 
 /** Décrémente (ou incrémente) le stock d'un outil d'une unité + mouvement tracé. */
-async function ajusterStockOutil(tx: any, outilId: number, agenceId: number, sens: "E" | "S", type: string, motif: string, par: number) {
+async function ajusterStockOutil(tx: any, outilId: number, agenceId: number, sens: "E" | "S", type: string, motif: string, par: number, emplacementId?: number) {
   const [stockRow] = await tx
     .select({ id: stocks.id, quantite: stocks.quantite })
     .from(stocks)
-    .where(and(eq(stocks.produitId, outilId), eq(stocks.agenceId, agenceId)))
+    .where(and(eq(stocks.produitId, outilId), eq(stocks.agenceId, agenceId), emplacementId ? eq(stocks.emplacementId, emplacementId) : undefined))
     .limit(1);
   const stockAvant = stockRow ? Number(stockRow.quantite) : 0;
   if (sens === "S" && stockAvant <= 0) {
@@ -28,7 +28,7 @@ async function ajusterStockOutil(tx: any, outilId: number, agenceId: number, sen
   if (stockRow) {
     await tx.update(stocks).set({ quantite: String(stockApres) }).where(eq(stocks.id, stockRow.id));
   } else {
-    await tx.insert(stocks).values({ produitId: outilId, agenceId, emplacementId: 2, quantite: String(stockApres), quantiteReservee: 0 } as any);
+    await tx.insert(stocks).values({ produitId: outilId, agenceId, emplacementId: emplacementId ?? 2, quantite: String(stockApres), quantiteReservee: 0 } as any);
   }
   await tx.insert(mouvementsStock).values({
     produitId: outilId,
@@ -38,6 +38,7 @@ async function ajusterStockOutil(tx: any, outilId: number, agenceId: number, sen
     quantite: "1",
     stockAvant: String(stockAvant),
     stockApres: String(stockApres),
+    emplacementId: emplacementId ?? 2,
     motif,
     effectuePar: par,
   } as any);
@@ -52,13 +53,28 @@ const STATUT_OUTIL_META: Record<string, string> = {
   REFORME: "Réformé",
 };
 
+/** Emplacement « Bureau du magasinier » de l'agence (créé à la première utilisation). */
+async function getOrCreateBureau(q: any, agenceId: number): Promise<{ id: number; libelle: string | null }> {
+  const [bureau] = await q
+    .select({ id: emplacements.id, libelle: emplacements.libelle })
+    .from(emplacements)
+    .where(and(eq(emplacements.agenceId, agenceId), eq(emplacements.code, "BUREAU")))
+    .limit(1);
+  if (bureau) return bureau;
+  const [row] = await q
+    .insert(emplacements)
+    .values({ agenceId, type: "BUREAU", code: "BUREAU", libelle: "Bureau du magasinier", ordre: 999, profondeur: 0 } as any)
+    .returning({ id: emplacements.id, libelle: emplacements.libelle });
+  return row;
+}
+
 export const outillageRouter = createTRPCRouter({
   /** Liste des outils / consommables avec recherche, stock et statut. */
   list: requirePermissionProcedure("stock.consulter")
     .input(
       z.object({
         q: z.string().optional(),
-        type: z.enum(["OUTIL", "CONSOMMABLE"]).optional(),
+        type: z.enum(["OUTIL", "CONSOMMABLE", "EQUIPEMENT"]).optional(),
         categorieId: z.number().int().optional(),
         statut: z.enum(["TOUS", "DISPONIBLE", "PRETE", "STOCK_EPUISE", "REPARATION", "USE", "CASSE", "PERDU", "VOLE", "REFORME"]).optional(),
         limit: z.number().int().min(10).max(300).default(100),
@@ -68,7 +84,7 @@ export const outillageRouter = createTRPCRouter({
       const safe = input ?? {};
       const conditions: any[] = [
         eq(produits.isActive, true),
-        inArray(produits.typeProduit, safe.type ? [safe.type] : ["OUTIL", "CONSOMMABLE"]),
+        inArray(produits.typeProduit, safe.type ? [safe.type] : ["OUTIL", "CONSOMMABLE", "EQUIPEMENT"]),
       ];
       if (safe.categorieId) conditions.push(eq(produits.categorieId, safe.categorieId));
       if (safe.q?.trim()) {
@@ -190,6 +206,7 @@ export const outillageRouter = createTRPCRouter({
           estReconditionnable: produits.estReconditionnable,
           valeurCore: produits.valeurCore,
           estCore: produits.estCore,
+          calibrable: produits.calibrable,
         })
         .from(produits)
         .leftJoin(categories, eq(produits.categorieId, categories.id))
@@ -197,7 +214,7 @@ export const outillageRouter = createTRPCRouter({
         .limit(1);
       if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Outil introuvable." });
 
-      const [stocksLignes, pretsHisto, mouvements, stockParUnite, futs] = await Promise.all([
+      const [stocksLignes, pretsHisto, mouvements, stockParUnite, futs, calibrations] = await Promise.all([
         db
           .select({ emplacementId: stocks.emplacementId, quantite: stocks.quantite })
           .from(stocks)
@@ -252,10 +269,32 @@ export const outillageRouter = createTRPCRouter({
           .from(stocksLots)
           .innerJoin(lots, eq(stocksLots.lotId, lots.id))
           .where(and(eq(stocksLots.produitId, input.id), eq(stocksLots.agenceId, ctx.user.agenceId))),
+        // Calibration des instruments de mesure (échéances, certificats)
+        db
+          .select({
+            id: outillageCalibration.id,
+            dateCalibration: outillageCalibration.dateCalibration,
+            organisme: outillageCalibration.organisme,
+            certificat: outillageCalibration.certificat,
+            resultat: outillageCalibration.resultat,
+            tolerance: outillageCalibration.tolerance,
+            prochaineCalibration: outillageCalibration.prochaineCalibration,
+          })
+          .from(outillageCalibration)
+          .where(eq(outillageCalibration.outilId, input.id))
+          .orderBy(desc(outillageCalibration.dateCalibration))
+          .limit(10),
       ]);
 
       const pretsActifs = pretsHisto.filter((h) => h.actif);
       const now = new Date();
+      const [derniereCalibration] = calibrations;
+      const derniereCalibrationInfo = derniereCalibration
+        ? {
+            ...derniereCalibration,
+            enAttente: !!derniereCalibration.prochaineCalibration && new Date(derniereCalibration.prochaineCalibration) < now,
+          }
+        : null;
       return {
         outil: p,
         stock: stocksLignes.map((s) => ({ emplacementId: s.emplacementId, quantite: Number(s.quantite) })),
@@ -273,6 +312,14 @@ export const outillageRouter = createTRPCRouter({
         pretsActifs,
         historiquePrets: pretsHisto.map((h) => ({ ...h, enRetard: !!h.actif && !!h.dateRetour && new Date(h.dateRetour) < now })),
         mouvements,
+        calibrations: calibrations.map((c) => ({
+          ...c,
+          dateCalibration: c.dateCalibration,
+          prochaineCalibration: c.prochaineCalibration,
+          enAttente: !!c.prochaineCalibration && new Date(c.prochaineCalibration) < now,
+        })),
+        derniereCalibration: derniereCalibrationInfo,
+        prochaineCalibration: derniereCalibrationInfo?.prochaineCalibration ?? null,
       };
     }),
 
@@ -307,7 +354,8 @@ export const outillageRouter = createTRPCRouter({
         if (!tech) throw new TRPCError({ code: "NOT_FOUND", message: "Technicien introuvable." });
 
         // Specs garage : quantity_available diminue de 1 (le stock est contrôlé)
-        await ajusterStockOutil(tx, input.outilId, ctx.user.agenceId, "S", TYPES_MOUVEMENT.SORTIE_OUTIL, `Prêt à technicien — retour prévu ${input.dateRetour}`, Number(ctx.user.id));
+        const bureau = await getOrCreateBureau(tx, ctx.user.agenceId);
+        await ajusterStockOutil(tx, input.outilId, ctx.user.agenceId, "S", TYPES_MOUVEMENT.SORTIE_OUTIL, `Prêt à technicien — retour prévu ${input.dateRetour}`, Number(ctx.user.id), bureau.id);
 
         const [row] = await tx
           .insert(pretsOutils)
@@ -348,16 +396,17 @@ export const outillageRouter = createTRPCRouter({
         if (!pret.actif) throw new TRPCError({ code: "BAD_REQUEST", message: "Ce prêt est déjà rendu." });
 
         const [p] = await tx.select({ statutOutil: produits.statutOutil }).from(produits).where(eq(produits.id, pret.outilId)).limit(1);
+        const bureau = await getOrCreateBureau(tx, ctx.user.agenceId);
 
         // Specs : retour OK → quantité disponible +1, statut disponible ;
         // Endommagé → statut CASSE ; Perdu → statut PERDU + déduction
         if (input.etatRetour === "OK") {
-          await ajusterStockOutil(tx, pret.outilId, ctx.user.agenceId, "E", TYPES_MOUVEMENT.RETOUR_OUTIL, `Retour OK — ${input.remarque ?? "bon état"}`, Number(ctx.user.id));
+          await ajusterStockOutil(tx, pret.outilId, ctx.user.agenceId, "E", TYPES_MOUVEMENT.RETOUR_OUTIL, `Retour OK — ${input.remarque ?? "bon état"}`, Number(ctx.user.id), bureau.id);
           await tx.update(produits).set({ statutOutil: null } as any).where(eq(produits.id, pret.outilId));
         } else if (input.etatRetour === "ENDOMMAGE") {
           await tx.update(produits).set({ statutOutil: "CASSE" } as any).where(eq(produits.id, pret.outilId));
         } else {
-          await ajusterStockOutil(tx, pret.outilId, ctx.user.agenceId, "S", TYPES_MOUVEMENT.RETOUR_OUTIL, `Outil perdu (non rendu) — ${input.remarque}`, Number(ctx.user.id));
+          await ajusterStockOutil(tx, pret.outilId, ctx.user.agenceId, "S", TYPES_MOUVEMENT.RETOUR_OUTIL, `Outil perdu (non rendu) — ${input.remarque}`, Number(ctx.user.id), bureau.id);
           await tx.update(produits).set({ statutOutil: "PERDU" } as any).where(eq(produits.id, pret.outilId));
         }
 
@@ -390,11 +439,14 @@ export const outillageRouter = createTRPCRouter({
           .where(eq(produits.id, input.outilId))
           .limit(1);
         if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Outil introuvable." });
-        if (p.typeProduit !== "OUTIL") throw new TRPCError({ code: "BAD_REQUEST", message: "Seul un outil peut être déclaré." });
+        if (p.typeProduit !== "OUTIL" && p.typeProduit !== "EQUIPEMENT") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Seul un outil (OUTIL) ou un équipement (EQUIPEMENT) peut être déclaré." });
+        }
 
         // Perte / vol / casse / réforme → déduction d'une unité (specs : quantity_available ajustée)
         if (["PERDU", "VOLE", "CASSE", "REFORME"].includes(input.statut)) {
-          await ajusterStockOutil(tx, input.outilId, ctx.user.agenceId, "S", TYPES_MOUVEMENT.RETOUR_OUTIL, `${STATUT_OUTIL_META[input.statut]} — ${input.motif}`, Number(ctx.user.id));
+          const bureau = await getOrCreateBureau(tx, ctx.user.agenceId);
+          await ajusterStockOutil(tx, input.outilId, ctx.user.agenceId, "S", TYPES_MOUVEMENT.RETOUR_OUTIL, `${STATUT_OUTIL_META[input.statut]} — ${input.motif}`, Number(ctx.user.id), bureau.id);
         }
         await tx.update(produits).set({ statutOutil: input.statut } as any).where(eq(produits.id, input.outilId));
         return { success: true, statutLabel: STATUT_OUTIL_META[input.statut] };
@@ -406,13 +458,160 @@ export const outillageRouter = createTRPCRouter({
     .input(z.object({ outilId: z.number().int(), motif: z.string().min(3) }))
     .mutation(async ({ ctx, input }) => {
       return db.transaction(async (tx) => {
-        const [p] = await tx.select({ id: produits.id }).from(produits).where(eq(produits.id, input.outilId)).limit(1);
+        const [p] = await tx
+          .select({ id: produits.id, statutOutil: produits.statutOutil, typeProduit: produits.typeProduit })
+          .from(produits)
+          .where(eq(produits.id, input.outilId))
+          .limit(1);
         if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Outil introuvable." });
         const [pret] = await tx.select({ id: pretsOutils.id }).from(pretsOutils).where(and(eq(pretsOutils.outilId, input.outilId), eq(pretsOutils.actif, true))).limit(1);
         if (pret) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet outil est en prêt — il doit d'abord être rendu." });
+
+        // Un statut « perdu / volé / cassé / réformé » avait déjà déduit 1 unité :
+        // le lever réintègre l'exemplaire retrouvé / réparé (traçabilité conservée).
+        const etaitDeductible = p.statutOutil != null && ["PERDU", "VOLE", "CASSE", "REFORME"].includes(p.statutOutil);
+        if (etaitDeductible) {
+          const bureau = await getOrCreateBureau(tx, ctx.user.agenceId);
+          await ajusterStockOutil(tx, input.outilId, ctx.user.agenceId, "E", TYPES_MOUVEMENT.RETOUR_OUTIL, `Exemplaire retrouvé/réparé (${STATUT_OUTIL_META[p.statutOutil!] ?? p.statutOutil}) — ${input.motif}`, Number(ctx.user.id), bureau.id);
+        }
+
         await tx.update(produits).set({ statutOutil: null } as any).where(eq(produits.id, input.outilId));
-        return { success: true };
+        return { success: true, stockReintegre: etaitDeductible };
       }) as any;
+    }),
+
+  /** Calibration / étalonnage d'un outil ou équipement de mesure (échéance, organisme, certificat, essai). */
+  calibrer: requirePermissionProcedure("stock.utiliser", "stock.modifier")
+    .input(z.object({
+      outilId: z.number().int(),
+      resultat: z.enum(["CONFORME", "NON_CONFORME", "AVEC_RESERVES"]),
+      organisme: z.string().optional(),
+      certificat: z.string().optional(),
+      tolerance: z.string().optional(),
+      prochaineCalibration: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      motif: z.string().min(3).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [p] = await tx
+          .select({ id: produits.id, typeProduit: produits.typeProduit, calibrable: produits.calibrable })
+          .from(produits)
+          .where(eq(produits.id, input.outilId))
+          .limit(1);
+        if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Outil introuvable." });
+        if (p.typeProduit !== "OUTIL" && p.typeProduit !== "EQUIPEMENT") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Seuls les outils et équipements de mesure peuvent être calibrés." });
+        }
+
+        const [row] = await tx.insert(outillageCalibration).values({
+          outilId: input.outilId,
+          organisme: input.organisme || null,
+          certificat: input.certificat || null,
+          resultat: input.resultat,
+          tolerance: input.tolerance || null,
+          prochaineCalibration: input.prochaineCalibration ? new Date(`${input.prochaineCalibration}T18:00:00`) : null,
+          effectuePar: Number(ctx.user.id),
+        } as any).returning();
+
+        // Un essai NON_CONFORME retire l'instrument de la circulation jusqu'à réparation.
+        if (input.resultat === "NON_CONFORME") {
+          await tx.update(produits).set({ statutOutil: "REPARATION" } as any).where(eq(produits.id, input.outilId));
+        }
+
+        await tx.insert(mouvementsStock).values({
+          produitId: input.outilId,
+          agenceId: ctx.user.agenceId,
+          type: "CALIBRATION",
+          sens: "N",
+          quantite: "0",
+          stockAvant: "0",
+          stockApres: "0",
+          motif: `Calibration ${input.resultat} — ${input.certificat ?? "sans certificat"}${input.organisme ? ` (${input.organisme})` : ""}`,
+          effectuePar: ctx.user.id,
+        } as any);
+
+        return { success: true, calibrationId: row.id, resultat: input.resultat };
+      }) as any;
+    }),
+
+  /** Historique des calibrations d'un outil / équipement. */
+  calibrationHistorique: requirePermissionProcedure("stock.consulter")
+    .input(z.object({ outilId: z.number().int(), limit: z.number().int().default(20) }))
+    .query(async ({ ctx, input }) => {
+      const rows = await db
+        .select({
+          id: outillageCalibration.id,
+          dateCalibration: outillageCalibration.dateCalibration,
+          organisme: outillageCalibration.organisme,
+          certificat: outillageCalibration.certificat,
+          resultat: outillageCalibration.resultat,
+          tolerance: outillageCalibration.tolerance,
+          prochaineCalibration: outillageCalibration.prochaineCalibration,
+        })
+        .from(outillageCalibration)
+        .where(eq(outillageCalibration.outilId, input.outilId))
+        .orderBy(desc(outillageCalibration.dateCalibration))
+        .limit(input.limit);
+      return rows.map((r) => ({
+        ...r,
+        enAttente: !!r.prochaineCalibration && new Date(r.prochaineCalibration) < new Date(),
+      }));
+    }),
+
+  /** Opération de maintenance (préventive/curative/contrôle) sur un équipement ou outil. */
+  maintenance: requirePermissionProcedure("stock.utiliser", "stock.modifier")
+    .input(z.object({
+      outilId: z.number().int(),
+      type: z.enum(["PREVENTIVE", "CURATIVE", "CONTROLE"]),
+      dateMaintenance: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      prestataire: z.string().optional(),
+      cout: z.number().min(0).optional(),
+      observations: z.string().optional(),
+      prochaineMaintenance: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [p] = await tx
+          .select({ id: produits.id, typeProduit: produits.typeProduit })
+          .from(produits)
+          .where(eq(produits.id, input.outilId))
+          .limit(1);
+        if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Outil introuvable." });
+        if (p.typeProduit !== "OUTIL" && p.typeProduit !== "EQUIPEMENT") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Seuls les outils et équipements peuvent être maintenus." });
+        }
+        const [row] = await tx.insert(outillageMaintenance).values({
+          outilId: input.outilId,
+          type: input.type,
+          dateMaintenance: input.dateMaintenance ? new Date(`${input.dateMaintenance}T18:00:00`) : new Date(),
+          prestataire: input.prestataire || null,
+          cout: input.cout != null ? String(input.cout) : null,
+          observations: input.observations || null,
+          prochaineMaintenance: input.prochaineMaintenance ? new Date(`${input.prochaineMaintenance}T18:00:00`) : null,
+          effectuePar: Number(ctx.user.id),
+        } as any).returning();
+        return { success: true, maintenanceId: row.id };
+      }) as any;
+    }),
+
+  /** Historique de maintenance d'un équipement / outil. */
+  maintenanceHistorique: requirePermissionProcedure("stock.consulter")
+    .input(z.object({ outilId: z.number().int(), limit: z.number().int().default(20) }))
+    .query(async ({ ctx, input }) => {
+      return db
+        .select({
+          id: outillageMaintenance.id,
+          type: outillageMaintenance.type,
+          dateMaintenance: outillageMaintenance.dateMaintenance,
+          prestataire: outillageMaintenance.prestataire,
+          cout: outillageMaintenance.cout,
+          observations: outillageMaintenance.observations,
+          prochaineMaintenance: outillageMaintenance.prochaineMaintenance,
+        })
+        .from(outillageMaintenance)
+        .where(eq(outillageMaintenance.outilId, input.outilId))
+        .orderBy(desc(outillageMaintenance.dateMaintenance))
+        .limit(input.limit);
     }),
 
   /** Historique des prêts (par technicien ou global). */
@@ -471,5 +670,196 @@ export const outillageRouter = createTRPCRouter({
         enRetard: !!r.dateRetour && new Date(r.dateRetour) < now,
         joursEcoules: Math.max(0, Math.floor((now.getTime() - new Date(r.dateSortie).getTime()) / 86400000)),
       }));
+    }),
+
+  // ─── BUREAU DU MAGASINIER (MVP conception stock + outillage) ───
+
+  /** Emplacement « Bureau » de l'agence (créé à la première utilisation). */
+  bureauEmplacement: requirePermissionProcedure("stock.consulter")
+    .query(async ({ ctx }) => {
+      return getOrCreateBureau(db, ctx.user.agenceId);
+    }),
+
+  /** Approvisionner le bureau depuis un grand magasin (transfert tracé). */
+  approvisionnerBureau: requirePermissionProcedure("stock.utiliser", "stock.modifier")
+    .input(z.object({
+      produitId: z.number().int(),
+      emplacementSourceId: z.number().int(),
+      quantite: z.number().positive(),
+      motif: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const groupeOperationId = crypto.randomUUID();
+      return db.transaction(async (tx) => {
+        const bureau = await getOrCreateBureau(tx, ctx.user.agenceId);
+        const [prod] = await tx.select({ titre: produits.titre }).from(produits).where(eq(produits.id, input.produitId)).limit(1);
+        if (!prod) throw new TRPCError({ code: "NOT_FOUND", message: "Article introuvable." });
+        const motif = input.motif || "Réassort du bureau";
+        await enregistrerMouvement(tx, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          type: TYPES_MOUVEMENT.APPROVISIONNEMENT_BUREAU_SORTIE,
+          sens: "S",
+          quantite: input.quantite,
+          emplacementId: input.emplacementSourceId,
+          motif: `Sortie magasin → bureau : ${motif}`,
+          effectuePar: Number(ctx.user.id),
+          groupeOperationId,
+        });
+        await enregistrerMouvement(tx, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          type: TYPES_MOUVEMENT.APPROVISIONNEMENT_BUREAU_ENTREE,
+          sens: "E",
+          quantite: input.quantite,
+          emplacementId: bureau.id,
+          motif: `Entrée bureau depuis magasin #${input.emplacementSourceId} : ${motif}`,
+          effectuePar: Number(ctx.user.id),
+          groupeOperationId,
+        });
+        return { success: true, bureauId: bureau.id };
+      }) as any;
+    }),
+
+  /** Dotation de consommable : sortie bureau → OR / technicien, sans retour. */
+  doter: requirePermissionProcedure("stock.utiliser", "stock.modifier")
+    .input(z.object({
+      produitId: z.number().int(),
+      quantite: z.number().positive(),
+      orId: z.number().int().optional(),
+      technicienId: z.number().int().optional(),
+      motif: z.string().min(3),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const [prod] = await tx.select({ titre: produits.titre, typeProduit: produits.typeProduit }).from(produits).where(eq(produits.id, input.produitId)).limit(1);
+        if (!prod) throw new TRPCError({ code: "NOT_FOUND", message: "Article introuvable." });
+        if (prod.typeProduit === "OUTIL") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Un outil se prête (pas de dotation) — utilisez « Prêter un outil »." });
+        }
+        const bureau = await getOrCreateBureau(tx, ctx.user.agenceId);
+        const cible = input.orId ? `OR #${input.orId}` : input.technicienId ? `technicien #${input.technicienId}` : "atelier";
+        await enregistrerMouvement(tx, {
+          produitId: input.produitId,
+          agenceId: ctx.user.agenceId,
+          type: TYPES_MOUVEMENT.DOTATION_CONSOMMABLE,
+          sens: "S",
+          quantite: input.quantite,
+          emplacementId: bureau.id,
+          orId: input.orId,
+          motif: `Dotation → ${cible} : ${input.motif}`,
+          effectuePar: Number(ctx.user.id),
+        });
+        return { success: true, bureauId: bureau.id };
+      }) as any;
+    }),
+
+  /** Stock du bureau (quantités, seuils locaux, statut OK / sous seuil). */
+  bureauList: requirePermissionProcedure("stock.consulter")
+    .input(z.object({
+      q: z.string().optional(),
+      type: z.enum(["OUTIL", "CONSOMMABLE", "PIECE"]).optional(),
+      sousSeuilOnly: z.boolean().optional(),
+    }).optional())
+    .query(async ({ ctx, input }) => {
+      const bureau = await getOrCreateBureau(db, ctx.user.agenceId);
+      const safe = input ?? {};
+      const conditions: any[] = [
+        eq(stocks.emplacementId, bureau.id),
+        eq(stocks.agenceId, ctx.user.agenceId),
+      ];
+      if (safe.type) conditions.push(eq(produits.typeProduit, safe.type));
+      if (safe.q?.trim()) {
+        const q = `%${safe.q.trim()}%`;
+        conditions.push(
+          or(
+            ilike(produits.titre, q),
+            ilike(produits.codeBarre, q),
+            ilike(produits.codeArticle, q),
+            ilike(produits.designationCourte, q),
+          )!
+        );
+      }
+      const rows = await db
+        .select({
+          produitId: stocks.produitId,
+          titre: produits.titre,
+          codeBarre: produits.codeBarre,
+          codeArticle: produits.codeArticle,
+          typeProduit: produits.typeProduit,
+          statutOutil: produits.statutOutil,
+          seuilGlobal: produits.seuilAlerte,
+          quantite: stocks.quantite,
+          quantiteReservee: stocks.quantiteReservee,
+          seuilLocal: stocks.seuilAlerteLocal,
+        })
+        .from(stocks)
+        .innerJoin(produits, eq(stocks.produitId, produits.id))
+        .where(and(...conditions))
+        .orderBy(desc(stocks.quantite));
+      const result = rows.map((r) => {
+        const quantite = Number(r.quantite ?? 0);
+        const reservee = Number(r.quantiteReservee ?? 0);
+        const seuil = r.seuilLocal ?? r.seuilGlobal ?? 0;
+        return {
+          ...r,
+          quantite,
+          reservee,
+          disponible: Math.max(0, quantite - reservee),
+          seuil,
+          sousSeuil: seuil > 0 && quantite < seuil,
+        };
+      });
+      return safe.sousSeuilOnly ? result.filter((r) => r.sousSeuil) : result;
+    }),
+
+  /** Régler le seuil d'alerte local d'un produit au bureau. */
+  setSeuilBureau: requirePermissionProcedure("stock.utiliser", "stock.modifier")
+    .input(z.object({ produitId: z.number().int(), seuil: z.number().int().min(0) }))
+    .mutation(async ({ ctx, input }) => {
+      const bureau = await getOrCreateBureau(db, ctx.user.agenceId);
+      await db
+        .update(stocks)
+        .set({ seuilAlerteLocal: input.seuil } as any)
+        .where(and(eq(stocks.produitId, input.produitId), eq(stocks.emplacementId, bureau.id), eq(stocks.agenceId, ctx.user.agenceId)));
+      return { success: true };
+    }),
+
+  /** Mouvements liés au bureau (entrées/sorties/dotations/prêts). */
+  bureauMouvements: requirePermissionProcedure("stock.consulter")
+    .input(z.object({ produitId: z.number().int().optional(), limit: z.number().int().default(100) }))
+    .query(async ({ ctx, input }) => {
+      const bureau = await getOrCreateBureau(db, ctx.user.agenceId);
+      const conditions: any[] = [
+        eq(mouvementsStock.agenceId, ctx.user.agenceId),
+        or(
+          eq(mouvementsStock.emplacementId, bureau.id),
+          inArray(mouvementsStock.type, [
+            TYPES_MOUVEMENT.APPROVISIONNEMENT_BUREAU_SORTIE,
+            TYPES_MOUVEMENT.APPROVISIONNEMENT_BUREAU_ENTREE,
+            TYPES_MOUVEMENT.DOTATION_CONSOMMABLE,
+          ]),
+        ),
+      ];
+      if (input.produitId) conditions.push(eq(mouvementsStock.produitId, input.produitId));
+      const rows = await db
+        .select({
+          id: mouvementsStock.id,
+          type: mouvementsStock.type,
+          sens: mouvementsStock.sens,
+          quantite: mouvementsStock.quantite,
+          motif: mouvementsStock.motif,
+          orId: mouvementsStock.orId,
+          emplacementId: mouvementsStock.emplacementId,
+          dateMouvement: mouvementsStock.dateMouvement,
+          produitTitre: produits.titre,
+          produitCode: produits.codeArticle,
+        })
+        .from(mouvementsStock)
+        .leftJoin(produits, eq(mouvementsStock.produitId, produits.id))
+        .where(and(...conditions))
+        .orderBy(desc(mouvementsStock.dateMouvement))
+        .limit(input.limit);
+      return rows;
     }),
 });

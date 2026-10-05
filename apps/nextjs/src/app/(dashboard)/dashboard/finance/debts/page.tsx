@@ -15,13 +15,14 @@ function formatFCFA(amount: number) {
 
 export default function DebtsPage() {
   const [filter, setFilter] = useState<"UNPAID" | "PARTIAL" | "PAID" | "OVERDUE" | undefined>(undefined);
+  const [search, setSearch] = useState("");
   const [showPayModal, setShowPayModal] = useState(false);
   const [selectedDebt, setSelectedDebt] = useState<string | null>(null);
   const [payAmount, setPayAmount] = useState(0);
   const [payMethod, setPayMethod] = useState<"CASH" | "MOMO" | "OM">("CASH");
 
   const utils = api.useUtils();
-  const { data: debts, isLoading } = api.finance.getDebts.useQuery(filter ? { status: filter } : undefined);
+  const { data: debts, isLoading } = api.finance.getDebts.useQuery({ status: filter, search: search || undefined });
   const { data: caissesOuvertes } = api.finance.getBalance.useQuery();
   const [payCaisseId, setPayCaisseId] = useState("");
   const payDebt = api.finance.payDebt.useMutation({
@@ -61,6 +62,16 @@ export default function DebtsPage() {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="mb-4">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Rechercher par client, équipement ou référence de vente..."
+          className="w-full rounded-lg border border-border px-4 py-2.5 dark:bg-card outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+        />
       </div>
 
       {isLoading ? (

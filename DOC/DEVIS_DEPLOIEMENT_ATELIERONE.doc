@@ -1,0 +1,268 @@
+<html xmlns:w="urn:schemas-microsoft-com:office:office" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+<head>
+<meta charset="utf-8">
+<title>Devis Déploiement AtelierOne</title>
+<style>
+@page { size: A4; margin: 2cm; }
+body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11pt; color: #1a1a1a; margin: 0; padding: 20px; }
+h1 { font-size: 22pt; color: #1a365d; text-align: center; border-bottom: 3px solid #2563eb; padding-bottom: 10px; }
+h2 { font-size: 16pt; color: #1a365d; background: #eff6ff; padding: 8px 12px; margin-top: 30px; }
+h3 { font-size: 13pt; color: #374151; margin-top: 20px; }
+table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 10pt; }
+th { background: #1a365d; color: white; padding: 8px 10px; text-align: left; font-weight: bold; }
+td { padding: 6px 10px; border-bottom: 1px solid #e5e7eb; }
+tr:nth-child(even) { background: #f9fafb; }
+.right { text-align: right; font-weight: bold; }
+.total { background: #dbeafe !important; font-weight: bold; font-size: 12pt; }
+.grandtotal { background: #1a365d !important; color: white; font-size: 14pt; }
+.note { background: #fefce8; border-left: 4px solid #f59e0b; padding: 10px 15px; margin: 15px 0; }
+.section-break { page-break-before: always; }
+.subtitle { text-align: center; color: #6b7280; font-size: 12pt; margin-top: -5px; }
+.date { text-align: right; color: #6b7280; font-style: italic; }
+</style>
+</head>
+<body>
+
+<h1>DEVIS DÉPLOIEMENT PRODUCTION<br>ATELIERONE — GARAGE POLYVALENT JUNIOR</h1>
+<p class="subtitle">Serveur local + VPS synchronisé · Cycle complet Client → Véhicule → OR → Facturation · Modules RH & Stock intégrés</p>
+<p class="date">Août 2026 · Version 1.0</p>
+
+<!-- ══════════════════ SECTION A : MATÉRIEL ══════════════════ -->
+<h2>A — MATÉRIEL INFORMATIQUE (investissement initial)</h2>
+
+<h3>Serveur local principal</h3>
+<table>
+<tr><th>Élément</th><th>Spécifications</th><th>Qté</th><th>Prix unitaire (FCFA)</th><th>Total (FCFA)</th></tr>
+<tr><td>Machine serveur</td><td>Tour ou mini-PC : Intel Core i5 12e gén (4c/8t), 16 Go DDR4, SSD NVMe 512 Go</td><td align="center">1</td><td class="right">850 000</td><td class="right">850 000</td></tr>
+<tr><td>Disque SSD supplémentaire</td><td>NVMe 512 Go (RAID 1 miroir avec le disque principal)</td><td align="center">1</td><td class="right">120 000</td><td class="right">120 000</td></tr>
+<tr><td>Onduleur (UPS)</td><td>1000 VA minimum, autonomie 30 min (APC Back-UPS ou équivalent)</td><td align="center">1</td><td class="right">180 000</td><td class="right">180 000</td></tr>
+<tr><td>Switch / routeur réseau</td><td>Gigabit Ethernet, 8 ports minimum (TP-Link ou Ubiquiti)</td><td align="center">1</td><td class="right">45 000</td><td class="right">45 000</td></tr>
+<tr><td>Câblage réseau Ethernet</td><td>Câble Cat6 (10m × 5 postes) + prises murales</td><td align="center">1 lot</td><td class="right">35 000</td><td class="right">35 000</td></tr>
+<tr><td>Clavier + souris + écran</td><td>Pour administration directe du serveur (setup et maintenance)</td><td align="center">1 kit</td><td class="right">120 000</td><td class="right">120 000</td></tr>
+<tr class="total"><td colspan="3"><strong>SOUS-TOTAL MATÉRIEL</strong></td><td></td><td class="right"><strong>1 350 000 FCFA</strong></td></tr>
+</table>
+
+<h3>Postes utilisateurs (optionnel si déjà équipé)</h3>
+<table>
+<tr><th>Élément</th><th>Spécifications</th><th>Qté</th><th>Prix unitaire (FCFA)</th><th>Total (FCFA)</th></tr>
+<tr><td>Tablette technicien</td><td>Android 12+, 10" écran, Wi-Fi (saisie pointage, statuts, photos terrain)</td><td align="center">2</td><td class="right">95 000</td><td class="right">190 000</td></tr>
+<tr><td>PC accueil / secrétariat</td><td>Desktop ou laptop Windows 11, 8 Go RAM (si non existant)</td><td align="center">1</td><td class="right">350 000</td><td class="right">350 000</td></tr>
+<tr class="total"><td colspan="3"><strong>SOUS-TOTAL POSTES (optionnel)</strong></td><td></td><td class="right"><strong>540 000 FCFA</strong></td></tr>
+</table>
+
+<div class="section-break"></div>
+
+<!-- ══════════════════ SECTION B : HÉBERGEMENT VPS ══════════════════ -->
+<h2>B — HÉBERGEMENT VPS & SERVICES CLOUD (coûts récurrents)</h2>
+
+<h3>VPS primaire (secours + réplication + accès distant)</h3>
+<table>
+<tr><th>Fournisseur</th><th>Configuration</th><th>Prix mensuel ($USD)</th><th>Prix mensuel (FCFA)*</th><th>Prix annuel (FCFA)</th></tr>
+<tr><td><strong>Hetzner CPX31</strong> ⭐ recommandé</td><td>4 vCPU AMD / 8 Go RAM / 160 Go SSD / 20 TB trafic</td><td class="right">$17,50</td><td class="right">~11 400 F</td><td class="right"><strong>~136 800 F</strong></td></tr>
+<tr><td>DigitalOcean Basic Droplet</td><td>4 vCPU / 8 Go RAM / 160 Go SSD</td><td class="right">$48,00</td><td class="right">~31 200 F</td><td class="right">~374 400 F</td></tr>
+<tr><td>Vultr Cloud Compute</td><td>4 vCPU / 8 Go RAM / 160 Go NVMe</td><td class="right">$40,00</td><td class="right">~26 000 F</td><td class="right">~312 000 F</td></tr>
+</table>
+<p style="font-size:9pt;color:#6b7280;">* Taux indicatif : 1 USD ≈ 650 FCFA · Les prix Hetzner sont les plus compétitifs pour cette configuration.</p>
+
+<h3>Autres services cloud</h3>
+<table>
+<tr><th>Service</th><th>Description</th><th>Prix annuel (FCFA)</th></tr>
+<tr><td>Nom de domaine</td><td>.cm ou .com — atelierone.cm ou gpj-garage.com</td><td class="right">15 000</td></tr>
+<tr><td>Certificat SSL</td><td>Let's Encrypt — gratuit à vie (renouvellement auto via certbot)</td><td class="right">0</td></tr>
+<tr><td>Email transactionnel (optionnel)</td><td>Brevo/Resend plan gratuit : 300 emails/jour (accusés de réception, relances)</td><td class="right">0</td></tr>
+<tr><td>Supervision externe</td><td>Uptime Kuma auto-hébergé sur le VPS (gratuit) ou UptimeRobot plan gratuit</td><td class="right">0</td></tr>
+<tr class="total"><td><strong>TOTAL ANNUEL CLOUD (avec Hetzner)</strong></td><td></td><td class="right"><strong>~151 800 FCFA/an</strong></td></tr>
+</table>
+
+<div class="section-break"></div>
+
+<!-- ══════════════════ SECTION C : LOGICIELS & LICENCES ══════════════════ -->
+<h2>C — LOGICIELS & LICENCES</h2>
+<table>
+<tr><th>Logiciel / Service</th><th>Licence</th><th>Coût</th><th>Rôle dans le système</th></tr>
+<tr><td>Ubuntu Server 22.04/24.04 LTS</td><td>Open source (GPL)</td><td class="right" style="color:green;">Gratuit</td><td>Système d'exploitation du serveur local</td></tr>
+<tr><td>PostgreSQL 17</td><td>Open source (PostgreSQL License)</td><td class="right" style="color:green;">Gratuit</td><td>Base de données relationnelle principale</td></tr>
+<tr><td>Node.js 20 LTS</td><td>Open source (MIT)</td><td class="right" style="color:green;">Gratuit</td><td>Runtime de l'application AtelierOne</td></tr>
+<tr><td>pnpm</td><td>Open source (MIT)</td><td class="right" style="color:green;">Gratuit</td><td>Gestionnaire de paquets du monorepo Turborepo</td></tr>
+<tr><td>PM2</td><td>Open source (AGPL)</td><td class="right" style="color:green;">Gratuit</td><td>Gestionnaire de process (redémarrage auto, logs)</td></tr>
+<tr><td>Nginx</td><td>Open source (BSD-like)</td><td class="right" style="color:green;">Gratuit</td><td>Reverse proxy HTTPS, fichiers statiques uploads</td></tr>
+<tr><td>Let's Encrypt / Certbot</td><td>Open source (Apache)</td><td class="right" style="color:green;">Gratuit</td><td>Certificat SSL/TLS renouvelé automatiquement</td></tr>
+<tr><td>UFW + Fail2ban</td><td>Open source (GPL)</td><td class="right" style="color:green;">Gratuit</td><td>Firewall + protection brute-force SSH</td></tr>
+<tr><td>pgBackRest / pg_dump</td><td>Open source (PostgreSQL License)</td><td class="right" style="color:green;">Gratuit</td><td>Sauvegardes chiffrées quotidiennes</td></tr>
+<tr><td>Netdata / Uptime Kuma</td><td>Open source (GPL)</td><td class="right" style="color:green;">Gratuit</td><td>Supervision temps réel serveur + alertes</td></tr>
+<tr><td>NextAuth v5 (authjs)</td><td>Open source (ISC)</td><td class="right" style="color:green;">Gratuit</td><td>Authentification multi-utilisateurs JWT + RBAC</td></tr>
+<tr><td>tRPC v11 + Drizzle ORM</td><td>Open source (MIT/Apache)</td><td class="right" style="color:green;">Gratuit</td><td>API typée de bout en bout + accès base de données</td></tr>
+<tr class="total"><td><strong>TOTAL LOGICIELS</strong></td><td colspan="2">100 % open source — aucune licence propriétaire requise</td><td class="right"><strong>0 FCFA</strong></td></tr>
+</table>
+<div class="note">
+<strong>✅ Avantage majeur :</strong> l'intégralité de la stack logicielle est 100 % open source. Aucune licence annuelle, aucun abonnement SaaS obligatoire. Seuls les coûts matériels et d'hébergement s'appliquent.
+</div>
+
+<div class="section-break"></div>
+
+<!-- ══════════════════ SECTION D : DÉVELOPPEMENT AVEC IA ══════════════════ -->
+<h2>D — DÉVELOPPEMENT ASSISTÉ PAR INTELLIGENCE ARTIFICIELLE</h2>
+
+<h3>Modules déjà développés et validés par tests automatisés</h3>
+<table>
+<tr><th>Module</th><th>Tests validation</th><th>Statut</th></tr>
+<tr><td>Clients & Contrats (types, contrats maintenance, fiche 360°, blocage, historique)</td><td>30/30 PASS</td><td style="color:green;font-weight:bold;">✔ Livré</td></tr>
+<tr><td>Véhicules & Atelier (parc, cycle immobilisation, priorités P1-P4, alertes, planning 80%)</td><td>29/29 PASS</td><td style="color:green;font-weight:bold;">✔ Livré</td></tr>
+<tr><td>Diagnostic structuré + validation chef + devis client</td><td>24/24 PASS</td><td style="color:green;font-weight:bold;">✔ Livré</td></tr>
+<tr><td>Demandes pièces magasin + commandes fournisseur liées OR + retours défaillants</td><td>14/14 PASS</td><td style="color:green;font-weight:bold;">✔ Livré</td></tr>
+<tr><td>Stock (sortie/reservation OR, DLC, cores, kits, pièces client, inventaire cycle)</td><td>67 checks PASS</td><td style="color:green;font-weight:bold;">✔ Livré</td></tr>
+<tr><td>Facturation (comptant/crédit, remise contrat, groupée, dettes, encaissements)</td><td>16/16 PASS</td><td style="color:green;font-weight:bold;">✔ Livré</td></tr>
+<tr><td>Performance & Qualité (KPIs santé, diagnostic, comebacks, compétences, compétitivité)</td><td>22/22 PASS</td><td style="color:green;font-weight:bold;">✔ Livré</td></tr>
+<tr><td>Notifications atelier (diagnostic à valider, pièce arrivée/manquante, commande passée)</td><td>Inclus</td><td style="color:green;font-weight:bold;">✔ Livré</td></tr>
+<tr><td>Marge par OR (revenu − coût CMP) + accusé réception WhatsApp cliquable</td><td>Inclus</td><td style="color:green;font-weight:bold;">✔ Livré</td></tr>
+<tr><td>Module RH complet (13 employés réels seedés, pointage heures réelles, paie 225,3h, congés, compétences, disciplinaire, planning)</td><td>23/23 PASS</td><td style="color:green;font-weight:bold;">✔ Livré</td></tr>
+<tr><td>Upload photos véhicules (endpoint + galerie fiche OR) + accusé WhatsApp</td><td>Inclus</td><td style="color:green;font-weight:bold;">✔ Livré</td></tr>
+<tr><td>Non-régression Playwright (21 checks UI) + unitaires 222 tests</td><td>222/222 + 21/21</td><td style="color:green;font-weight:bold;">✔ Vert</td></tr>
+<tr class="total"><td><strong>TOTAL MODULES LIVRÉS</strong></td><td><strong>205 unitaires + ~150 intégration + 21 UI = ~376 tests</strong></td><td style="color:green;"><strong>✔ VALIDÉ</strong></td></tr>
+</table>
+
+<h3>Développement restant (facultatif — améliorations identifiées)</h3>
+<table>
+<tr><th>Amélioration</th><th>Description</th><th>Effort estimé (avec IA)</th></tr>
+<tr><td>Envoi SMS réel</td><td>Intégration API SMS camerounaise (Orange/MTN) pour accusés de réception automatiques aux clients</td><td>½ journée</td></tr>
+<tr><td>MinIO sur VPS</td><td>Réplication automatique des photos vers le VPS (S3-compatible)</td><td>¼ journée</td></tr>
+<tr><td>Application mobile native</td><td>React Native / PWA pour les techniciens hors connexion (V3)</td><td>À chiffrer séparément</td></tr>
+</table>
+
+<div class="section-break"></div>
+
+<!-- ══════════════════ SECTION E : SERVICES & INSTALLATION ══════════════════ -->
+<h2>E — SERVICES D'INSTALLATION & FORMATION</h2>
+<table>
+<tr><th>Service</th><th>Description</th><th>Durée</th><th>Coût estimé (FCFA)</th></tr>
+<tr><td>Installation serveur local</td><td>Ubuntu Server, PostgreSQL, Node.js, Nginx HTTPS, PM2, firewall, sauvegardes — scripts fournis</td><td>1 jour</td><td class="right">75 000</td></tr>
+<tr><td>Migration des données</td><td>Import des clients/véhicules existants depuis le fichier Excel GPJ vers PostgreSQL</td><td>½ jour</td><td class="right">25 000</td></tr>
+<tr><td>Configuration VPS</td><td>Hetzner, streaming replication, pgBackRest, Uptime Kuma</td><td>½ jour</td><td class="right">50 000</td></tr>
+<tr><td>Formation équipe</td><td>Point matinal, saisie pointage, diagnostic, demandes pièces, planning, facturation, KPIs santé — guide utilisateur fourni</td><td>1 jour</td><td class="right">50 000</td></tr>
+<tr><td>Accompagnement démarrage</td><td>Support les premiers jours d'utilisation réelle (corrections mineures, ajustements paramètres)</td><td>2 jours</td><td class="right">50 000</td></tr>
+<tr class="total"><td><strong>TOTAL SERVICES</strong></td><td></td><td><strong>5 jours</strong></td><td class="right"><strong>250 000 FCFA</strong></td></tr>
+</table>
+
+<div class="section-break"></div>
+
+<!-- ══════════════════ SECTION F : RÉCAPITULATIF GÉNÉRAL ══════════════════ -->
+<h2>F — RÉCAPITULATIF GÉNÉRAL DU DEVIS</h2>
+
+<h3>Investissement initial (one-shot)</h3>
+<table>
+<tr><th>Poste</th><th>Montant (FCFA)</th></tr>
+<tr><td>A — Matériel serveur local (obligatoire)</td><td class="right">1 350 000</td></tr>
+<tr><td>A-bis — Postes utilisateurs (optionnel)</td><td class="right">540 000</td></tr>
+<tr><td>E — Services installation + migration + formation + accompagnement</td><td class="right">250 000</td></tr>
+<tr><td>C — Logiciels & licences</td><td class="right" style="color:green;"><strong>0 (100 % open source)</strong></td></tr>
+<tr><td>D — Développement (déjà livré par IA, modules testés)</td><td class="right" style="color:green;"><strong>0 (inclus)</strong></td></tr>
+<tr class="grandtotal"><td><strong>TOTAL INVESTISSEMENT INITIAL</strong></td><td class="right"><strong>1 600 000 à 2 140 000 FCFA</strong><br>(selon option postes utilisateurs)</td></tr>
+</table>
+
+<h3>Coûts récurrents annuels</h3>
+<table>
+<tr><th>Poste</th><th>Mensuel (FCFA)</th><th>Annuel (FCFA)</th></tr>
+<tr><td>Hébergement VPS Hetzner CPX31 (recommandé)</td><td class="right">11 400</td><td class="right">136 800</td></tr>
+<tr><td>Nom de domaine (.cm ou .com)</td><td class="right">—</td><td class="right">15 000</td></tr>
+<tr><td>Électricité serveur local (~150 W permanent)</td><td class="right">10 000</td><td class="right">120 000</td></tr>
+<tr><td>Connexion internet dédiée (fibre ou 4G backup)</td><td class="right">25 000</td><td class="right">300 000</td></tr>
+<tr class="total"><td><strong>TOTAL RÉCURRENT ANNUEL</strong></td><td class="right"><strong>46 400 F/mois</strong></td><td class="right"><strong>571 800 F/an</strong></td></tr>
+</table>
+
+<h3>Projection sur 3 ans</h3>
+<table>
+<tr><th>Année</th><th>Investissement</th><th>Récurrent</th><th>Total cumulé</th></tr>
+<tr><td>Année 1</td><td class="right">1 600 000 – 2 140 000</td><td class="right">571 800</td><td class="right"><strong>2 171 800 – 2 711 800 F</strong></td></tr>
+<tr><td>Année 2</td><td class="right">0</td><td class="right">571 800</td><td class="right"><strong>+ 571 800 F</strong></td></tr>
+<tr><td>Année 3</td><td class="right">0</td><td class="right">571 800</td><td class="right"><strong>+ 571 800 F</strong></td></tr>
+<tr class="grandtotal"><td><strong>Coût total 3 ans</strong></td><td></td><td></td><td class="right"><strong>~3 315 000 – 3 855 000 FCFA</strong><br>(soit ~110 500 – 128 500 F/mois)</td></tr>
+</table>
+
+<div class="note">
+<strong>💡 Comparaison :</strong> un développeur freelance au Cameroun facturerait ce projet <b>entre 5 et 15 millions FCFA</b> (6+ mois de travail). Avec l'IA, le développement est <b>livré, testé et documenté sans coût de développement</b>. Les seuls coûts réels sont le matériel, l'hébergement et la formation.
+</div>
+
+<div class="section-break"></div>
+
+<!-- ══════════════════ SECTION G : ARCHITECTURE ══════════════════ -->
+<h2>G — ARCHITECTURE DE DÉPLOIEMENT</h2>
+
+<h3>Schéma général</h3>
+<pre style="background:#f1f5f9;padding:15px;border-radius:8px;font-size:9pt;line-height:1.6;">
+GARAGE POLYVALENT JUNIOR                    VPS (Hetzner)
+┌──────────────────────────┐               ┌──────────────────────────┐
+│   SERVEUR LOCAL          │               │   VPS STANDBY            │
+│                          │    Streaming   │                          │
+│  Ubuntu Server LTS       │◄──Replication─►│  Ubuntu Server LTS       │
+│  ┌────────────────────┐ │   (< 1 sec)    │  ┌────────────────────┐ │
+│  │ PostgreSQL 17      │ │               │  │ PostgreSQL 17      │ │
+│  │ (PRIMAIRE écriture)│ │               │  │ (STANDBY lecture)  │ │
+│  └────────────────────┘ │               │  └────────────────────┘ │
+│  ┌────────────────────┐ │               │  ┌────────────────────┐ │
+│  │ Next.js (PM2:3000) │ │               │  │ Next.js (PM2:3000) │ │
+│  │ AtelierOne ERP     │ │               │  │ (basculé si panne) │ │
+│  └────────────────────┘ │               │  └────────────────────┘ │
+│  ┌────────────────────┐ │               │  ┌────────────────────┐ │
+│  │ Nginx (HTTPS:443)  │ │               │  │ Uptime Kuma        │ │
+│  └────────────────────┘ │               │  │ pgBackRest backups │ │
+│  ┌────────────────────┐ │               │  └────────────────────┘ │
+│  │ Uploads (photos)   │───── rsync ─────────────────►                │
+│  └────────────────────┘ │               │                          │
+│  ┌────────────────────┐ │               │                          │
+│  │ pgBackRest backups │───── rsync ─────────────────►                │
+│  └────────────────────┘ │               │                          │
+└──────────────────────────┘               └──────────────────────────┘
+         ▲                                          ▲
+         │ LAN Ethernet/Wi-Fi                       │ Internet (HTTPS)
+         │                                          │
+┌────────┴────────┐                        ┌────────┴────────┐
+│ POSTES CLIENTS  │                        │ ACCÈS DISTANT   │
+│ Accueil, chef,  │                        │ Direction,      │
+│ magasin, techs  │                        │ mobiles         │
+└─────────────────┘                        └─────────────────┘
+</pre>
+
+<h3>Stack technique (100 % open source)</h3>
+<table>
+<tr><th>Couche</th><th>Technologie</th><th>Version</th><th>Licence</th></tr>
+<tr><td>Frontend</td><td>Next.js 15 App Router + React 19 + Tailwind CSS + shadcn/ui + framer-motion</td><td>Latest</td><td>MIT</td></tr>
+<tr><td>API</td><td>tRPC v11 (type-safe end-to-end) + React Query v5</td><td>Latest</td><td>MIT</td></tr>
+<tr><td>Base de données</td><td>PostgreSQL 17 + Drizzle ORM (type-safe SQL)</td><td>17.x</td><td>PostgreSQL</td></tr>
+<tr><td>Authentification</td><td>NextAuth v5 (credentials + bcrypt + JWT) + RBAC 9 rôles</td><td>v5</td><td>ISC</td></tr>
+<tr><td>Exports</td><td>ExcelJS (Excel), jsPDF (PDF bulletins), PapaParse (CSV)</td><td>Latest</td><td>MIT</td></tr>
+<tr><td>Temps réel</td><td>React Query invalidate + notifications atelier push</td><td>—</td><td>—</td></tr>
+<tr><td>Offline cache</td><td>Dexie (IndexedDB navigateur)</td><td>Latest</td><td>Apache</td></tr>
+</table>
+
+---
+
+## 4. CRITÈRES DE SUCCÈS DU DÉPLOIEMENT
+
+| Critère | Objectif |
+|---|---|
+| Temps de chargement du parc | < 2 secondes pour 500 véhicules |
+| Utilisateurs simultanés | ≥ 20 sans dégradation |
+| Disponibilité | ≥ 99,5 % (hors coupures électriques protégées par UPS) |
+| Perte de données maximale en cas de sinistre | ≤ 24 h (backup quotidien + réplication continue) |
+| Temps de restauration complète depuis backup | ≤ 1 heure |
+| Photos stockables | Illimité (limité uniquement par l'espace disque) |
+
+---
+
+## 5. MAINTENANCE RECOMMANDÉE
+
+| Fréquence | Action |
+|---|---|
+| Quotidienne | Sauvegarde DB automatique (cron 2h) + rsync vers VPS (3h) |
+| Hebdomadaire | Vérifier les logs PM2 et Nginx · vérifier l'espace disque |
+| Mensuelle | Test de restauration d'un backup · mise à jour sécurité apt |
+| Trimestrielle | Mise à jour des dépendances npm (pnpm audit) · revue des cibles KPI |
+| Annuelle | Rotation AUTH_SECRET · renouvellement certificat SSL (auto via certbot) |
+
+---
+
+*Document produit avec assistance IA — tous les montants sont indicatifs et basés sur les prix constatés en août 2026.*
+*Taux de change utilisé : 1 USD ≈ 650 FCFA.*
+
+</body>
+</html>

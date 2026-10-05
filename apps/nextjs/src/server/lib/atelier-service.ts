@@ -25,6 +25,7 @@ export const STATUTS_ATELIER = [
   "BLOQUE",
   "LIVRE",
   "ANNULE",
+  "ferme_definitif",
 ] as const;
 
 export const STATUT_LABELS: Record<string, string> = {
@@ -38,6 +39,7 @@ export const STATUT_LABELS: Record<string, string> = {
   BLOQUE: "Bloqué",
   LIVRE: "Livré",
   ANNULE: "Annulé",
+  ferme_definitif: "Fermé définitivement",
 };
 
 export const STATUT_BADGE: Record<string, string> = {
@@ -51,6 +53,7 @@ export const STATUT_BADGE: Record<string, string> = {
   BLOQUE: "bg-destructive/15 text-destructive",
   LIVRE: "bg-muted text-muted-foreground",
   ANNULE: "bg-destructive/10 text-destructive line-through",
+  ferme_definitif: "bg-foreground/10 text-foreground/70",
 };
 
 export const RAISONS_BLOCAGE = [
@@ -148,7 +151,7 @@ export function calculerAlertes(params: {
   const priorite = (params.priorite ?? "P3") as Priorite;
   const jours = joursImmobilisation(params.dateEntree, today);
   const retard = retardJours(params.datePromesse, today);
-  const termine = statut === "LIVRE" || statut === "ANNULE";
+  const termine = statut === "LIVRE" || statut === "ANNULE" || statut === "ferme_definitif";
 
   const alertes: Alerte[] = [];
   if (!termine && retard > 0) alertes.push("RETARD");
@@ -179,10 +182,11 @@ const TRANSITIONS_ATELIER: Record<string, string[]> = {
   EN_ATTENTE_PIECES: ["EN_COURS", "BLOQUE", "ANNULE"],
   EN_ATTENTE_VALIDATION: ["EN_COURS", "BLOQUE", "ANNULE"],
   CONTROLE_QUALITE: ["PRET_A_LIVRER", "EN_COURS", "BLOQUE", "ANNULE"],
-  PRET_A_LIVRER: ["LIVRE", "BLOQUE", "ANNULE"],
+  PRET_A_LIVRER: ["BLOQUE", "ANNULE"],
   BLOQUE: ["EN_COURS", "EN_ATTENTE_PIECES", "EN_ATTENTE_VALIDATION", "ANNULE"],
-  LIVRE: [],
+  LIVRE: ["ferme_definitif"],
   ANNULE: [],
+  ferme_definitif: [],
 };
 
 /** Cycle du rapport de diagnostic (technicien → chef d'atelier). */

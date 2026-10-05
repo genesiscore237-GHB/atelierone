@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { api } from "~/trpc/react";
 import { Building2, ChevronDown, ChevronRight, UserRound } from "lucide-react";
 import { Skeleton } from "~/components/ui/skeleton";
+import { statutLabel } from "~/lib/rh-labels";
 
 type EmpNode = {
   id: number;
@@ -119,7 +120,7 @@ export default function OrganigrammeRH() {
           <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
             active ? "bg-success/10 text-success-foreground" : "bg-muted text-muted-foreground"
           }`}>
-            {node.statut}
+            {statutLabel(node.statut)}
           </span>
         </div>
         {hasChildren && !isCollapsed && (

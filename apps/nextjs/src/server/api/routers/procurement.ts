@@ -1449,6 +1449,13 @@ export const procurementRouter = createTRPCRouter({
         prixMaximumRachat: z.union([z.string(), z.number()]).nullish(),
         tva: z.union([z.string(), z.number()]).nullish(),
         motifEcart: z.string().optional(),
+        // Métadonnées lot (traçabilité garage) : péremption, fabrication, provenance, qualité, fabricant
+        numeroLot: z.string().max(100).optional(),
+        datePeremption: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date de péremption invalide (AAAA-MM-JJ)").optional(),
+        dateFabrication: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date de fabrication invalide (AAAA-MM-JJ)").optional(),
+        provenance: z.string().max(200).optional(),
+        qualite: z.string().max(80).optional(),
+        fabricant: z.string().max(120).optional(),
       })),
       paiement: z.object({
         mode: z.string(),
@@ -1536,18 +1543,32 @@ export const procurementRouter = createTRPCRouter({
               quantite: qteBase,
               coutUnitaire: coutUnitaireBase,
               fournisseurId: Number(input.fournisseurId),
-              numeroLot: `LOT-${ref}-${ligneIndex}`,
+              numeroLot: ligne.numeroLot || `LOT-${ref}-${ligneIndex}`,
               reference: ref,
+              datePeremption: ligne.datePeremption ? new Date(`${ligne.datePeremption}T00:00:00`) : null,
+              dateFabrication: ligne.dateFabrication ? new Date(`${ligne.dateFabrication}T00:00:00`) : null,
+              provenance: ligne.provenance?.trim() || null,
+              qualite: ligne.qualite?.trim() || null,
+              fabricant: ligne.fabricant?.trim() || null,
             });
-            const [existingStock] = await tx.select().from(stocks).where(
-              and(eq(stocks.produitId, pId), eq(stocks.agenceId, ctx.user.agenceId))
-            ).limit(1) as any;
-            const oldQte = existingStock ? Number(existingStock.quantite ?? 0) : 0;
-            const oldCMP = existingStock ? Number(existingStock.coutUnitaireMoyen ?? 0) : 0;
-            const newQte = oldQte + qteBase;
-            const newCMP = qteBase > 0 ? ((oldCMP * oldQte) + (coutUnitaireBase * qteBase)) / newQte : oldCMP;
+const [existingStock] = await tx.select().from(stocks).where(
+          and(eq(stocks.produitId, pId), eq(stocks.agenceId, ctx.user.agenceId))
+        ).limit(1) as any;
+        const oldQte = existingStock ? Number(existingStock.quantite ?? 0) : 0;
+        const oldCMP = existingStock ? Number(existingStock.coutUnitaireMoyen ?? 0) : 0;
+        const newQte = oldQte + qteBase;
+        const newCMP = qteBase > 0 ? ((oldCMP * oldQte) + (coutUnitaireBase * qteBase)) / newQte : oldCMP;
 
-            if (existingStock) {
+        const prixPlancher = ligne.prixMinimumVente != null ? Number(ligne.prixMinimumVente) : null;
+        const prixVenteLigne = ligne.prixVente != null ? Number(ligne.prixVente) : null;
+        if (prixPlancher != null && prixPlancher > 0 && prixVenteLigne != null && prixVenteLigne < prixPlancher) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Prix de vente (${prixVenteLigne}) inférieur au prix plancher (${prixPlancher}) pour ${ligne.produitId}`,
+          });
+        }
+
+        if (existingStock) {
               await tx.update(stocks).set({
                 quantite: String(newQte),
                 coutUnitaireMoyen: String(newCMP),

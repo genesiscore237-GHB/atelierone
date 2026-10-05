@@ -10,6 +10,7 @@ import {
 import { eq, and, desc } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { expiryAlerts, expiryStatus } from "~/server/lib/documents-engine";
+import { assertEmployeEnAgence } from "~/server/lib/rh-scope";
 
 /** RH-08 — Documents RH (types paramétrables, upload, alertes expiration) */
 export const rhDocumentsRouter = createTRPCRouter({
@@ -22,7 +23,7 @@ export const rhDocumentsRouter = createTRPCRouter({
       .orderBy(hrDocumentTypes.name);
   }),
 
-  createDocumentType: requirePermissionProcedure("rh.utilisateur.modifier")
+  createDocumentType: requirePermissionProcedure("rh.document.modifier")
     .input(z.object({
       code: z.string().min(1),
       name: z.string().min(1),
@@ -44,7 +45,7 @@ export const rhDocumentsRouter = createTRPCRouter({
       return row;
     }),
 
-  updateDocumentType: requirePermissionProcedure("rh.utilisateur.modifier")
+  updateDocumentType: requirePermissionProcedure("rh.document.modifier")
     .input(z.object({
       id: z.number().int(),
       name: z.string().min(1).optional(),
@@ -57,7 +58,7 @@ export const rhDocumentsRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  deleteDocumentType: requirePermissionProcedure("rh.utilisateur.modifier")
+  deleteDocumentType: requirePermissionProcedure("rh.document.modifier")
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       await db.delete(hrDocumentTypes).where(eq(hrDocumentTypes.id, input.id));
@@ -73,7 +74,7 @@ export const rhDocumentsRouter = createTRPCRouter({
     }).optional())
     .query(async ({ ctx, input }) => {
       const safe = input ?? {};
-      const conditions: any[] = [];
+      const conditions: any[] = [eq(employes.agenceId, ctx.user.agenceId)];
       if (safe.employeId) conditions.push(eq(documentsEmployes.employeId, safe.employeId));
       if (safe.documentTypeId) conditions.push(eq(documentsEmployes.documentTypeId, safe.documentTypeId));
       const rows = await db
@@ -124,7 +125,7 @@ export const rhDocumentsRouter = createTRPCRouter({
       });
     }),
 
-  createDocument: requirePermissionProcedure("rh.utilisateur.creer")
+  createDocument: requirePermissionProcedure("rh.document.modifier")
     .input(z.object({
       employeId: z.number().int(),
       documentTypeId: z.number().int(),
@@ -135,6 +136,7 @@ export const rhDocumentsRouter = createTRPCRouter({
       notes: z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      await assertEmployeEnAgence(input.employeId, ctx.user.agenceId);
       const [type] = await db
         .select()
         .from(hrDocumentTypes)
@@ -160,7 +162,7 @@ export const rhDocumentsRouter = createTRPCRouter({
       return row;
     }),
 
-  updateDocument: requirePermissionProcedure("rh.utilisateur.modifier")
+  updateDocument: requirePermissionProcedure("rh.document.modifier")
     .input(z.object({
       id: z.number().int(),
       titre: z.string().optional(),
@@ -171,15 +173,29 @@ export const rhDocumentsRouter = createTRPCRouter({
       notes: z.string().nullable().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      const [doc] = await db
+        .select({ id: documentsEmployes.id })
+        .from(documentsEmployes)
+        .innerJoin(employes, eq(documentsEmployes.employeId, employes.id))
+        .where(and(eq(documentsEmployes.id, input.id), eq(employes.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Document introuvable." });
       const { id, ...rest } = input;
       const values: any = { ...rest, updatedAt: new Date() };
       await db.update(documentsEmployes).set(values).where(eq(documentsEmployes.id, id));
       return { success: true };
     }),
 
-  deleteDocument: requirePermissionProcedure("rh.utilisateur.modifier")
+  deleteDocument: requirePermissionProcedure("rh.document.modifier")
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
+      const [doc] = await db
+        .select({ id: documentsEmployes.id })
+        .from(documentsEmployes)
+        .innerJoin(employes, eq(documentsEmployes.employeId, employes.id))
+        .where(and(eq(documentsEmployes.id, input.id), eq(employes.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Document introuvable." });
       await db.delete(documentsEmployes).where(eq(documentsEmployes.id, input.id));
       return { success: true };
     }),
@@ -205,7 +221,7 @@ export const rhDocumentsRouter = createTRPCRouter({
         .from(documentsEmployes)
         .innerJoin(employes, eq(documentsEmployes.employeId, employes.id))
         .leftJoin(hrDocumentTypes, eq(documentsEmployes.documentTypeId, hrDocumentTypes.id))
-        .where(eq(documentsEmployes.statut, "actif"));
+        .where(and(eq(documentsEmployes.statut, "actif"), eq(employes.agenceId, ctx.user.agenceId)));
 
       const today = new Date();
       const alerts = expiryAlerts(

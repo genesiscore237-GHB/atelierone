@@ -1,16 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useClientPaging, PaginationBar } from "./ClientPagination";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
+import { useEmployeFromUrl } from "~/hooks/useEmployeFromUrl";
+import { usePermissions } from "~/hooks/usePermissions";
+import { downloadCsv } from "./csv-download";
 import {
   Award,
   BookOpen,
   Brain,
   CalendarDays,
+  Download,
   GraduationCap,
   LayoutGrid,
   Plus,
+  Printer,
   Search,
   Trash2,
   AlertTriangle,
@@ -102,12 +108,14 @@ function ReferentielSection() {
     onError: (e) => toast.error(e.message),
   });
 
-  if (isLoading) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
-  if (isError) return <ErrorState onRetry={() => refetch()} />;
-
   const list = (skills ?? []).filter(
     (s: any) => !search || s.name.toLowerCase().includes(search.toLowerCase()) || s.category.toLowerCase().includes(search.toLowerCase())
   );
+
+  const { page, setPage, pageItems, total: listTotal, totalPages } = useClientPaging(list, 25);
+
+  if (isLoading) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
+  if (isError) return <ErrorState onRetry={() => refetch()} />;
 
   const save = () => {
     if (!form.code.trim() || !form.name.trim() || !form.category.trim()) { toast.error("Code, nom et catégorie requis"); return; }
@@ -145,6 +153,7 @@ function ReferentielSection() {
       {list.length === 0 ? (
         <EmptyState icon={BookOpen} title="Aucune compétence" description={search ? "Aucun résultat pour cette recherche." : "Créez la première compétence du référentiel."} />
       ) : (
+        <>
         <div className="overflow-x-auto rounded-xl border border-border">
           <table className="w-full text-sm">
             <thead>
@@ -157,7 +166,7 @@ function ReferentielSection() {
               </tr>
             </thead>
             <tbody>
-              {list.map((s: any) => (
+              {pageItems.map((s: any) => (
                 <tr key={s.id} className="border-t border-border hover:bg-accent/40">
                   <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{s.code}</td>
                   <td className="px-4 py-2.5 font-medium">{s.name}</td>
@@ -174,6 +183,8 @@ function ReferentielSection() {
             </tbody>
           </table>
         </div>
+        <PaginationBar page={page} totalPages={totalPages} total={listTotal} onPage={setPage} label="compétence(s)" empty={!list.length} />
+        </>
       )}
 
       {confirmDelete && (
@@ -199,8 +210,12 @@ function ReferentielSection() {
 // ─── 2. Matrice employés ───
 function MatriceSection() {
   const utils = api.useUtils();
+  const { hasPermission } = usePermissions();
+  const exportMatrice = api.rhDashboard.exportMatrice.useQuery(undefined, { enabled: false });
   const { data: employes } = api.rh.list.useQuery({ limit: 100 });
   const [employeeId, setEmployeeId] = useState<number | null>(null);
+  const employeUrl = useEmployeFromUrl();
+  useEffect(() => { if (employeUrl) setEmployeeId(employeUrl); }, [employeUrl]);
   const { data: empSkills } = api.rhCompetences.listEmployeeSkills.useQuery({ employeeId: employeeId ?? undefined }, { enabled: !!employeeId });
   const { data: gapsData } = api.rhCompetences.getGaps.useQuery({ employeeId: employeeId ?? 0 }, { enabled: !!employeeId });
 
@@ -213,16 +228,32 @@ function MatriceSection() {
 
   return (
     <div className="space-y-4">
-      <div className="max-w-xs">
-        <Label className="text-xs text-muted-foreground">Employé</Label>
-        <select
-          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-          value={employeeId ?? ""}
-          onChange={(e) => setEmployeeId(e.target.value ? Number(e.target.value) : null)}
-        >
-          <option value="">Sélectionner un employé...</option>
-          {empList.map((e) => <option key={e.id} value={e.id}>{e.prenom} {e.nom}</option>)}
-        </select>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="max-w-xs">
+          <Label className="text-xs text-muted-foreground">Employé</Label>
+          <select
+            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+            value={employeeId ?? ""}
+            onChange={(e) => setEmployeeId(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">Sélectionner un employé...</option>
+            {empList.map((e) => <option key={e.id} value={e.id}>{e.prenom} {e.nom}</option>)}
+          </select>
+        </div>
+        {hasPermission("rh.competence.consulter") && (
+          <Button
+            variant="outline"
+            onClick={async () => {
+              if (!exportMatrice.data) await exportMatrice.refetch();
+              downloadCsv(exportMatrice.data, "matrice-competences.csv");
+            }}
+          >
+            <Download size={15} /> Exporter la matrice
+          </Button>
+        )}
+        <Button variant="outline" onClick={() => window.print()} className="print:hidden">
+          <Printer size={15} /> Imprimer
+        </Button>
       </div>
 
       {!employeeId ? (
@@ -434,10 +465,11 @@ function FormationsSection() {
     onError: (e) => toast.error(e.message),
   });
 
+  const list = (trainings ?? []) as any[];
+  const { page: trPage, setPage: setTrPage, pageItems: trPageItems, total: trTotal, totalPages: trTotalPages } = useClientPaging(list, 25);
+
   if (isLoading) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
   if (isError) return <ErrorState onRetry={() => refetch()} />;
-
-  const list = (trainings ?? []) as any[];
   const sesList = (sessions ?? []) as any[];
   const skillList = (skills ?? []) as any[];
   const skillName = (id: number) => skillList.find((s) => s.id === id)?.name ?? `#${id}`;
@@ -490,8 +522,9 @@ function FormationsSection() {
       {list.length === 0 ? (
         <EmptyState icon={GraduationCap} title="Aucune formation" description="Ajoutez la première formation au catalogue." />
       ) : (
+        <>
         <div className="grid gap-3 sm:grid-cols-2">
-          {list.map((t) => (
+          {trPageItems.map((t) => (
             <div key={t.id} className="rounded-xl border border-border bg-card p-4">
               <div className="flex items-start justify-between gap-2">
                 <div>
@@ -517,6 +550,8 @@ function FormationsSection() {
             </div>
           ))}
         </div>
+        <PaginationBar page={trPage} totalPages={trTotalPages} total={trTotal} onPage={setTrPage} label="formation(s)" empty={!list.length} />
+        </>
       )}
 
       {confirmDelete && (

@@ -117,6 +117,95 @@ export const searchSchema = paginationSchema.extend({
   query: z.string().optional(),
 });
 
+// ─── Catalogue universel (P0) : ontologie des attributs ───
+
+/**
+ * Les types d'attribut canoniques (catalogue universel P2).
+ * BOOLEAN = alias legacy → BOOLEEN à l'écriture.
+ * Extensions « moteur universel » : INTEGER, DECIMAL (NOMBRE couvre déjà le numérique),
+ * LONG_TEXT, DATETIME, UNIT_VALUE (valeur + unité), RANGE (min;max), VEHICLE_REFERENCE.
+ */
+export const TYPE_ATTRIBUTS = [
+  "TEXTE",
+  "LONG_TEXT",
+  "NOMBRE",
+  "INTEGER",
+  "DECIMAL",
+  "BOOLEEN",
+  "ENUM",
+  "MULTI_ENUM",
+  "DATE",
+  "DATETIME",
+  "DUREE",
+  "POURCENTAGE",
+  "MONTANT",
+  "UNIT_VALUE",
+  "RANGE",
+  "REFERENCE",
+  "VEHICLE_REFERENCE",
+  "CODE",
+  "LIEN",
+  "COULEUR",
+] as const;
+export type TypeAttribut = (typeof TYPE_ATTRIBUTS)[number];
+
+export const typeAttributsSchema = z.enum(TYPE_ATTRIBUTS);
+export const typeAttributsSchemaLegacy = z.union([typeAttributsSchema, z.literal("BOOLEAN")]);
+
+/** Normalise un type vers le canonique (BOOLEAN → BOOLEEN). */
+export function normalizeTypeAttribut(t: string): TypeAttribut {
+  return (TYPE_ATTRIBUTS as readonly string[]).includes(t) ? (t as TypeAttribut) : t === "BOOLEAN" ? "BOOLEEN" : "TEXTE";
+}
+
+/** Métadonnées d'affichage / rendu pour chaque type (utilisé par l'UI adaptative P2). */
+export const TYPE_ATTRIBUT_INFO: Record<TypeAttribut, { libelle: string; renderer: string; famille: string }> = {
+  TEXTE: { libelle: "Texte libre", renderer: "text", famille: "texte" },
+  LONG_TEXT: { libelle: "Texte long", renderer: "textarea", famille: "texte" },
+  NOMBRE: { libelle: "Nombre (décimal)", renderer: "number", famille: "nombre" },
+  INTEGER: { libelle: "Nombre entier", renderer: "number", famille: "nombre" },
+  DECIMAL: { libelle: "Décimal (précision)", renderer: "number", famille: "nombre" },
+  BOOLEEN: { libelle: "Oui / Non", renderer: "switch", famille: "booleen" },
+  ENUM: { libelle: "Liste à choix unique", renderer: "select", famille: "enum" },
+  MULTI_ENUM: { libelle: "Liste à choix multiples", renderer: "multi-select", famille: "enum" },
+  DATE: { libelle: "Date", renderer: "date", famille: "date" },
+  DATETIME: { libelle: "Date et heure", renderer: "datetime", famille: "date" },
+  DUREE: { libelle: "Durée", renderer: "duration", famille: "nombre" },
+  POURCENTAGE: { libelle: "Pourcentage", renderer: "percent", famille: "nombre" },
+  MONTANT: { libelle: "Montant", renderer: "money", famille: "nombre" },
+  UNIT_VALUE: { libelle: "Valeur + unité", renderer: "unit-value", famille: "nombre" },
+  RANGE: { libelle: "Intervalle (min;max)", renderer: "range", famille: "nombre" },
+  REFERENCE: { libelle: "Référence", renderer: "reference", famille: "texte" },
+  VEHICLE_REFERENCE: { libelle: "Référence véhicule", renderer: "reference", famille: "texte" },
+  CODE: { libelle: "Code", renderer: "code", famille: "texte" },
+  LIEN: { libelle: "Lien / URL", renderer: "url", famille: "texte" },
+  COULEUR: { libelle: "Couleur", renderer: "color", famille: "texte" },
+};
+
+export const PROVENANCES = [
+  "MANUELLE",
+  "CATALOGUE_FABRICANT",
+  "CATALOGUE_FOURNISSEUR",
+  "IMPORT_BULK",
+  "MESURE",
+  "DOCUMENTATION",
+  "API",
+  "SYSTEME",
+  "AUTRE",
+] as const;
+export const provenanceSchema = z.enum(PROVENANCES);
+
+export const STATUTS_VALEUR = ["RENSEIGNE", "INCONNU", "N_A"] as const;
+export const statutValeurSchema = z.enum(STATUTS_VALEUR);
+
+export const NIVEAUX_CONFIANCE = ["OFFICIEL", "HOMOLOGUE", "TECHNIQUE", "COMMERCIAL", "MANUELLE"] as const;
+export const niveauConfianceSchema = z.enum(NIVEAUX_CONFIANCE);
+
+export const PORTERS_ATTRIBUT = ["ARTICLE", "VARIANTE", "EXEMPLAIRE", "POSITION", "VEHICULE", "LOT", "FOURNISSEUR"] as const;
+export const porteeAttributSchema = z.enum(PORTERS_ATTRIBUT);
+
+export const NIVEAUX_ONTOLOGIE = ["FAMILLE", "CATEGORIE", "SOUS", "TYPE"] as const;
+export const niveauOntologieSchema = z.enum(NIVEAUX_ONTOLOGIE);
+
 export const idParamSchema = z.object({
   id: z.coerce.number().positive(),
 });

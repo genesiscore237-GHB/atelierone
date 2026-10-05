@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, type ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import {
@@ -34,6 +34,7 @@ import {
   transitionStatutAtelierValide,
   STATUTS_ATELIER,
 } from "~/server/lib/atelier-service";
+import { VehiculeRecherche } from "./_components/VehiculeRecherche";
 
 /**
  * ORDRES DE RÉPARATION — specs GPJ / Architecture §3.2.
@@ -42,36 +43,22 @@ import {
  */
 export default function OrdresReparationPage() {
   const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const params = useSearchParams();
-  const orParam = params.get("or");
-  if (orParam && !selectedId) setSelectedId(Number(orParam));
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const legacyId = searchParams?.get("or");
+  const showLegacy = legacyId != null && legacyId !== "";
+  const legacyIdNum = showLegacy ? Number(legacyId) : null;
 
   const { data, isLoading, refetch } = api.or.list.useQuery({ search: search || undefined });
-  const { data: vehicules } = api.or.listVehicules.useQuery({});
-  const { data: clients } = api.customers.list.useQuery({ limit: 100 });
-  const clientList = (clients as any[]) ?? [];
-
-  const create = api.or.create.useMutation({
-    onSuccess: () => { toast.success("OR créé"); refetch(); },
-    onError: (e) => toast.error(e.message),
-  });
-  const [createForm, setCreateForm] = useState({ vehiculeId: 0, clientId: 0, plainte: "" });
 
   const liste = data?.items ?? [];
 
-  const saveCreate = () => {
-    if (!createForm.vehiculeId) { toast.error("Véhicule requis"); return; }
-    create.mutate({
-      vehiculeId: createForm.vehiculeId,
-      clientId: createForm.clientId || undefined,
-      plainte: createForm.plainte || undefined,
-    });
-    setCreateForm({ vehiculeId: 0, clientId: 0, plainte: "" });
-  };
-
   return (
     <div className="space-y-5">
+      {showLegacy && legacyIdNum && !Number.isNaN(legacyIdNum) ? (
+        <OrDetail id={legacyIdNum} onBack={() => router.replace("/dashboard/ordres-reparation")} />
+      ) : (
+        <>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Ordres de Réparation</h1>
@@ -87,91 +74,59 @@ export default function OrdresReparationPage() {
         </div>
       </div>
 
-      {/* Création rapide */}
-      <div className="rounded-xl border border-border bg-card p-4">
-        <div className="mb-3 text-sm font-bold uppercase tracking-wider text-foreground">Nouvel ordre de réparation</div>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div>
-            <Label className="text-xs text-muted-foreground">Véhicule *</Label>
-            <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" value={createForm.vehiculeId} onChange={(e) => setCreateForm({ ...createForm, vehiculeId: Number(e.target.value) })}>
-              <option value={0}>Véhicule...</option>
-              {(vehicules ?? []).map((v: any) => (
-                <option key={v.id} value={v.id}>{v.immatriculation} — {v.marque} {v.modele}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Client</Label>
-            <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" value={createForm.clientId} onChange={(e) => setCreateForm({ ...createForm, clientId: Number(e.target.value) })}>
-              <option value={0}>Client (auto si véhicule)...</option>
-              {clientList.map((c: any) => (
-                <option key={c.id} value={Number(c.id)}>{c.prenom} {c.nom}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Plainte / demande</Label>
-            <Input value={createForm.plainte} onChange={(e) => setCreateForm({ ...createForm, plainte: e.target.value })} placeholder="Ex: Vidange + freins" className="mt-1" />
-          </div>
-        </div>
-        <Button onClick={saveCreate} className="mt-3 gap-2" disabled={create.isPending}>
-          <Plus size={14} /> {create.isPending ? "Création..." : "Créer l'OR"}
-        </Button>
-      </div>
+      <VehiculeRecherche onCree={() => refetch()} />
 
-      {selectedId ? (
-        <OrDetail id={selectedId} onBack={() => setSelectedId(null)} />
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-border">
-          {isLoading ? (
-            <div className="h-40 animate-pulse bg-muted/50" />
-          ) : liste.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <ClipboardList size={36} className="mb-2 opacity-40" />
-              <p className="font-medium">Aucun ordre de réparation</p>
-              <p className="text-sm text-muted-foreground">Créez le premier OR ci-dessus.</p>
-            </div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-muted">
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">N°</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Véhicule</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Client</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Plainte</th>
-                  <th className="px-4 py-3 text-center font-medium text-muted-foreground">Statut</th>
-                  <th className="px-4 py-3 text-right font-medium text-muted-foreground">Total TTC</th>
-                  <th className="px-4 py-3 text-right font-medium text-muted-foreground">Action</th>
+      <div className="overflow-x-auto rounded-xl border border-border">
+        {isLoading ? (
+          <div className="h-40 animate-pulse bg-muted/50" />
+        ) : liste.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <ClipboardList size={36} className="mb-2 opacity-40" />
+            <p className="font-medium">Aucun ordre de réparation</p>
+            <p className="text-sm text-muted-foreground">Créez le premier OR ci-dessus.</p>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted">
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">N°</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Véhicule</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Client</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">Plainte</th>
+                <th className="px-4 py-3 text-center font-medium text-muted-foreground">Statut</th>
+                <th className="px-4 py-3 text-right font-medium text-muted-foreground">Total TTC</th>
+                <th className="px-4 py-3 text-right font-medium text-muted-foreground">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {liste.map((or: any) => (
+                <tr key={or.id} className="border-t border-border hover:bg-accent/40">
+                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{or.numero}</td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <Car size={14} className="text-primary" />
+                      <span className="font-medium">{or.immatriculation}</span>
+                      {or.marque && <span className="text-xs text-muted-foreground">({or.marque} {or.modele})</span>}
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5">{or.clientPrenom} {or.clientNom}</td>
+                  <td className="max-w-[220px] truncate px-4 py-2.5 text-muted-foreground">{or.plainte ?? "—"}</td>
+                  <td className="px-4 py-2.5 text-center">
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${STATUT_BADGE[or.statut] ?? "bg-muted"}`}>{STATUT_LABELS[or.statut] ?? or.statut}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-mono">{Number(or.totalTTC).toLocaleString("fr-FR")} F</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/ordres-reparation/${or.id}`)}>
+                      <Wrench size={13} className="mr-1" /> Détail
+                    </Button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {liste.map((or: any) => (
-                  <tr key={or.id} className="border-t border-border hover:bg-accent/40">
-                    <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{or.numero}</td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-2">
-                        <Car size={14} className="text-primary" />
-                        <span className="font-medium">{or.immatriculation}</span>
-                        {or.marque && <span className="text-xs text-muted-foreground">({or.marque} {or.modele})</span>}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5">{or.clientPrenom} {or.clientNom}</td>
-                    <td className="max-w-[220px] truncate px-4 py-2.5 text-muted-foreground">{or.plainte ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-center">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${STATUT_BADGE[or.statut] ?? "bg-muted"}`}>{STATUT_LABELS[or.statut] ?? or.statut}</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono">{Number(or.totalTTC).toLocaleString("fr-FR")} F</td>
-                    <td className="px-4 py-2.5 text-right">
-                      <Button variant="outline" size="sm" onClick={() => setSelectedId(Number(or.id))}>
-                        <Wrench size={13} className="mr-1" /> Détail
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+        </>
       )}
     </div>
   );
@@ -182,7 +137,7 @@ function OrDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const utils = api.useUtils();
   const { data: or, isLoading } = api.or.getById.useQuery({ id });
   const { data: produits } = api.catalog.list.useQuery({ limit: 200 });
-  const { data: employes } = api.rh.list.useQuery({ limit: 100, statut: "actif" });
+  const { data: employes } = api.rh.roster.useQuery({ statut: "actif" });
 
   const [sortieForm, setSortieForm] = useState({ produitId: 0, quantite: 1, motif: "" });
   const [retourForm, setRetourForm] = useState({ produitId: 0, quantite: 1, motif: "" });

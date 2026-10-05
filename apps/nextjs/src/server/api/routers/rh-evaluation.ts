@@ -8,11 +8,15 @@ import {
   evaluationCampaigns,
   evaluations,
   evaluationScores,
+  evaluationSnapshots,
   performanceBonusRules,
+  utilisateurs,
 } from "@atelierone/db";
 import { eq, and, desc } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { weightedScore, bonusForScore } from "~/server/lib/evaluation-engine";
+import { assertEmployeEnAgence } from "~/server/lib/rh-scope";
+import { prochaineVersion } from "~/server/lib/rh-snapshots";
 
 /** RH-05 — Évaluation & performance */
 export const rhEvaluationRouter = createTRPCRouter({
@@ -37,7 +41,41 @@ export const rhEvaluationRouter = createTRPCRouter({
     }));
   }),
 
-  createGrid: requirePermissionProcedure("rh.utilisateur.modifier")
+  /** F27 — Historique versionné des évaluations (lecture seule). */
+  listSnapshots: requirePermissionProcedure("rh.evaluation.modifier")
+    .input(
+      z
+        .object({
+          evaluationId: z.number().int().optional(),
+          limit: z.number().int().min(1).max(200).default(50),
+        })
+        .optional()
+    )
+    .query(async ({ ctx, input }) => {
+      const conditions = [eq(evaluationSnapshots.agenceId, ctx.user.agenceId)];
+      if (input?.evaluationId) conditions.push(eq(evaluationSnapshots.evaluationId, input.evaluationId));
+      const rows = await db
+        .select({
+          id: evaluationSnapshots.id,
+          evaluationId: evaluationSnapshots.evaluationId,
+          version: evaluationSnapshots.version,
+          entityJson: evaluationSnapshots.entityJson,
+          scoresJson: evaluationSnapshots.scoresJson,
+          raison: evaluationSnapshots.raison,
+          createdBy: evaluationSnapshots.createdBy,
+          creatorName: utilisateurs.nom,
+          creatorPrenom: utilisateurs.prenom,
+          createdAt: evaluationSnapshots.createdAt,
+        })
+        .from(evaluationSnapshots)
+        .leftJoin(utilisateurs, eq(evaluationSnapshots.createdBy, utilisateurs.id))
+        .where(and(...conditions))
+        .orderBy(desc(evaluationSnapshots.version), desc(evaluationSnapshots.id))
+        .limit(input?.limit ?? 50);
+      return rows;
+    }),
+
+  createGrid: requirePermissionProcedure("rh.evaluation.modifier")
     .input(
       z.object({
         name: z.string().min(1),
@@ -78,7 +116,7 @@ export const rhEvaluationRouter = createTRPCRouter({
       return grid;
     }),
 
-  deleteGrid: requirePermissionProcedure("rh.utilisateur.modifier")
+  deleteGrid: requirePermissionProcedure("rh.evaluation.modifier")
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       await db
@@ -96,7 +134,7 @@ export const rhEvaluationRouter = createTRPCRouter({
       .orderBy(desc(evaluationCampaigns.periodStart));
   }),
 
-  createCampaign: requirePermissionProcedure("rh.utilisateur.modifier")
+  createCampaign: requirePermissionProcedure("rh.evaluation.modifier")
     .input(
       z.object({
         name: z.string().min(1),
@@ -112,7 +150,7 @@ export const rhEvaluationRouter = createTRPCRouter({
       return row;
     }),
 
-  closeCampaign: requirePermissionProcedure("rh.utilisateur.modifier")
+  closeCampaign: requirePermissionProcedure("rh.evaluation.modifier")
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       await db
@@ -153,11 +191,14 @@ export const rhEvaluationRouter = createTRPCRouter({
   getEvaluation: rhProcedure
     .input(z.object({ id: z.number().int() }))
     .query(async ({ ctx, input }) => {
-      const [evalRow] = await db
-        .select()
+      // N01 : l'évaluation doit appartenir à un employé de l'agence courante
+      const [row] = await db
+        .select({ evaluation: evaluations })
         .from(evaluations)
-        .where(eq(evaluations.id, input.id))
+        .innerJoin(employes, eq(evaluations.employeeId, employes.id))
+        .where(and(eq(evaluations.id, input.id), eq(employes.agenceId, ctx.user.agenceId)))
         .limit(1);
+      const evalRow = row?.evaluation;
       if (!evalRow) throw new TRPCError({ code: "NOT_FOUND", message: "Évaluation introuvable." });
       const scores = await db
         .select()
@@ -166,7 +207,7 @@ export const rhEvaluationRouter = createTRPCRouter({
       return { ...evalRow, scores };
     }),
 
-  saveEvaluation: requirePermissionProcedure("rh.utilisateur.modifier")
+  saveEvaluation: requirePermissionProcedure("rh.evaluation.modifier")
     .input(
       z.object({
         campaignId: z.number().int(),
@@ -184,6 +225,14 @@ export const rhEvaluationRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // N01 : l'employé et la campagne doivent appartenir à l'agence courante
+      await assertEmployeEnAgence(input.employeeId, ctx.user.agenceId);
+      const [campaign] = await db
+        .select({ id: evaluationCampaigns.id })
+        .from(evaluationCampaigns)
+        .where(and(eq(evaluationCampaigns.id, input.campaignId), eq(evaluationCampaigns.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!campaign) throw new TRPCError({ code: "NOT_FOUND", message: "Campagne introuvable." });
       // Critères de la grille pour le calcul pondéré
       const criteria = await db
         .select()
@@ -214,6 +263,30 @@ export const rhEvaluationRouter = createTRPCRouter({
 
       let evalId: number;
       if (existing) {
+        // P13 : archive l'évaluation courante + notes avant le recalcul (historique rejouable)
+        const [evalRow] = await db
+          .select()
+          .from(evaluations)
+          .where(eq(evaluations.id, existing.id))
+          .limit(1);
+        const scores = await db
+          .select()
+          .from(evaluationScores)
+          .where(eq(evaluationScores.evaluationId, existing.id));
+        const versions = (await db
+          .select({ v: evaluationSnapshots.version })
+          .from(evaluationSnapshots)
+          .where(eq(evaluationSnapshots.evaluationId, existing.id))).map((r) => r.v);
+        await db.insert(evaluationSnapshots).values({
+          agenceId: ctx.user.agenceId,
+          evaluationId: existing.id,
+          version: prochaineVersion(versions),
+          entityJson: evalRow ?? {},
+          scoresJson: scores,
+          raison: "recalcul",
+          createdBy: Number(ctx.user.id),
+        } as any);
+
         await db
           .update(evaluations)
           .set({
@@ -266,7 +339,7 @@ export const rhEvaluationRouter = createTRPCRouter({
       .orderBy(desc(performanceBonusRules.minScore));
   }),
 
-  updateBonusRule: requirePermissionProcedure("rh.utilisateur.modifier")
+  updateBonusRule: requirePermissionProcedure("rh.evaluation.modifier")
     .input(
       z.object({
         id: z.number().int(),

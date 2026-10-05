@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
+import { useEmployeFromUrl } from "~/hooks/useEmployeFromUrl";
 import {
   AlertTriangle, CalendarClock, Clock, Coffee, History, LogIn, LogOut, Pencil, RefreshCw, Rocket, Undo2, Wrench, X,
 } from "lucide-react";
@@ -32,7 +33,7 @@ const MOTIFS: Record<string, string> = {
 
 const fmtH = (h: string | null | undefined) => h ?? "—";
 const fmtHeure = (d: string | Date | null | undefined) => (d ? new Date(d).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : "—");
-const fmtFCFA = (n: number | string | null | undefined) => new Intl.NumberFormat("fr-FR").format(Number(n ?? 0));
+const fmtXOF = (n: number | string | null | undefined) => new Intl.NumberFormat("fr-FR").format(Number(n ?? 0));
 
 export function PointageDirect() {
   const utils = api.useUtils();
@@ -46,6 +47,8 @@ export function PointageDirect() {
   const [corrFor, setCorrFor] = useState<{ id: number; moment: string; heure: string } | null>(null);
   const [annulJournee, setAnnulJournee] = useState<{ motif: string } | null>(null);
   const [salaireEmp, setSalaireEmp] = useState(0);
+  const employeUrl = useEmployeFromUrl();
+  useEffect(() => { if (employeUrl) setJournalEmp(employeUrl); }, [employeUrl]);
   const [du, setDu] = useState(() => new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10));
   const [fin, setFin] = useState(() => new Date().toISOString().slice(0, 10));
 
@@ -165,7 +168,7 @@ export function PointageDirect() {
                     <td className="px-3 py-2 text-center font-mono text-xs text-warning-foreground">{fmtH(e.pointage?.timeInBreak)}</td>
                     <td className="px-3 py-2 text-center font-mono text-xs">{fmtH(e.pointage?.timeOutBreak)}</td>
                     <td className="px-3 py-2 text-center font-mono text-xs text-muted-foreground">{fmtH(e.pointage?.timeOut)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs font-bold text-primary">{fmtFCFA(e.gainJour)} F</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs font-bold text-primary">{fmtXOF(e.gainJour)} XOF</td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap items-center justify-end gap-1">
                         {e.posture === "ABSENT" && (
@@ -374,12 +377,12 @@ export function PointageDirect() {
 
         {salaire && (
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-            <Mini label="Taux horaire" value={`${fmtFCFA(salaire.resultat.tauxHoraire)} F`} />
+            <Mini label="Taux horaire" value={`${fmtXOF(salaire.resultat.tauxHoraire)} XOF`} />
             <Mini label="Heures normales" value={`${salaire.resultat.heuresNormales} h`} />
             <Mini label="Heures supp. (×1,5)" value={`${salaire.resultat.heuresSupplementaires} h`} />
-            <Mini label="Primes de tâche" value={`${fmtFCFA(salaire.resultat.primesTache)} F`} />
+            <Mini label="Primes de tâche" value={`${fmtXOF(salaire.resultat.primesTache)} XOF`} />
             <Mini label="Jours d'absence" value={String(salaire.resultat.joursAbsents)} />
-            <Mini label="Salaire brut période" value={`${fmtFCFA(salaire.resultat.brut)} F`} accent />
+            <Mini label="Salaire brut période" value={`${fmtXOF(salaire.resultat.brut)} XOF`} accent />
           </div>
         )}
       </div>

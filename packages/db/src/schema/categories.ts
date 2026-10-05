@@ -7,6 +7,10 @@ export const categories = pgTable("categories", {
   description: varchar("description", { length: 500 }),
   parentId: integer("parent_id").references(() => categories.id),
   typeBranche: varchar("type_branche", { length: 20 }),
+  // Catalogue universel (P0) : colonnes d'ontologie (nullable)
+  domaine: varchar("domaine", { length: 50 }),
+  niveauOntologie: varchar("niveau_ontologie", { length: 20 }).default("CATEGORIE"), // FAMILLE | CATEGORIE | SOUS | TYPE
+  rendererHint: varchar("renderer_hint", { length: 40 }),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

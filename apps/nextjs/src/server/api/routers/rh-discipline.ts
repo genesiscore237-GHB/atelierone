@@ -12,6 +12,7 @@ import {
 import { eq, and, desc, like, inArray, gte, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { detectRecidivism, severityLabel } from "~/server/lib/disciplinary-engine";
+import { assertEmployeEnAgence } from "~/server/lib/rh-scope";
 
 /** RH-07 — Disciplinaire (records, dossier employé, récidive) */
 export const rhDisciplineRouter = createTRPCRouter({
@@ -34,7 +35,7 @@ export const rhDisciplineRouter = createTRPCRouter({
     return { disciplinaryWindowMonths: settings?.disciplinaryWindowMonths ?? 12 };
   }),
 
-  updateSettings: requirePermissionProcedure("rh.utilisateur.modifier")
+  updateSettings: requirePermissionProcedure("rh.discipline.modifier")
     .input(z.object({ disciplinaryWindowMonths: z.number().int().min(1).max(60) }))
     .mutation(async ({ ctx, input }) => {
       await db
@@ -55,7 +56,7 @@ export const rhDisciplineRouter = createTRPCRouter({
     }).optional())
     .query(async ({ ctx, input }) => {
       const safe = input ?? {};
-      const conditions: any[] = [];
+      const conditions: any[] = [eq(employes.agenceId, ctx.user.agenceId)];
       if (safe.employeId) conditions.push(eq(sanctions.employeId, safe.employeId));
       if (safe.typeSanction) conditions.push(eq(sanctions.typeSanction, safe.typeSanction));
       if (safe.dateDebut) conditions.push(gte(sanctions.dateSanction, safe.dateDebut));
@@ -104,7 +105,7 @@ export const rhDisciplineRouter = createTRPCRouter({
       }));
     }),
 
-  createRecord: requirePermissionProcedure("rh.utilisateur.creer")
+  createRecord: requirePermissionProcedure("rh.discipline.modifier")
     .input(z.object({
       employeId: z.number().int(),
       sanctionTypeId: z.number().int(), // lien RH-00
@@ -120,6 +121,7 @@ export const rhDisciplineRouter = createTRPCRouter({
       appliquee: z.boolean().default(false),
     }))
     .mutation(async ({ ctx, input }) => {
+      await assertEmployeEnAgence(input.employeId, ctx.user.agenceId);
       const [type] = await db
         .select()
         .from(hrSanctionTypes)
@@ -151,7 +153,7 @@ export const rhDisciplineRouter = createTRPCRouter({
       return row;
     }),
 
-  updateRecord: requirePermissionProcedure("rh.utilisateur.modifier")
+  updateRecord: requirePermissionProcedure("rh.discipline.modifier")
     .input(z.object({
       id: z.number().int(),
       motif: z.string().optional(),
@@ -161,6 +163,14 @@ export const rhDisciplineRouter = createTRPCRouter({
       appliquee: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      // N01 : la sanction doit appartenir à un employé de l'agence courante
+      const [sanction] = await db
+        .select({ id: sanctions.id })
+        .from(sanctions)
+        .innerJoin(employes, eq(sanctions.employeId, employes.id))
+        .where(and(eq(sanctions.id, input.id), eq(employes.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!sanction) throw new TRPCError({ code: "NOT_FOUND", message: "Sanction introuvable." });
       const { id, ...rest } = input;
       const values: any = { ...rest, updatedAt: new Date() };
       if (rest.notifiedAt !== undefined) values.notifiedAt = rest.notifiedAt ? new Date(rest.notifiedAt) : null;
@@ -169,9 +179,16 @@ export const rhDisciplineRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  deleteRecord: requirePermissionProcedure("rh.utilisateur.modifier")
+  deleteRecord: requirePermissionProcedure("rh.discipline.modifier")
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
+      const [sanction] = await db
+        .select({ id: sanctions.id })
+        .from(sanctions)
+        .innerJoin(employes, eq(sanctions.employeId, employes.id))
+        .where(and(eq(sanctions.id, input.id), eq(employes.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!sanction) throw new TRPCError({ code: "NOT_FOUND", message: "Sanction introuvable." });
       await db.delete(sanctions).where(eq(sanctions.id, input.id));
       return { success: true };
     }),
@@ -183,7 +200,7 @@ export const rhDisciplineRouter = createTRPCRouter({
       const [emp] = await db
         .select({ id: employes.id, nom: employes.nom, prenom: employes.prenom, statut: employes.statut })
         .from(employes)
-        .where(eq(employes.id, input.employeId))
+        .where(and(eq(employes.id, input.employeId), eq(employes.agenceId, ctx.user.agenceId)))
         .limit(1);
       if (!emp) throw new TRPCError({ code: "NOT_FOUND", message: "Employé introuvable." });
 

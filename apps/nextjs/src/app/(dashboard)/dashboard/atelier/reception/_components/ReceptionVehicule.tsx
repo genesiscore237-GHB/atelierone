@@ -115,7 +115,7 @@ export function ReceptionVehicule() {
     if (outillageNotes["AUTRES"]) outillage["autres"] = { present: true, observation: outillageNotes["AUTRES"] };
     receptionner.mutate({
       client: { ...f.client, nom: f.client.nom?.trim(), telephone: f.client.telephone?.trim() || undefined },
-      vehicule: { ...f.vehicule, immatriculation: f.vehicule.immatriculation.trim(), marque: f.vehicule.marque?.trim() || undefined, modele: f.vehicule.modele?.trim() || undefined },
+      vehicule: { ...f.vehicule, immatriculation: f.vehicule.immatriculation.trim(), marque: f.vehicule.marque?.trim() || undefined, modele: f.vehicule.modele?.trim() || undefined, annee: f.vehicule.annee != null && f.vehicule.annee !== "" ? Number(f.vehicule.annee) : undefined, kilometrage: f.vehicule.kilometrage != null && f.vehicule.kilometrage !== "" ? Number(f.vehicule.kilometrage) : undefined },
       chauffeur: { nom: f.chauffeur.nom?.trim() || undefined, telephone: f.chauffeur.telephone?.trim() || undefined },
       reception: { ...f.reception, outillage, kilometrageEntree: Number(f.reception.kilometrageEntree), photos: f.reception.photos?.length ? f.reception.photos : undefined },
     });

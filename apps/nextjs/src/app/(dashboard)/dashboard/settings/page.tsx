@@ -7,6 +7,7 @@ import { DashboardShell } from "~/components/ui/dashboard-shell";
 import { motion } from "framer-motion";
 import { Building2, Store, Users, Plus, Trash2, Banknote, ShieldCheck, UserCheck, Search, Save, Loader2, X, Upload, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
+import { ConfirmationDialog } from "~/components/ui/confirmation-dialog";
 import { usePermissions } from "~/hooks/usePermissions";
 
 const tabs = [
@@ -475,6 +476,7 @@ function POSTab() {
   const utils = api.useUtils();
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({ name: "", address: "" });
+  const [confirmDelete, setConfirmDelete] = useState<null | { message: string; run: () => void }>(null);
 
   const createMutation = api.settings.pos.create.useMutation({
     onSuccess: () => {
@@ -482,7 +484,7 @@ function POSTab() {
       setShowForm(false);
       setFormData({ name: "", address: "" });
     },
-    onError: (e) => alert(e.message),
+    onError: (e) => toast.error(e.message),
   });
 
   const deleteMutation = api.settings.pos.delete.useMutation({
@@ -555,7 +557,7 @@ function POSTab() {
                   </span>
                 </div>
                 <button
-                  onClick={() => { if (confirm("Supprimer ce point de vente ?")) deleteMutation.mutate({ id: pos.id }); }}
+                  onClick={() => setConfirmDelete({ message: `Supprimer le point de vente « ${pos.name} » ?`, run: () => deleteMutation.mutate({ id: pos.id }) })}
                   className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/20 transition-colors"
                 >
                   <Trash2 size={16} />
@@ -570,6 +572,15 @@ function POSTab() {
           )}
         </div>
       )}
+      <ConfirmationDialog
+        isOpen={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => confirmDelete?.run()}
+        title="Supprimer le point de vente"
+        description={confirmDelete?.message ?? ""}
+        confirmText="Supprimer"
+        variant="destructive"
+      />
     </div>
   );
 }
@@ -577,6 +588,7 @@ function POSTab() {
 function TeamTab() {
   const { data: members, isLoading } = api.user.list.useQuery();
   const utils = api.useUtils();
+  const [confirmRemove, setConfirmRemove] = useState<null | { message: string; run: () => void }>(null);
 
   const removeMutation = api.user.deactivate.useMutation({
     onSuccess: () => utils.user.list.invalidate(),
@@ -632,7 +644,7 @@ function TeamTab() {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <button
-                      onClick={() => { if (confirm("Supprimer ce membre ?")) removeMutation.mutate({ id: member.id }); }}
+                      onClick={() => setConfirmRemove({ message: `Retirer « ${member.fullName} » de l'équipe ?`, run: () => removeMutation.mutate({ id: member.id }) })}
                       className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/20 transition-colors"
                     >
                       <Trash2 size={16} />
@@ -649,6 +661,15 @@ function TeamTab() {
           )}
         </div>
       )}
+      <ConfirmationDialog
+        isOpen={!!confirmRemove}
+        onClose={() => setConfirmRemove(null)}
+        onConfirm={() => confirmRemove?.run()}
+        title="Retirer un membre"
+        description={confirmRemove?.message ?? ""}
+        confirmText="Retirer"
+        variant="destructive"
+      />
     </div>
   );
 }
@@ -660,6 +681,7 @@ function CaissesTab() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newCaisseLibelle, setNewCaisseLibelle] = useState("");
   const [search, setSearch] = useState("");
+  const [confirmRemoveOp, setConfirmRemoveOp] = useState<null | { message: string; run: () => void }>(null);
 
   const createCaisseMut = api.cash.createCaisse.useMutation({
     onSuccess: () => {
@@ -930,9 +952,7 @@ function CaissesTab() {
                     </div>
                   </div>
                   <button
-                    onClick={() => {
-                      if (confirm("Retirer cet opérateur de cette caisse ?")) removeOpMut.mutate({ id: String(op.id) });
-                    }}
+                    onClick={() => setConfirmRemoveOp({ message: `Retirer l'opérateur « ${op.prenom ?? ""} ${op.nom ?? op.email} » de cette caisse ?`, run: () => removeOpMut.mutate({ id: String(op.id) }) })}
                     className="rounded-lg p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/20 transition-colors"
                   >
                     <Trash2 size={14} />
@@ -983,6 +1003,15 @@ function CaissesTab() {
           </div>
         )}
       </div>
+      <ConfirmationDialog
+        isOpen={!!confirmRemoveOp}
+        onClose={() => setConfirmRemoveOp(null)}
+        onConfirm={() => confirmRemoveOp?.run()}
+        title="Retirer un opérateur"
+        description={confirmRemoveOp?.message ?? ""}
+        confirmText="Retirer"
+        variant="destructive"
+      />
     </div>
   );
 }

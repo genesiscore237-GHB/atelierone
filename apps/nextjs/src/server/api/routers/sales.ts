@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { createTRPCRouter, posProcedure } from "~/server/api/trpc";
-import { db, ventes, ventesLignes, produits, stocks, caisses, sessionsCaisse, mouvementsCaisse, auditLogs, mouvementsStock, paiements, stocksUnites } from "@atelierone/db";
-import { eq, and, desc, sql, gte, lte, ilike } from "drizzle-orm";
+import { db, ventes, ventesLignes, produits, stocks, caisses, sessionsCaisse, mouvementsCaisse, auditLogs, mouvementsStock, paiements, stocksUnites, ordresReparation } from "@atelierone/db";
+import { eq, and, desc, sql, gte, lte, ilike, or, inArray } from "drizzle-orm";
+import { clients } from "@atelierone/db";
 import { TRPCError } from "@trpc/server";
 import { SaleService } from "~/server/lib/sale-service";
 import { CaisseService } from "~/server/lib/caisse-service";
@@ -77,7 +78,10 @@ export const salesRouter = createTRPCRouter({
       if (input?.statut) conditions.push(eq(ventes.statut, input.statut));
       if (input?.dateDebut) conditions.push(gte(ventes.createdAt, new Date(input.dateDebut)));
       if (input?.dateFin) conditions.push(lte(ventes.createdAt, new Date(input.dateFin)));
-      if (input?.search) conditions.push(ilike(ventes.reference, `%${input.search}%`));
+      if (input?.search) {
+        const q = `%${input.search}%`;
+        conditions.push(or(ilike(ventes.reference, q), ilike(clients.nom, q), ilike(clients.prenom, q)));
+      }
 
       const rows = await db.select({
         id: ventes.id,
@@ -89,13 +93,28 @@ export const salesRouter = createTRPCRouter({
         statut: ventes.statut,
         notes: ventes.notes,
         clientId: ventes.clientId,
+        clientNom: clients.nom,
+        clientPrenom: clients.prenom,
+        clientTelephone: clients.telephone,
         createdAt: ventes.createdAt,
       })
       .from(ventes)
+      .leftJoin(clients, eq(ventes.clientId, clients.id))
       .where(and(...conditions))
       .orderBy(desc(ventes.createdAt))
       .limit(input?.limit ?? 50)
       .offset(input?.offset ?? 0);
+
+      const ors = rows.length > 0
+        ? await db.select({
+            venteId: ordresReparation.venteId,
+            orId: ordresReparation.id,
+            orNumero: ordresReparation.numero,
+          })
+          .from(ordresReparation)
+          .where(inArray(ordresReparation.venteId, rows.map((r) => r.id).filter((id): id is number => id != null)))
+        : [];
+
       return rows.map(v => ({
         id: String(v.id),
         reference: v.reference,
@@ -106,11 +125,14 @@ export const salesRouter = createTRPCRouter({
         statut: v.statut,
         notes: v.notes,
         clientId: v.clientId,
+        clientNom: v.clientNom ? `${v.clientPrenom ?? ""} ${v.clientNom}`.trim() : null,
+        clientTelephone: v.clientTelephone ?? null,
         createdAt: v.createdAt,
         saleNumber: v.reference,
         totalAmount: Number(v.montantTotal),
         status: v.statut === "termine" ? "COMPLETED" : v.statut === "suspendue" ? "SUSPENDED" : v.statut,
         paymentMethod: v.modePaiement,
+        ordres: ors.filter((o) => o.venteId != null && o.venteId === v.id).map((o) => ({ orId: o.orId, orNumero: o.orNumero })),
       }));
     }),
 
@@ -135,12 +157,28 @@ export const salesRouter = createTRPCRouter({
       .leftJoin(produits, eq(ventesLignes.produitId, produits.id))
       .where(eq(ventesLignes.venteId, input.venteId));
 
+      const [clientRow] = vente.clientId
+        ? await db.select({ nom: clients.nom, prenom: clients.prenom, telephone: clients.telephone })
+            .from(clients)
+            .where(eq(clients.id, vente.clientId))
+            .limit(1)
+        : [];
+
+      const ors = await db.select({
+        orId: ordresReparation.id,
+        orNumero: ordresReparation.numero,
+      })
+      .from(ordresReparation)
+      .where(inArray(ordresReparation.venteId, [vente.id]));
+
       return {
         id: String(vente.id),
         reference: vente.reference,
         agenceId: vente.agenceId,
         operateurId: vente.operateurId,
-        clientId: vente.clientId,
+        clientId: vente.clientId ?? null,
+        clientNom: clientRow ? `${clientRow.prenom ?? ""} ${clientRow.nom}`.trim() : null,
+        clientTelephone: clientRow?.telephone ?? null,
         modePaiement: vente.modePaiement,
         montantTotal: vente.montantTotal,
         remise: vente.remise,
@@ -152,6 +190,7 @@ export const salesRouter = createTRPCRouter({
         totalAmount: Number(vente.montantTotal),
         status: vente.statut === "termine" ? "COMPLETED" : vente.statut,
         paymentMethod: vente.modePaiement,
+        ordres: ors,
         lignes: lignes.map(l => ({
           id: String(l.id),
           produitId: l.produitId,

@@ -8,6 +8,7 @@ import {
   PackageSearch, Receipt, Camera, AlertTriangle, CalendarClock, Timer, MapPin, ChevronRight, Loader2,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "~/components/ui/button";
 import { transitionStatutVehiculeValide, STATUT_LABELS, STATUT_STYLE, STATUTS_IMMOBILISATION } from "~/server/lib/vehicule-service";
 import { STATUT_LABELS as OR_STATUT_LABELS, STATUT_BADGE as OR_STATUT_BADGE, PRIORITE_META, MOTIF_ENTREE_LABELS } from "~/server/lib/atelier-service";
@@ -36,6 +37,7 @@ const joursEntre = (d: string | Date | null | undefined) => {
 export function VehiculeDetail({ id }: { id: string }) {
   const { hasPermission } = usePermissions();
   const utils = api.useUtils();
+  const router = useRouter();
   const { data, isLoading, isError } = api.vehicules.get.useQuery({ id: Number(id) });
   const { data: clientsData } = api.clients.list.useQuery({ statut: "ACTIF", limit: 200 });
   const { data: contratsData } = api.vehicules.listContratsActifs.useQuery();
@@ -67,6 +69,16 @@ export function VehiculeDetail({ id }: { id: string }) {
   });
   const retirerContrat = api.vehicules.retirerContrat.useMutation({
     onSuccess: () => { toast.success("Véhicule retiré du contrat"); utils.vehicules.get.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const creerOR = api.or.create.useMutation({
+    onSuccess: (r) => {
+      utils.vehicules.get.invalidate();
+      utils.vehicules.list.invalidate();
+      toast.success(`Ordre de réparation ${r.numero} créé`);
+      router.push(`/dashboard/ordres-reparation/${r.id}`);
+    },
     onError: (e) => toast.error(e.message),
   });
 
@@ -164,6 +176,11 @@ export function VehiculeDetail({ id }: { id: string }) {
               {transitions.map((s) => <option key={s} value={s} className="bg-background">{STATUT_LABELS[s] ?? s}</option>)}
             </select>
           )}
+          {hasPermission("or.creer") && (
+            <Button type="button" size="sm" className="gap-1.5" disabled={creerOR.isPending} onClick={() => creerOR.mutate({ vehiculeId: v.id })}>
+              {creerOR.isPending ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={14} />} Créer un OR
+            </Button>
+          )}
         </div>
       </div>
 
@@ -222,7 +239,7 @@ export function VehiculeDetail({ id }: { id: string }) {
                     <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${OR_STATUT_BADGE[orCourant.statut] ?? "bg-muted text-muted-foreground"}`}>
                       {OR_STATUT_LABELS[orCourant.statut] ?? orCourant.statut}
                     </span>
-                    <Link href={`/dashboard/ordres-reparation?or=${orCourant.id}`}>
+                    <Link href={`/dashboard/ordres-reparation/${orCourant.id}`}>
                       <Button size="sm" variant="outline" className="gap-1 text-xs">Ouvrir la fiche <ChevronRight size={13} /></Button>
                     </Link>
                   </div>
@@ -662,7 +679,7 @@ export function VehiculeDetail({ id }: { id: string }) {
                   {orCourant ? "Cet OR n'est pas encore facturé." : "Aucune facture pour ce véhicule."}
                 </p>
                 {orCourant && (
-                  <Link href={`/dashboard/ordres-reparation?or=${orCourant.id}`}>
+                  <Link href={`/dashboard/ordres-reparation/${orCourant.id}`}>
                     <Button size="sm" variant="outline" className="mt-2 text-xs">Facturer depuis la fiche OR</Button>
                   </Link>
                 )}

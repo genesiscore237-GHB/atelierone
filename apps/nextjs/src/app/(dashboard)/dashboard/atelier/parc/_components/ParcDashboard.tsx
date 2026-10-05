@@ -69,9 +69,6 @@ export function ParcDashboard() {
   const { hasPermission } = usePermissions();
   const utils = api.useUtils();
   const { data, isLoading, refetch, dataUpdatedAt } = api.or.getDashboard.useQuery(undefined, { refetchInterval: 30_000 });
-  const { data: vehiculesData } = api.vehicules.list.useQuery({ limit: 100 });
-  const { data: clientsData } = api.clients.list.useQuery({ limit: 200 });
-  const { data: techniciens } = api.rh.list.useQuery({ limit: 100, statut: "actif" });
   const { data: notifsData } = api.or.listNotifsAtelier.useQuery({ lu: false });
 
   const [search, setSearch] = useState("");
@@ -80,7 +77,6 @@ export function ParcDashboard() {
   const [fAlerte, setFAlerte] = useState("");
   const [fPieces, setFPieces] = useState(false);
   const [kpiFilter, setKpiFilter] = useState<string | null>(null);
-  const [showReception, setShowReception] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
 
@@ -164,9 +160,11 @@ export function ParcDashboard() {
               >
                 🔔 {notifs.length}
               </button>
-              <Button onClick={() => setShowReception(true)} className="gap-2">
-                <Plus size={16} /> Nouvelle réception
-              </Button>
+              <Link href="/dashboard/atelier/reception">
+                <Button className="gap-2">
+                  <Plus size={16} /> Nouvelle réception
+                </Button>
+              </Link>
             </>
           )}
         </div>
@@ -237,7 +235,7 @@ export function ParcDashboard() {
             {topAnciens.map((t) => (
               <div key={t.id} className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-1.5 text-sm">
                 <div className="min-w-0">
-                  <Link href={`/dashboard/ordres-reparation?or=${t.id}`} className="font-mono text-xs font-bold hover:text-primary">{t.immatriculation}</Link>
+                  <Link href={`/dashboard/ordres-reparation/${t.id}`} className="font-mono text-xs font-bold hover:text-primary">{t.immatriculation}</Link>
                   <span className="ml-1 text-xs text-muted-foreground">{t.clientDisplay}</span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -274,7 +272,7 @@ export function ParcDashboard() {
                     {n.message && <p className="truncate text-xs text-muted-foreground">{n.message}</p>}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    {n.numeroOR && <Link href={`/dashboard/ordres-reparation?or=${n.orId}`} className="rounded-lg px-2 py-1 text-xs font-semibold text-primary hover:bg-primary/10">Ouvrir</Link>}
+                    {n.numeroOR && <Link href={`/dashboard/ordres-reparation/${n.orId}`} className="rounded-lg px-2 py-1 text-xs font-semibold text-primary hover:bg-primary/10">Ouvrir</Link>}
                     <button
                       onClick={() => marquerLu.mutate({ id: n.id })}
                       className="rounded-lg px-2 py-1 text-xs font-semibold text-success-foreground hover:bg-success/10"
@@ -431,7 +429,7 @@ export function ParcDashboard() {
                   </td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{p.emplacement}</td>
                   <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
-                    <Link href={`/dashboard/ordres-reparation?or=${p.id}`} className="rounded-lg px-2 py-1 text-xs font-semibold text-primary hover:bg-primary/10">Fiche</Link>
+                    <Link href={`/dashboard/ordres-reparation/${p.id}`} className="rounded-lg px-2 py-1 text-xs font-semibold text-primary hover:bg-primary/10">Fiche</Link>
                   </td>
                 </tr>
               ))
@@ -442,196 +440,6 @@ export function ParcDashboard() {
 
       {/* Panneau détail au clic */}
       {detailId !== null && <ParcDetailModal orId={detailId} onClose={() => setDetailId(null)} />}
-
-      {showReception && <ReceptionModal
-        vehicules={(vehiculesData?.vehicules ?? []) as any[]}
-        clients={(clientsData?.clients ?? []) as any[]}
-        techniciens={((techniciens?.employees ?? []) as any[]).filter((e) => e.statut === "actif")}
-        onClose={() => setShowReception(false)}
-        onDone={() => { utils.or.getDashboard.invalidate(); utils.or.list.invalidate(); setShowReception(false); }}
-      />}
-    </div>
-  );
-}
-
-// ─── Modal de réception rapide (véhicule + client + motif + priorité + promesse) ───
-function ReceptionModal({ vehicules, clients, techniciens, onClose, onDone }: {
-  vehicules: any[]; clients: any[]; techniciens: any[];
-  onClose: () => void; onDone: () => void;
-}) {
-  const utils = api.useUtils();
-  const [vehiculeId, setVehiculeId] = useState(0);
-  const [clientId, setClientId] = useState(0);
-  const [nouvelleImmat, setNouvelleImmat] = useState("");
-  const [marque, setMarque] = useState("");
-  const [modele, setModele] = useState("");
-  const [motEntree, setMotEntree] = useState("PANNE");
-  const [plainte, setPlainte] = useState("");
-  const [clientAttend, setClientAttend] = useState(false);
-  const [courtoisie, setCourtoisie] = useState(false);
-  const [datePromesse, setDatePromesse] = useState("");
-  const [emplacement, setEmplacement] = useState("Réception");
-  const [technicienId, setTechnicienId] = useState(0);
-  const [priorite, setPriorite] = useState<string | null>(null);
-  const [notes, setNotes] = useState("");
-
-  const createVehicule = api.vehicules.create.useMutation();
-  const create = api.or.create.useMutation({
-    onSuccess: (r: any) => {
-      toast.success(`Réception enregistrée — ${r.numero} (P${priorite ?? "3"})`);
-      onDone();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-  const [creating, setCreating] = useState(false);
-
-  // Suggestion de priorité en direct
-  const suggestion = suggererPriorite({
-    clientAttend,
-    courtoisie,
-    promesseJourJ: datePromesse === new Date().toISOString().slice(0, 10),
-    promesseJ1: false,
-  });
-
-  const submit = async () => {
-    let vId = vehiculeId;
-    if (vehiculeId === -1) {
-      if (!nouvelleImmat.trim()) { toast.error("Immatriculation requise pour un véhicule inconnu"); return; }
-      setCreating(true);
-      try {
-        const res = await createVehicule.mutateAsync({ immatriculation: nouvelleImmat.trim(), marque: marque || undefined, modele: modele || undefined, clientId: clientId || undefined } as any);
-        vId = res.id;
-      } catch (e: any) { toast.error(e.message); setCreating(false); return; }
-      setCreating(false);
-    }
-    if (!vId) { toast.error("Sélectionnez ou créez un véhicule"); return; }
-    create.mutate({
-      vehiculeId: vId,
-      clientId: clientId || undefined,
-      plainte: plainte || undefined,
-      motEntree: motEntree as any,
-      priorite: (priorite ?? suggestion ?? "P3") as any,
-      datePromesse: datePromesse || undefined,
-      emplacement: emplacement || undefined,
-      responsableTechnicienId: technicienId || undefined,
-      clientAttendSurPlace: clientAttend,
-      courtoisieDemandee: courtoisie,
-      notes: notes || undefined,
-    } as any);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={onClose}>
-      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
-            <Car size={18} className="text-primary" /> Nouvelle réception
-          </h2>
-          <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-accent">✕</button>
-        </div>
-
-        <div className="space-y-4">
-          {/* Véhicule */}
-          <div className="rounded-lg border border-dashed border-border p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Véhicule *</div>
-            <select value={vehiculeId} onChange={(e) => setVehiculeId(Number(e.target.value))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-              <option value={0}>— Sélectionner un véhicule connu —</option>
-              {vehicules.map((v: any) => <option key={v.id} value={v.id}>{v.immatriculation} — {v.marque} {v.modele}</option>)}
-              <option value={-1} className="font-semibold">+ Véhicule inconnu (création rapide)</option>
-            </select>
-            {vehiculeId === -1 && (
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                <Input placeholder="Immatriculation *" value={nouvelleImmat} onChange={(e) => setNouvelleImmat(e.target.value)} className="font-mono" />
-                <Input placeholder="Marque" value={marque} onChange={(e) => setMarque(e.target.value)} />
-                <Input placeholder="Modèle" value={modele} onChange={(e) => setModele(e.target.value)} />
-              </div>
-            )}
-          </div>
-
-          {/* Client */}
-          <div className="rounded-lg border border-dashed border-border p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Client (auto si véhicule rattaché)</div>
-            <select value={clientId} onChange={(e) => setClientId(Number(e.target.value))} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-              <option value={0}>— Aucun / hérité du véhicule —</option>
-              {clients.filter((c: any) => c.statut === "ACTIF").map((c: any) => (
-                <option key={c.id} value={c.id}>{c.raisonSociale ?? `${c.prenom ?? ""} ${c.nom}`}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Motif + consignes */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs text-muted-foreground">Motif d'entrée</Label>
-              <select value={motEntree} onChange={(e) => setMotEntree(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                {MOTIFS_ENTREE.map((m) => <option key={m} value={m}>{MOTIF_ENTREE_LABELS[m]}</option>)}
-              </select>
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">Restitution promise</Label>
-              <Input type="date" className="mt-1" value={datePromesse} onChange={(e) => setDatePromesse(e.target.value)} />
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Travaux demandés / symptômes</Label>
-            <textarea rows={2} value={plainte} onChange={(e) => setPlainte(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50" placeholder="Description détaillée…" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs text-muted-foreground">Emplacement</Label>
-              <Input className="mt-1" value={emplacement} onChange={(e) => setEmplacement(e.target.value)} placeholder="Réception, Parc A, Pont 1…" />
-            </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">Responsable technique (optionnel)</Label>
-              <select value={technicienId} onChange={(e) => setTechnicienId(Number(e.target.value))} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                <option value={0}>Non assigné</option>
-                {techniciens.map((t: any) => <option key={t.id} value={t.id}>{t.prenom} {t.nom}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-1.5 text-sm text-foreground">
-              <input type="checkbox" checked={clientAttend} onChange={(e) => setClientAttend(e.target.checked)} className="size-4 accent-primary" />
-              Client attend sur place
-            </label>
-            <label className="flex items-center gap-1.5 text-sm text-foreground">
-              <input type="checkbox" checked={courtoisie} onChange={(e) => setCourtoisie(e.target.checked)} className="size-4 accent-primary" />
-              Véhicule de courtoisie demandé
-            </label>
-          </div>
-
-          {/* Priorité */}
-          <div className="rounded-lg border border-border bg-muted/20 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Priorité *</span>
-              <span className="text-xs text-muted-foreground">Suggestion système : <b className={PRIORITE_META[suggestion]?.badge}>{suggestion} — {PRIORITE_META[suggestion]?.libelle}</b></span>
-            </div>
-            <div className="flex gap-2">
-              {PRIORITES.map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setPriorite(priorite === p ? null : p)}
-                  className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold transition-all ${priorite === p ? "border-primary ring-1 ring-primary" : "border-border"}`}
-                  style={{ color: PRIORITE_META[p].couleur }}
-                >
-                  {p}
-                  <span className="block text-[9px] font-medium text-muted-foreground">{PRIORITE_META[p].libelle}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={onClose}>Annuler</Button>
-            <Button onClick={submit} disabled={create.isPending || creating} className="gap-2">
-              {create.isPending || creating ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 size={15} />}
-              Enregistrer la réception
-            </Button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -766,7 +574,7 @@ function ParcDetailModal({ orId, onClose }: { orId: number; onClose: () => void 
           <Link href={`/dashboard/vehicules/${p.vehiculeId ?? ""}`}>
             <Button size="sm" variant="outline">Fiche véhicule 360°</Button>
           </Link>
-          <Link href={`/dashboard/ordres-reparation?or=${p.id}`}>
+          <Link href={`/dashboard/ordres-reparation/${p.id}`}>
             <Button size="sm">Fiche OR</Button>
           </Link>
         </div>

@@ -13,7 +13,11 @@ export const stocks = pgTable("stocks", {
   lotId: integer("lot_id").references(() => lots.id),
   quantite: numeric("quantite", { precision: 12, scale: 2 }).notNull().default("0"),
   quantiteReservee: numeric("quantite_reservee", { precision: 12, scale: 2 }).default("0"),
+  // V3 : quantité bloquée (contrôle qualité, litige, consignation…) — jamais disponible
+  quantiteBloquee: numeric("quantite_bloquee", { precision: 12, scale: 2 }).default("0"),
   quantiteRayon: numeric("quantite_rayon", { precision: 12, scale: 2 }).default("0"),
+  // Seuil d'alerte local à cet emplacement (ex. bureau : huile < 3) — NULL = seuil global du produit
+  seuilAlerteLocal: integer("seuil_alerte_local"),
   uniteReferenceId: uuid("unite_reference_id").references(() => unitesMesure.id),
   coutUnitaireMoyen: numeric("cout_unitaire_moyen", { precision: 12, scale: 2 }),
   updatedAt: timestamp("updated_at").defaultNow(),

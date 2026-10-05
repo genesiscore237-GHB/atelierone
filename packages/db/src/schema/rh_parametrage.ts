@@ -1,5 +1,6 @@
 import {
   boolean,
+  date,
   integer,
   numeric,
   pgTable,
@@ -84,7 +85,8 @@ export const hrSanctionTypes = pgTable("hr_sanction_types", {
 /** Jours fériés (calendrier paramétrable) */
 export const hrPublicHolidays = pgTable("hr_public_holidays", {
   id: serial("id").primaryKey(),
-  date: varchar("date", { length: 10 }).notNull(), // YYYY-MM-DD
+  /** Vraie colonne SQL DATE : un férié ne peut plus être une chaîne arbitraire (RPT-02). */
+  date: date("date").notNull(),
   name: varchar("name", { length: 120 }).notNull(),
   isRecurringYearly: boolean("is_recurring_yearly").default(false),
   agenceId: integer("agence_id").notNull().references(() => agences.id),
@@ -108,4 +110,34 @@ export const hrGeneralSettings = pgTable("hr_general_settings", {
   defaultOvertimeThreshold: numeric("default_overtime_threshold", { precision: 4, scale: 2 }).default("9.5"), // seuil HS journalier par défaut (specs MVP)
   updatedAt: timestamp("updated_at").defaultNow(),
   updatedBy: integer("updated_by").references(() => utilisateurs.id),
+});
+
+/**
+ * RPT-03 §18 : règles de SENSIBILISATION RH (table dédiée).
+ *
+ * Volontairement SÉPARÉE de `late_deduction_rules` (retenues de paie) :
+ * une règle de sensibilisation ne produit AUCUNE retenue. Le déclenchement est
+ * porté par `condition` + `metrique` + `seuil`, jamais par une formule de paie.
+ *
+ * `niveau` ∈ INFO | WARNING | CRITICAL, `condition` ∈ GE | GT | LE | LT | EQ.
+ */
+export const hrSensibilisationRules = pgTable("hr_sensibilisation_rules", {
+  id: serial("id").primaryKey(),
+  agenceId: integer("agence_id").notNull().references(() => agences.id),
+  code: varchar("code", { length: 60 }).notNull(),
+  label: varchar("label", { length: 160 }).notNull(),
+  /** INFO | WARNING | CRITICAL */
+  niveau: varchar("niveau", { length: 10 }).notNull(),
+  /** Ordre d'affichage déterministe : plus petit = plus prioritaire. */
+  priorite: integer("priorite").notNull().default(100),
+  /** GE | GT | LE | LT | EQ — comparateur appliqué à `seuil`. */
+  condition: varchar("condition", { length: 4 }).notNull(),
+  /** Métrique observée, cf. METRIQUES_SENSIBILISATION de rh-sensibilisation-engine. */
+  metrique: varchar("metrique", { length: 40 }).notNull(),
+  seuil: numeric("seuil", { precision: 12, scale: 2 }).notNull(),
+  message: text("message").notNull(),
+  actionRecommandee: text("action_recommandee").notNull(),
+  active: boolean("active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });

@@ -9,10 +9,12 @@ import {
   hrAttendanceSettings,
   hrPublicHolidays,
   hrGeneralSettings,
+  lateDeductionRules,
   employeePostures,
 } from "@atelierone/db";
 import { eq, and, desc, asc } from "drizzle-orm";
-import { calculateAttendance } from "~/server/lib/presence-engine";
+import { calculateAttendance, type AbsenceType } from "~/server/lib/presence-engine";
+import type { PayMode } from "~/server/lib/payroll-engine";
 
 /**
  * PROJECTION — la journée d'un employé est une projection dérivée de la
@@ -58,7 +60,16 @@ export async function runCalculation(entryId: number, employeeId: number, date: 
   if (!entry) return;
 
   const [emp] = await db
-    .select({ workCycleId: employes.workCycleId, agenceId: employes.agenceId })
+    .select({
+      workCycleId: employes.workCycleId,
+      agenceId: employes.agenceId,
+      salaireBase: employes.salaireBase,
+      modePaie: employes.modePaie,
+      forfaitHebdomadaire: employes.forfaitHebdomadaire,
+      statut: employes.statut,
+      dateEmbauche: employes.dateEmbauche,
+      dateSortie: employes.dateSortie,
+    })
     .from(employes)
     .where(eq(employes.id, employeeId))
     .limit(1);
@@ -103,6 +114,53 @@ export async function runCalculation(entryId: number, employeeId: number, date: 
     .where(eq(hrGeneralSettings.agenceId, entryAgenceId))
     .limit(1);
 
+  // Règle de retenue retard active par défaut (paramétrable)
+  const [lateRuleRow] = await db
+    .select()
+    .from(lateDeductionRules)
+    .where(and(eq(lateDeductionRules.agenceId, entryAgenceId), eq(lateDeductionRules.isActive, true), eq(lateDeductionRules.isDefault, true)))
+    .limit(1);
+  const lateDeductionRule = lateRuleRow
+    ? { method: lateRuleRow.method as any, params: (lateRuleRow.params ?? {}) as { tauxHoraire?: number; tauxJournalier?: number; pourcentage?: number; forfaitParMinute?: number; regleInterne?: string } }
+    : null;
+
+  // Mode de rémunération + base salariale pour calculs financiers
+  const modePaie = (emp.modePaie ?? "SALAIRE_MENSUEL") as PayMode;
+  const baseSalary = Number(emp.salaireBase ?? 0) || undefined;
+  const forfaitHebdomadaire = Number(emp.forfaitHebdomadaire ?? 0) || undefined;
+
+  // Jours ouvrables du mois (calcul simple, hors dimanches) pour taux journalier
+  let workingDaysInMonth = 22;
+  {
+    const annee = Number(date.slice(0, 4));
+    const mois = Number(date.slice(5, 7));
+    const nb = new Date(annee, mois, 0).getDate();
+    let n = 0;
+    for (let j = 1; j <= nb; j++) if (new Date(annee, mois - 1, j).getDay() !== 0) n += 1;
+    workingDaysInMonth = n;
+  }
+
+  // Type d'absence dérivé du statut de la ligne (projection) ou de la saisie détaillée
+  const statutNorm = (entry.status ?? "").toLowerCase();
+  const absenceType: AbsenceType | null = statutNorm === "present"
+    ? null
+    : statutNorm === "conge"
+      ? "CONGE"
+      : statutNorm === "maladie"
+        ? "MALADIE"
+        : statutNorm === "mission"
+          ? "MISSION"
+          : statutNorm === "formation"
+            ? "FORMATION"
+            : (entry.absenceType && (["JUSTIFIEE_REMUNEREE", "JUSTIFIEE_NON_REMUNEREE", "INJUSTIFIEE", "CONGE", "MALADIE", "MISSION", "FORMATION"] as AbsenceType[]).includes(entry.absenceType as AbsenceType))
+              ? (entry.absenceType as AbsenceType)
+              : statutNorm === "absent" || statutNorm === "absence_injustifiee"
+                ? "INJUSTIFIEE"
+                : "INJUSTIFIEE";
+
+  // Jour hors période d'emploi (avant embauche / après sortie)
+  const horsPeriode = (emp.dateEmbauche && date < emp.dateEmbauche) || (emp.dateSortie && date > emp.dateSortie);
+
   const result = calculateAttendance({
     timeIn: entry.timeIn,
     timeInBreak: entry.timeInBreak ?? null,
@@ -124,6 +182,13 @@ export async function runCalculation(entryId: number, employeeId: number, date: 
     isPublicHoliday: !!holiday,
     validateEarlyArrival: entry.validateEarlyArrival ?? false,
     validateLateDeparture: entry.validateLateDeparture ?? false,
+    absenceType,
+    baseSalary,
+    workingDaysInMonth,
+    lateDeductionRule,
+    modePaie,
+    forfaitHebdomadaire,
+    ...(horsPeriode ? { details: { horsPeriodeEmploi: true } } : {}),
   });
 
   const [existingCalc] = await db
@@ -141,9 +206,12 @@ export async function runCalculation(entryId: number, employeeId: number, date: 
     normalMinutes: result.normalMinutes,
     overtimeMinutes: result.overtimeMinutes,
     lateMinutes: result.lateMinutes,
+    lateDeductibleMinutes: result.lateDeductibleMinutes,
+    lateDeductionAmount: result.lateDeductionAmount,
     earlyDepartureMinutes: result.earlyDepartureMinutes,
     isAbsent: result.isAbsent,
     codePresence: result.codePresence,
+    absenceFinancialImpact: result.absenceFinancialImpact,
     calculationDetails: result.details,
     calculatedAt: new Date(),
   };

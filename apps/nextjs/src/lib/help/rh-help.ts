@@ -406,7 +406,7 @@ export const RH_HELP_FICHES: HelpFiche[] = [
     route: "/dashboard/rh/planning",
     prerequis: [
       "Employés actifs (RH-01)",
-      "Permission rh.utilisateur.modifier pour enregistrer",
+      "Permission rh.presence.modifier pour enregistrer",
     ],
     fonctionnalites: [
       "Grille employés × Lundi→Samedi avec affectations en sélecteur coloré",

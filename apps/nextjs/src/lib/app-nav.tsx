@@ -40,14 +40,37 @@ import {
   ArrowLeftRight,
   Gauge,
   BarChart3,
-ShieldCheck,
+  ShieldCheck,
   KeyRound,
   Hammer,
   Clock,
   Warehouse,
   HandCoins,
   Network,
+  BellRing,
+  SearchCheck,
+  Boxes,
+  Cog,
+  ScanSearch,
 } from "lucide-react";
+
+// ── DEV / PROD visibility ─────────────────────────────────────────────────────
+// - "validé"        : visible en prod et en dev.
+// - "enConstruction": visible uniquement en développement (badge DEV).
+// - "refactoring"   : masqué de toute navigation (écran legacy en instance
+//                     de remplacement par le nouveau module, cf. roadmap CAT).
+export type ModuleStatus = "validé" | "enConstruction" | "refactoring";
+
+export function isDev(): boolean {
+  if (typeof window === "undefined") return process.env.NODE_ENV === "development";
+  return process.env.NODE_ENV === "development";
+}
+
+export function moduleVisible(status?: ModuleStatus): boolean {
+  return !status || status === "validé" || (status === "enConstruction" && isDev());
+}
+
+// ── Navigation types ──────────────────────────────────────────────────────────
 
 export interface SubMenu {
   id: string;
@@ -56,6 +79,7 @@ export interface SubMenu {
   icon: LucideIcon;
   desc: string;
   moduleId?: string;
+  status?: ModuleStatus;
 }
 
 export interface AppModule {
@@ -66,6 +90,7 @@ export interface AppModule {
   desc: string;
   moduleId?: string;
   subs?: SubMenu[];
+  status?: ModuleStatus;
 }
 
 export interface AppDomain {
@@ -76,7 +101,10 @@ export interface AppDomain {
   color: string;
   bg: string;
   desc: string;
+  /** Route active pour le domaine (vérification isDomainActive). */
   href: string;
+  /** Route de la page d'accueil du domaine (auto "Vue d'ensemble" sidebar). Si absent, utilise href. */
+  homeHref?: string;
   modules: AppModule[];
 }
 
@@ -203,6 +231,22 @@ export const DOMAINS: AppDomain[] = [
         href: "/dashboard/rh/paie",
         icon: Wallet,
         desc: "Base + primes + HS – retenues → bulletin",
+        moduleId: "rh",
+      },
+      {
+        id: "rh-situation",
+        label: "Situation RH & Paie",
+        href: "/dashboard/rh/situation",
+        icon: ScanSearch,
+        desc: "Analyse de période : présence, rémunération, avances, anomalies",
+        moduleId: "rh",
+      },
+      {
+        id: "rh-rapports",
+        label: "Rapports",
+        href: "/dashboard/rh/rapports",
+        icon: FileText,
+        desc: "États RH (personnel, présences, paie, avances, historique) : écran, impression, PDF, Excel",
         moduleId: "rh",
       },
       {
@@ -368,6 +412,59 @@ export const DOMAINS: AppDomain[] = [
     ],
   },
   {
+    id: "garage",
+    label: "Garage & Parking",
+    short: "Garage",
+    icon: ParkingCircle,
+    color: "text-[var(--module-vehicules)]",
+    bg: "bg-[var(--module-vehicules-bg)]",
+    desc: "Plan du parc, stationnement des véhicules immobilisés, alertes",
+    href: "/dashboard/garage",
+    homeHref: "/dashboard/garage",
+    modules: [
+      {
+        id: "garage-accueil",
+        label: "Accueil parking",
+        href: "/dashboard/garage",
+        icon: LayoutDashboard,
+        desc: "Vue d'ensemble : occupation, véhicules présents, alertes",
+        moduleId: "garage",
+      },
+      {
+        id: "garage-carte",
+        label: "Carte du parc",
+        href: "/dashboard/garage/carte",
+        icon: MapPin,
+        desc: "Plan interactif : zones, emplacements, véhicules positionnés",
+        moduleId: "garage",
+      },
+      {
+        id: "garage-vehicules",
+        label: "Registre véhicules",
+        href: "/dashboard/garage/vehicules",
+        icon: Car,
+        desc: "Registre des véhicules immobilisés (num 1-48)",
+        moduleId: "garage",
+      },
+      {
+        id: "garage-alertes",
+        label: "Alertes parking",
+        href: "/dashboard/garage/alertes",
+        icon: BellRing,
+        desc: "Alertes : prêt pour sortie, attente client, immobilisation longue",
+        moduleId: "garage",
+      },
+      {
+        id: "garage-config",
+        label: "Configuration parking",
+        href: "/dashboard/garage/configuration",
+        icon: Settings2,
+        desc: "Seuils du moteur d'alertes, marges de sécurité par défaut",
+        moduleId: "garage",
+      },
+    ],
+  },
+  {
     id: "performance",
     label: "Performance & Qualité",
     short: "Performance",
@@ -411,6 +508,111 @@ export const DOMAINS: AppDomain[] = [
       },
     ],
   },
+  // ── CATALOGUE ──────────────────────────────────────────────────────────────
+  // Règle : L'URL technique ≠ le domaine métier. Le `domainId` fait foi pour
+  // nav/breadcrumb/tabs/permissions/analytics, pas le chemin URL.
+  // /dashboard/stock/outillage reste l'URL historique mais l'Outillage
+  // appartient fonctionnellement au Catalogue.
+  {
+    id: "catalogue",
+    label: "Catalogue",
+    short: "Catalogue",
+    icon: Boxes,
+    color: "text-[var(--module-catalog)]",
+    bg: "bg-[var(--module-catalog-bg)]",
+    desc: "Référentiel des pièces, consommables, outils, équipements et services",
+    href: "/dashboard/catalog",
+    homeHref: "/dashboard/catalog/dashboard",
+    modules: [
+      {
+        id: "catalog-articles",
+        label: "Articles",
+        href: "/dashboard/catalog/articles",
+        icon: Package,
+        desc: "Pièces, consommables, kits — références et variantes",
+        moduleId: "catalog",
+        subs: [
+          { id: "cat-pieces", label: "Pièces", href: "/dashboard/catalog/articles?type=PIECE", icon: Package, desc: "Pièces de rechange", moduleId: "catalog" },
+          { id: "cat-consommables", label: "Consommables", href: "/dashboard/catalog/articles?type=CONSOMMABLE", icon: Package, desc: "Huiles, fluides, consommables", moduleId: "catalog" },
+          { id: "cat-kits", label: "Kits", href: "/dashboard/catalog/articles?type=KIT", icon: Package, desc: "Kits et ensembles", moduleId: "catalog" },
+          { id: "cat-tous", label: "Tous les articles", href: "/dashboard/catalog/articles", icon: Package, desc: "Liste complète", moduleId: "catalog" },
+        ],
+      },
+      {
+        id: "catalog-outillage",
+        label: "Outillage & Matériel",
+        href: "/dashboard/stock/outillage",
+        icon: Hammer,
+        desc: "Modèles, exemplaires, prêts, retour, maintenance, calibration",
+        moduleId: "outillage",
+        subs: [
+          { id: "cat-out-modeles", label: "Modèles", href: "/dashboard/stock/outillage?tab=modeles", icon: Hammer, desc: "Modèles d'outils", moduleId: "outillage" },
+          { id: "cat-out-exemplaires", label: "Exemplaires", href: "/dashboard/stock/outillage?tab=exemplaires", icon: Hammer, desc: "Unités physiques", moduleId: "outillage" },
+          { id: "cat-out-prets", label: "Prêts", href: "/dashboard/stock/outillage?tab=prets", icon: Hammer, desc: "Prêts en cours", moduleId: "outillage" },
+          { id: "cat-out-retours", label: "Retours", href: "/dashboard/stock/outillage?tab=retours", icon: Hammer, desc: "Retours à traiter", moduleId: "outillage" },
+          { id: "cat-out-maintenance", label: "Maintenance", href: "/dashboard/stock/outillage?tab=maintenance", icon: Hammer, desc: "Maintenance préventive et curative", moduleId: "outillage" },
+          { id: "cat-out-calibration", label: "Calibration", href: "/dashboard/stock/outillage?tab=calibration", icon: Hammer, desc: "Calibration des instruments", moduleId: "outillage" },
+        ],
+      },
+      {
+        id: "catalog-equipements",
+        label: "Équipements",
+        href: "/dashboard/catalog/equipements",
+        icon: Cog,
+        desc: "Parc d'équipements, maintenance, inspections",
+        moduleId: "equipements",
+        status: "enConstruction",
+      },
+      {
+        id: "catalog-services",
+        label: "Services",
+        href: "/dashboard/catalog/services",
+        icon: Network,
+        desc: "Services et prestations",
+        moduleId: "services",
+        status: "enConstruction",
+      },
+      {
+        id: "catalog-referentiel",
+        label: "Référentiel",
+        href: "/dashboard/catalog/categories",
+        icon: BookOpen,
+        desc: "Catégories, attributs, ontologie",
+        moduleId: "catalog",
+        // Legacy : à refondre dans le module CAT (catégories, attributs, marques).
+        status: "refactoring",
+        subs: [
+          { id: "cat-ref-categories", label: "Catégories", href: "/dashboard/catalog/categories", icon: BookOpen, desc: "Arbre de catégories", moduleId: "catalog" },
+          { id: "cat-ref-ontologie", label: "Attributs & Ontologie", href: "/dashboard/catalog/ontologie", icon: BookOpen, desc: "Attributs techniques dynamiques", moduleId: "catalog" },
+          { id: "cat-ref-marques", label: "Marques", href: "/dashboard/catalog/referentiel/marques", icon: BookOpen, desc: "Gestion des marques", moduleId: "catalog", status: "enConstruction" },
+          { id: "cat-ref-unites", label: "Unités", href: "/dashboard/catalog/referentiel/unites", icon: BookOpen, desc: "Unités de mesure", moduleId: "catalog", status: "enConstruction" },
+          { id: "cat-ref-relations", label: "Relations", href: "/dashboard/catalog/referentiel/relations", icon: BookOpen, desc: "Relations entre variantes", moduleId: "catalog", status: "enConstruction" },
+        ],
+      },
+      {
+        id: "catalog-aide",
+        label: "Aide à la saisie",
+        href: "/dashboard/catalog/aide",
+        icon: CircleHelp,
+        desc: "Tapez un nom de pièce, obtenez la fiche métier complète avant d'enregistrer",
+        moduleId: "catalog",
+      },
+      {
+        id: "catalog-recherche",
+        label: "Recherche",
+        href: "/dashboard/catalog/recherche",
+        icon: SearchCheck,
+        desc: "Recherche multi-critères dans le catalogue",
+        moduleId: "catalog",
+        // Legacy : remplacé par la recherche embarquée des nouveaux écrans CAT.
+        status: "refactoring",
+      },
+    ],
+  },
+
+  // ── STOCK & APPROVISIONNEMENT ──────────────────────────────────────────────
+  // Le stock décrit la quantité, la localisation, l'état et les mouvements.
+  // L'Outillage et le Catalogue ont été déplacés vers le domaine Catalogue.
   {
     id: "stock",
     label: "Stock & Approvisionnement",
@@ -418,22 +620,10 @@ export const DOMAINS: AppDomain[] = [
     icon: Warehouse,
     color: "text-[var(--module-stock)]",
     bg: "bg-[var(--module-stock-bg)]",
-    desc: "Pièces, mouvements, commandes, fournisseurs, inventaire",
+    desc: "Quantités, mouvements, commandes, emplacements, inventaire",
     href: "/dashboard/stock",
+    homeHref: "/dashboard/stock/apercu",
     modules: [
-      {
-        id: "stock-articles",
-        label: "Articles / Catalogue",
-        href: "/dashboard/catalog",
-        icon: Package,
-        desc: "Pièces auto, catégories, prix, seuils",
-        moduleId: "catalog",
-        subs: [
-          { id: "catalog-articles", label: "Articles", href: "/dashboard/catalog", icon: Package, moduleId: "catalog", desc: "Liste des articles" },
-          { id: "catalog-categories", label: "Catégories", href: "/dashboard/catalog/categories", icon: BookOpen, moduleId: "catalog", desc: "Catégories de produits" },
-          { id: "catalog-stats", label: "Statistiques", href: "/dashboard/catalog/dashboard", icon: BarChart3, moduleId: "catalog", desc: "CA, ventes, alertes" },
-        ],
-      },
       {
         id: "stock-mouvements",
         label: "Mouvements de stock",
@@ -467,14 +657,6 @@ export const DOMAINS: AppDomain[] = [
         moduleId: "procurement",
       },
       {
-        id: "stock-outillage",
-        label: "Outillage & Matériel",
-        href: "/dashboard/stock/outillage",
-        icon: Hammer,
-        desc: "Outils prêtés aux techniciens, consommables, EPI — recherche & inventaire",
-        moduleId: "outillage",
-      },
-      {
         id: "stock-factures-fournisseurs",
         label: "Factures & Archives",
         href: "/dashboard/fournisseurs-factures?tab=factures",
@@ -490,32 +672,40 @@ export const DOMAINS: AppDomain[] = [
         desc: "Comptage physique, écarts, ajustements",
         moduleId: "inventory",
       },
-        {
-          id: "stock-apercu",
-          label: "Vue d'ensemble",
-          href: "/dashboard/stock/apercu",
-          icon: LayoutDashboard,
-          desc: "Indicateurs, alertes, stocks dormants",
-          moduleId: "stock",
-        },
-        {
-          id: "stock-emplacements",
-          label: "Emplacements",
-          href: "/dashboard/stock/emplacements",
-          icon: MapPin,
-          desc: "Rayonnage ZONE-ALLEE-RAYON-NIVEAU, contenu",
-          moduleId: "stock",
-        },
-        {
-          id: "stock-aide",
-          label: "Aide & Documentation",
-          href: "/dashboard/stock/aide",
-          icon: CircleHelp,
-          desc: "Guide utilisateur, fiches, parcours de prise en main",
-          moduleId: "stock",
-        },
-      ],
-    },
+      {
+        id: "stock-emplacements",
+        label: "Emplacements",
+        href: "/dashboard/stock/emplacements",
+        icon: MapPin,
+        desc: "Rayonnage ZONE-ALLEE-RAYON-NIVEAU, contenu",
+        moduleId: "stock",
+      },
+      {
+        id: "stock-alertes",
+        label: "Alertes stock",
+        href: "/dashboard/stock/alertes",
+        icon: BellRing,
+        desc: "Ruptures, seuils, DLC, anti-vol",
+        moduleId: "stock",
+      },
+      {
+        id: "stock-chercher-commander",
+        label: "Chercher avant commander",
+        href: "/dashboard/stock/chercher-avant-commander",
+        icon: SearchCheck,
+        desc: "Vérifier le stock existant avant toute commande",
+        moduleId: "stock",
+      },
+      {
+        id: "stock-aide",
+        label: "Aide & Documentation",
+        href: "/dashboard/stock/aide",
+        icon: CircleHelp,
+        desc: "Guide utilisateur, fiches, parcours de prise en main",
+        moduleId: "stock",
+      },
+    ],
+  },
   {
     id: "finance",
     label: "Finance & Caisse",
@@ -572,7 +762,7 @@ export const DOMAINS: AppDomain[] = [
     modules: [
       {
         id: "sites-emplacements",
-        label: "Emplacements",
+        label: "Zones du parc",
         href: "/dashboard/sites/emplacements",
         icon: MapPin,
         desc: "Zones Site 1 & 2 : réception, diagnostic, réparation",
@@ -588,7 +778,7 @@ export const DOMAINS: AppDomain[] = [
       },
       {
         id: "sites-transferts",
-        label: "Transferts",
+        label: "Transferts de véhicules",
         href: "/dashboard/sites/transferts",
         icon: ArrowLeftRight,
         desc: "Déplacements tracés Site 1 ↔ Site 2",
@@ -641,6 +831,14 @@ export function findModuleByPath(pathname: string): AppModule | undefined {
       (m) => pathname === m.href || pathname.startsWith(`${m.href}/`)
     );
     if (found) return found;
+  }
+  return undefined;
+}
+
+/** Retourne la domainId pour un module donné (utile pour ModuleShell). */
+export function findDomainIdForModule(moduleId: string): string | undefined {
+  for (const domain of DOMAINS) {
+    if (domain.modules.some((m) => m.id === moduleId)) return domain.id;
   }
   return undefined;
 }

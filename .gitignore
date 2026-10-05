@@ -74,9 +74,21 @@ apps/nextjs/quick-test.ts
 apps/nextjs/debug-*.png
 apps/nextjs/rayons-test*.log
 
+# captures et rapports de tests E2E (artefacts locaux, ~12 Mo de PNG)
+audit/
+apps/nextjs/playwright-*-report/
+apps/nextjs/playwright-report*/
+
+# fichiers uploades a l'execution (contenu utilisateur, pas du code)
+uploads/
+
+# PIDs de serveurs de dev
+*.pid
+server-*.pid
+
 # donnees exportees clients (ne pas versionner)
 docs/lipatrad_mvogada_jsonl/
-# Dumps de sauvegarde et fichiers temporaires de déploiement
+# Dumps de sauvegarde et fichiers temporaires de dï¿½ploiement
 backups/
 tmp/
 .next-sim-*/

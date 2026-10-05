@@ -200,7 +200,7 @@ function VueDirection({ periode }: { periode: PeriodeId }) {
                       {p.alerte !== "RETARD" && p.alerte !== "BLOQUE" && "Priorité critique — avancer immédiatement"}
                     </td>
                     <td className="px-3 py-2">
-                      <Link href={`/dashboard/ordres-reparation?or=${p.id}`} className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
+                      <Link href={`/dashboard/ordres-reparation/${p.id}`} className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline">
                         Ouvrir <ArrowRight size={11} />
                       </Link>
                     </td>

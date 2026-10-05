@@ -12,6 +12,9 @@ export const produitsFournisseurs = pgTable("produits_fournisseurs", {
   prixAchat: numeric("prix_achat", { precision: 12, scale: 2 }),
   delaiApprovisionnement: integer("delai_approvisionnement"),
   estPrincipal: boolean("est_principal").default(false),
+  // V3 : conditionnement spécifique fournisseur (ex. carton de 12 vs carton de 24)
+  uniteConditionnement: uuid("unite_conditionnement").references(() => unitesMesure.id),
+  facteurConditionnement: numeric("facteur_conditionnement", { precision: 12, scale: 2 }),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

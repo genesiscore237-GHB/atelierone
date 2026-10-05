@@ -107,6 +107,11 @@ const DEMO_USERS = [
   await raw.unsafe(extrasSql);
   console.log("Schema-extras (fonctions, vues, triggers, RLS): OK");
 
+  // 4bis. Catalogue universel (P0) : ontologie + unités + colonnes étendues — idempotent.
+  const universelSql = fs.readFileSync(path.resolve(__dirname, "schema-catalogue-universel.sql"), "utf-8");
+  await raw.unsafe(universelSql);
+  console.log("Schema-catalogue-universel (ontologie + unités + provenance): OK");
+
   // 5. Administrateur + comptes de démonstration (liés aux fiches RH)
   const adminRole = socle.roles.find((r: any) => r.code === "superadmin");
   if (!adminRole) throw new Error("Rôle superadmin introuvable");

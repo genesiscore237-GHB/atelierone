@@ -34,10 +34,10 @@ import {
   atelierNotifications,
   stocks,
 } from "@atelierone/db";
-import { eq, and, desc, sql, gte, lte, asc, inArray } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lte, asc, inArray, ilike, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
-import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererReferenceFacture, MODES_PAIEMENT, montantLigne } from "~/server/lib/facturation-service";
+import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererReferenceFacture, verrouillerSequenceFacture, MODES_PAIEMENT, montantLigne } from "~/server/lib/facturation-service";
 import {
   migrerStatutLegacy,
   transitionStatutAtelierValide,
@@ -55,6 +55,7 @@ import {
   statutDemandePieces,
   transitionRetourFournisseurValide,
 } from "~/server/lib/atelier-service";
+import { genererCodeClient } from "~/server/lib/client-service";
 import { sortirPourOR, enregistrerMouvement } from "~/server/lib/stock-engine";
 
 /** E1 — notification atelier (helper interne). */
@@ -132,6 +133,112 @@ export const orRouter = createTRPCRouter({
             (r.marque ?? "").toLowerCase().includes(safe.search!.toLowerCase())
           )
         : rows;
+    }),
+
+  // ─── Recherche de véhicules pour un nouvel OR ───
+  // Recherche sur tous les véhicules actifs de l'agence (y compris sortis /
+  // contentieux) : chaque résultat est qualifié côté serveur
+  // (eligible + raison de refus + OR en cours éventuel).
+  rechercheVehicules: requirePermissionProcedure("or.consulter")
+    .input(
+      z.object({
+        search: z.string().optional(),
+        typeVehicule: z.string().optional(),
+        statutImmobilisation: z.string().optional(),
+        limit: z.number().int().min(5).max(50).default(20),
+      }).optional()
+    )
+    .query(async ({ ctx, input }) => {
+      const safe = input ?? {};
+      const conditions: any[] = [
+        eq(vehicules.agenceId, ctx.user.agenceId),
+        eq(vehicules.isActive, true),
+      ];
+      if (safe.typeVehicule) conditions.push(eq(vehicules.typeVehicule, safe.typeVehicule));
+      if (safe.statutImmobilisation) conditions.push(eq(vehicules.statutImmobilisation, safe.statutImmobilisation));
+      if (safe.search?.trim()) {
+        const q = `%${safe.search.trim()}%`;
+        conditions.push(
+          or(
+            ilike(vehicules.immatriculation, q),
+            ilike(vehicules.marque, q),
+            ilike(vehicules.modele, q),
+            ilike(vehicules.numeroChassis, q),
+            ilike(clients.nom, q),
+            ilike(clients.prenom, q),
+            ilike(clients.raisonSociale, q),
+            ilike(clients.telephone, q),
+          )!
+        );
+      }
+      const rows = await db
+        .select({
+          id: vehicules.id,
+          immatriculation: vehicules.immatriculation,
+          marque: vehicules.marque,
+          modele: vehicules.modele,
+          annee: vehicules.annee,
+          couleur: vehicules.couleur,
+          kilometrage: vehicules.kilometrage,
+          typeVehicule: vehicules.typeVehicule,
+          statutImmobilisation: vehicules.statutImmobilisation,
+          clientId: vehicules.clientId,
+          clientNom: clients.nom,
+          clientPrenom: clients.prenom,
+          clientRaisonSociale: clients.raisonSociale,
+          clientTelephone: clients.telephone,
+        })
+        .from(vehicules)
+        .leftJoin(clients, eq(vehicules.clientId, clients.id))
+        .where(and(...conditions))
+        .orderBy(asc(vehicules.immatriculation))
+        .limit(safe.limit);
+
+      // OR en cours (non clôturé) par véhicule : le plus récent si plusieurs
+      const ids = rows.map((r) => r.id);
+      const orsEnCours: Record<number, { id: number; numero: string; statut: string }> = {};
+      if (ids.length > 0) {
+        const orRows = await db
+          .select({
+            id: ordresReparation.id,
+            numero: ordresReparation.numero,
+            statut: ordresReparation.statut,
+            vehiculeId: ordresReparation.vehiculeId,
+            dateOuverture: ordresReparation.dateOuverture,
+          })
+          .from(ordresReparation)
+          .where(and(
+            inArray(ordresReparation.vehiculeId, ids),
+            sql`${ordresReparation.statut} NOT IN ('LIVRE', 'ANNULE', 'CLOTURE')`,
+          ))
+          .orderBy(desc(ordresReparation.dateOuverture));
+        for (const o of orRows) {
+          if (!orsEnCours[o.vehiculeId]) {
+            orsEnCours[o.vehiculeId] = { id: o.id, numero: o.numero, statut: o.statut };
+          }
+        }
+      }
+
+      const resultats = rows.map((r) => {
+        const orEnCours = orsEnCours[r.id] ?? null;
+        let eligible = true;
+        let raison: string | null = null;
+        if (r.statutImmobilisation === "sorti") {
+          eligible = false;
+          raison = "Ce véhicule a été rendu au client (statut « sorti ») — il ne peut pas être réceptionné.";
+        } else if (r.statutImmobilisation === "abandonne_contentieux") {
+          eligible = false;
+          raison = "Ce véhicule est abandonné / en contentieux — il ne peut pas être réceptionné.";
+        }
+        return { ...r, orEnCours, eligible, raison };
+      });
+      // Tri : véhicules libres d'abord, puis avec OR en cours, puis non éligibles
+      resultats.sort((a, b) => {
+        const rankA = !a.eligible ? 2 : a.orEnCours ? 1 : 0;
+        const rankB = !b.eligible ? 2 : b.orEnCours ? 1 : 0;
+        return rankA - rankB || a.immatriculation.localeCompare(b.immatriculation, "fr");
+      });
+      return resultats;
     }),
 
   createVehicule: requirePermissionProcedure("or.creer")
@@ -312,6 +419,13 @@ export const orRouter = createTRPCRouter({
         .limit(1);
       if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "Ordre de réparation introuvable." });
 
+      // Référence FAC- de la vente liée (affichage sans ID numérique — P2-11)
+      let venteReference: string | null = null;
+      if (or.venteId) {
+        const [vente] = await db.select({ reference: ventes.reference }).from(ventes).where(eq(ventes.id, or.venteId)).limit(1);
+        venteReference = vente?.reference ?? null;
+      }
+
       const lignes = await db
         .select({
           id: lignesOrdreReparation.id,
@@ -356,6 +470,7 @@ export const orRouter = createTRPCRouter({
       });
       return {
         ...or,
+        venteReference,
         lignes,
         historique,
         photos,
@@ -576,7 +691,12 @@ export const orRouter = createTRPCRouter({
           const [cli] = await tx.select({ id: clients.id }).from(clients).where(and(eq(clients.id, clientId), eq(clients.agenceId, agenceId))).limit(1);
           if (!cli) throw new TRPCError({ code: "BAD_REQUEST", message: "Client introuvable." });
         } else {
-          const codeClient = `CLI-${String(Date.now()).slice(-6)}`;
+          // Code client auto aligné sur la convention app (CLT-année-séquence) — P2-11
+          const [lastCli] = await tx
+            .select({ n: sql<number>`count(*)::int` })
+            .from(clients)
+            .where(and(eq(clients.agenceId, agenceId), sql`${clients.codeClient} LIKE ${`CLT-${new Date().getFullYear()}-%`}`));
+          const codeClient = genererCodeClient((lastCli?.n ?? 0) + 1);
           const [cli] = await tx.insert(clients).values({
             agenceId,
             nom: input.client.nom.trim(),
@@ -682,32 +802,78 @@ export const orRouter = createTRPCRouter({
   fermerDefinitivement: requirePermissionProcedure("or.modifier")
     .input(z.object({ id: z.number().int(), motif: z.string().min(3).optional() }))
     .mutation(async ({ ctx, input }) => {
-      const [or] = await db
-        .select({ id: ordresReparation.id, numero: ordresReparation.numero, statut: ordresReparation.statut, vehiculeId: ordresReparation.vehiculeId, clientId: ordresReparation.clientId, totalTTC: ordresReparation.totalTTC, venteId: ordresReparation.venteId, notes: ordresReparation.notes })
-        .from(ordresReparation)
-        .where(and(eq(ordresReparation.id, input.id), eq(ordresReparation.agenceId, ctx.user.agenceId)))
-        .limit(1);
-      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "Dossier introuvable." });
-      if (or.statut === "ferme_definitif") throw new TRPCError({ code: "BAD_REQUEST", message: "Ce dossier est déjà fermé définitivement." });
-      if (!["LIVRE", "PRET_A_LIVRER", "CONTROLE_QUALITE"].includes(or.statut)) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "La fermeture définitive exige un dossier livré ou prêt à livrer (statut actuel : " + or.statut + ")." });
-      }
-      await db.update(ordresReparation).set({
-        statut: "ferme_definitif",
-        dateFermeture: new Date(),
-        fermeDefinitivementPar: Number(ctx.user.id),
-        notes: or.notes ? `${or.notes}\n[FERMETURE] ${input.motif ?? ""}` : `[FERMETURE] ${input.motif ?? ""}`,
-        updatedAt: new Date(),
-      } as any).where(eq(ordresReparation.id, or.id));
-      await db.insert(orHistorique).values({
-        orId: or.id,
-        type: "FERMETURE_DEFINITIVE",
-        ancienneValeur: or.statut,
-        nouvelleValeur: "ferme_definitif",
-        commentaire: input.motif ?? "Fermeture définitive du dossier",
-        changePar: Number(ctx.user.id),
-      } as any);
-      return { success: true, numero: or.numero };
+      return db.transaction(async (tx) => {
+        const [or] = await tx
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, statut: ordresReparation.statut, vehiculeId: ordresReparation.vehiculeId, clientId: ordresReparation.clientId, totalTTC: ordresReparation.totalTTC, venteId: ordresReparation.venteId, totalFacture: ordresReparation.totalFacture, notes: ordresReparation.notes })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.id, input.id), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "Dossier introuvable." });
+        if (or.statut === "ferme_definitif") throw new TRPCError({ code: "BAD_REQUEST", message: "Ce dossier est déjà fermé définitivement." });
+
+        // Aucune clôture d'un dossier incomplet : les contrôles reflètent l'état réel du dossier.
+        // 1. Contrôle qualité validé (dernier contrôle)
+        const [qc] = await tx
+          .select({ resultat: orControlesQualite.resultat })
+          .from(orControlesQualite)
+          .where(eq(orControlesQualite.orId, input.id))
+          .orderBy(desc(orControlesQualite.dateControle))
+          .limit(1);
+        const qcValide = qc?.resultat === "VALIDE";
+
+        // 2. Restitution enregistrée (sortie physique réelle)
+        const [restitution] = await tx
+          .select({ id: orRestitutions.id, observations: orRestitutions.observations, motifNonRepare: orRestitutions.motifNonRepare })
+          .from(orRestitutions)
+          .where(eq(orRestitutions.orId, input.id))
+          .orderBy(desc(orRestitutions.dateRestitution))
+          .limit(1);
+        if (!restitution) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Aucune restitution enregistrée : la sortie physique du véhicule doit précéder la clôture définitive." });
+        }
+        const sortieExceptionnelle = !!(restitution.observations?.includes?.("Sortie exceptionnelle") ?? false);
+
+        // 3. Facture émise
+        const factureEmise = !!or.venteId || Number(or.totalFacture ?? 0) > 0;
+        if (!factureEmise) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Intervention non facturée : facturez avant la clôture définitive." });
+        }
+
+        // 4. Situation financière réelle : solde = total facturé − payé
+        let restantOR = 0;
+        if (or.venteId) {
+          const [vente] = await tx
+            .select({ montantTotal: ventes.montantTotal, montantPaye: ventes.montantPaye })
+            .from(ventes)
+            .where(eq(ventes.id, or.venteId))
+            .limit(1);
+          if (vente) restantOR = Math.max(0, Number(vente.montantTotal ?? 0) - Number(vente.montantPaye ?? 0));
+        }
+
+        if (!sortieExceptionnelle && !qcValide) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Contrôle qualité non validé : la clôture définitive exige un QC validé (sauf sortie exceptionnelle tracée sur le dossier)." });
+        }
+        if (!sortieExceptionnelle && restantOR > 0) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Facture non soldée (reste ${restantOR.toLocaleString("fr-FR")} F) : la clôture exige un solde réglé (sauf sortie exceptionnelle tracée).` });
+        }
+
+        await tx.update(ordresReparation).set({
+          statut: "ferme_definitif",
+          dateFermeture: new Date(),
+          fermeDefinitivementPar: Number(ctx.user.id),
+          notes: or.notes ? `${or.notes}\n[FERMETURE] ${input.motif ?? ""}` : `[FERMETURE] ${input.motif ?? ""}`,
+          updatedAt: new Date(),
+        } as any).where(eq(ordresReparation.id, or.id));
+        await tx.insert(orHistorique).values({
+          orId: or.id,
+          type: "FERMETURE_DEFINITIVE",
+          ancienneValeur: or.statut,
+          nouvelleValeur: "ferme_definitif",
+          commentaire: `${input.motif ?? "Fermeture définitive du dossier"}${sortieExceptionnelle ? ` — SORTIE EXCEPTIONNELLE ${restantOR > 0 ? `(reste dû ${restantOR.toLocaleString("fr-FR")} F, créance conservée active)` : ""}` : ""}`,
+          changePar: Number(ctx.user.id),
+        } as any);
+        return { success: true, numero: or.numero };
+      }) as any;
     }),
 
   // ─── DVI — Digital Vehicle Inspection (inspection multi-points, preuve visuelle) ───
@@ -795,7 +961,7 @@ export const orRouter = createTRPCRouter({
       orId: z.number().int(),
       pointIds: z.array(z.number().int()).min(1),
       prixUnitaire: z.number().min(0).default(0),
-      type: z.enum(["PIECE", "SERVICE"]).default("SERVICE"),
+      type: z.enum(["PIECE", "SERVICE", "FORFAIT", "SOUS_TRAITANCE", "CONSOMMABLE"]).default("SERVICE"),
     }))
     .mutation(async ({ ctx, input }) => {
       return db.transaction(async (tx) => {
@@ -837,11 +1003,25 @@ export const orRouter = createTRPCRouter({
         const [dernier] = await tx.select({ v: sql<number>`COALESCE(MAX(${orDevisVersions.version}), 0)::int` }).from(orDevisVersions).where(eq(orDevisVersions.orId, input.orId));
         const version = (dernier?.v ?? 0) + 1;
         const total = calculerTotalFacture(lignes as any[], 0);
+        const snapshot = lignes.map((l) => ({
+          id: l.id,
+          type: l.type,
+          produitId: l.produitId ?? null,
+          libelle: l.libelle,
+          quantite: l.quantite,
+          prixUnitaire: l.prixUnitaire,
+          tva: l.tva,
+          totalLigne: l.totalLigne ?? null,
+          statutAutorisation: l.statutAutorisation,
+          origine: l.origine ?? null,
+          dureeHeures: l.dureeHeures ?? null,
+        }));
         await tx.insert(orDevisVersions).values({
           orId: input.orId,
           version,
           montantHT: String(total),
           montantTTC: String(total),
+          lignesSnapshot: snapshot,
           statut: "BROUILLON",
           creePar: Number(ctx.user.id),
         } as any);
@@ -1023,16 +1203,80 @@ export const orRouter = createTRPCRouter({
       observations: z.string().optional(),
       motifNonRepare: z.string().optional(), // REFUS_CLIENT | PIECES_INDISPONIBLES | ABANDON | AUTRE — si non/partiellement réparé
       travauxNonRealises: z.string().optional(),
+      // Sortie exceptionnelle : véhicule qui sort malgré QC non validé, travaux non terminés ou facture non soldée.
+      sortieExceptionnelle: z.boolean().optional(),
+      motifException: z.string().optional(),
+      commentaireException: z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       return db.transaction(async (tx) => {
         await verifierDossierOuvert(input.orId, ctx.user.agenceId);
         const [or] = await tx
-          .select({ id: ordresReparation.id, numero: ordresReparation.numero, statut: ordresReparation.statut, vehiculeId: ordresReparation.vehiculeId, dateCloture: ordresReparation.dateCloture })
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, statut: ordresReparation.statut, vehiculeId: ordresReparation.vehiculeId, clientId: ordresReparation.clientId, dateCloture: ordresReparation.dateCloture, totalFacture: ordresReparation.totalFacture, venteId: ordresReparation.venteId })
           .from(ordresReparation)
           .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
           .limit(1);
         if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+
+        // (1) Véhicule identifié
+        if (!or.vehiculeId) throw new TRPCError({ code: "BAD_REQUEST", message: "Aucun véhicule associé à cet OR : restitution impossible." });
+
+        // (2) Intervention identifiée : l'OR existe et est numéroté (contrôle implicite via numero).
+
+        // Sortie exceptionnelle : véhicule non/partiellement réparé (motif réel) ou contrainte opérationnelle explicite.
+        // Le motif "AUTRE" par défaut du formulaire n'est pas considéré comme une vraie exception.
+        const motifExceptionTexte = (input.motifException ?? "").trim()
+          || (input.motifNonRepare && input.motifNonRepare !== "AUTRE" ? input.motifNonRepare : "");
+        const exceptionnelle = !!input.sortieExceptionnelle || !!motifExceptionTexte;
+
+        // (6) Situation financière réelle : reste dû = total facturé − payé
+        let restantOR = 0;
+        if (or.venteId) {
+          const [vente] = await tx
+            .select({ montantTotal: ventes.montantTotal, montantPaye: ventes.montantPaye })
+            .from(ventes)
+            .where(eq(ventes.id, or.venteId))
+            .limit(1);
+          if (vente) restantOR = Math.max(0, Number(vente.montantTotal ?? 0) - Number(vente.montantPaye ?? 0));
+        }
+
+        if (exceptionnelle) {
+          // Motif + commentaire obligatoires pour tracer la sortie exceptionnelle
+          if (!motifExceptionTexte) throw new TRPCError({ code: "BAD_REQUEST", message: "Motif de sortie exceptionnelle obligatoire." });
+          const commentaire = (input.commentaireException ?? input.observations ?? "").trim();
+          if (commentaire.length < 3) throw new TRPCError({ code: "BAD_REQUEST", message: "Commentaire obligatoire pour justifier la sortie exceptionnelle." });
+        } else {
+          // Sortie ordinaire : travaux terminés + QC validé + facture émise + facture soldée
+          if (or.statut !== "PRET_A_LIVRER") {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Travaux non terminés (statut : ${STATUT_LABELS[or.statut ?? ""] ?? or.statut}). Passez par la sortie exceptionnelle (motif obligatoire) si le véhicule doit sortir ainsi.`,
+            });
+          }
+          const [qc] = await tx
+            .select({ resultat: orControlesQualite.resultat })
+            .from(orControlesQualite)
+            .where(eq(orControlesQualite.orId, input.orId))
+            .orderBy(desc(orControlesQualite.dateControle))
+            .limit(1);
+          if ((qc?.resultat) !== "VALIDE") {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Contrôle qualité non validé : sortie refusée (ou utilisez la sortie exceptionnelle tracée)." });
+          }
+          if (!or.venteId && Number(or.totalFacture ?? 0) <= 0) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Intervention non facturée : facturez d'abord (ou utilisez la sortie exceptionnelle tracée)." });
+          }
+          if (restantOR > 0) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: `Facture non soldée (reste ${restantOR.toLocaleString("fr-FR")} F) : encaissez le solde ou utilisez la sortie exceptionnelle tracée.` });
+          }
+        }
+
+        // (9) signature récupérateur + (10) kilométrage + (11) carburant : vérifiés au niveau de l'input (champs requis).
+        // (8) restitution enregistrée ci-dessous ; (7) documents : l'accusé de réception / dossier reste consultable.
+
+        const infosException = exceptionnelle
+          ? ` — SORTIE EXCEPTIONNELLE (motif : ${motifExceptionTexte}${restantOR > 0 ? ` — reste dû ${restantOR.toLocaleString("fr-FR")} F` : ""}${input.commentaireException ? ` — ${input.commentaireException}` : ""})`
+          : "";
+
         await tx.insert(orRestitutions).values({
           orId: input.orId,
           kilometrageSortie: input.kilometrageSortie,
@@ -1040,7 +1284,7 @@ export const orRouter = createTRPCRouter({
           checklist: input.checklist,
           recuperateurNom: input.recuperateurNom,
           signatureClient: input.signatureClient,
-          observations: input.observations ?? null,
+          observations: [input.observations ?? null, exceptionnelle ? `Sortie exceptionnelle — motif : ${motifExceptionTexte}${restantOR > 0 ? ` — reste dû ${restantOR.toLocaleString("fr-FR")} F` : ""}` : null].filter(Boolean).join(" — ") || null,
           motifNonRepare: input.motifNonRepare ?? null,
           travauxNonRealises: input.travauxNonRealises ?? null,
           restituePar: Number(ctx.user.id),
@@ -1058,10 +1302,10 @@ export const orRouter = createTRPCRouter({
           type: "RESTITUTION",
           ancienneValeur: or.statut ?? null,
           nouvelleValeur: "LIVRE",
-          commentaire: `Véhicule restitué à ${input.recuperateurNom}${input.motifNonRepare ? ` — NON RÉPARÉ (${input.motifNonRepare})` : ""} — km sortie ${input.kilometrageSortie}`,
+          commentaire: `Véhicule restitué à ${input.recuperateurNom}${input.motifNonRepare ? ` — NON RÉPARÉ (${input.motifNonRepare})` : ""} — km sortie ${input.kilometrageSortie}${infosException}`,
           changePar: Number(ctx.user.id),
         } as any);
-        return { success: true };
+        return { success: true, exceptionnelle: exceptionnelle ? true : undefined };
       }) as any;
     }),
 
@@ -1207,10 +1451,24 @@ export const orRouter = createTRPCRouter({
       emplacement: z.string().optional(),
       motEntree: z.enum(MOTIFS_ENTREE).optional(),
       notes: z.string().nullable().optional(),
+      // ─── Réception (onglet 1) ───
+      kilometrageEntree: z.number().int().min(0).optional(),
+      niveauCarburantEntree: z.string().optional(),
+      pannesDeclarees: z.string().optional(),
+      observationsReception: z.string().optional(),
+      outillage: z.record(z.any()).optional(),
+      typeIntervention: z.string().optional(),
+      lieuDepannage: z.string().nullable().optional(),
+      clientAttendSurPlace: z.boolean().optional(),
+      courtoisieDemandee: z.boolean().optional(),
+      dateReception: z.string().optional(),
+      signatureDeposant: z.string().nullable().optional(),
+      validationVerbale: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const { id, ...rest } = input;
+      const { id, dateReception, ...rest } = input;
       const values: any = { ...rest, updatedAt: new Date() };
+      if (dateReception) values.dateReception = new Date(dateReception);
       if (rest.statut) values.statut = migrerStatutLegacy(rest.statut);
       if (rest.statut === "LIVRE" || rest.statut === "PRET_A_LIVRER") values.dateCloture = new Date();
       if (rest.datePromesse === null) values.datePromesse = null;
@@ -1223,7 +1481,7 @@ export const orRouter = createTRPCRouter({
   addLigne: requirePermissionProcedure("or.modifier")
     .input(z.object({
       ordreId: z.number().int(),
-      type: z.enum(["PIECE", "SERVICE"]).default("PIECE"),
+      type: z.enum(["PIECE", "SERVICE", "FORFAIT", "SOUS_TRAITANCE", "CONSOMMABLE"]).default("PIECE"),
       produitId: z.number().int().optional(),
       libelle: z.string().min(1),
       quantite: z.number().min(0.01).default(1),
@@ -1370,7 +1628,7 @@ export const orRouter = createTRPCRouter({
       codesDTC: z.string().optional(),
       tests: z.string().optional(),
       lignes: z.array(z.object({
-        type: z.enum(["PIECE", "SERVICE"]).default("PIECE"),
+        type: z.enum(["PIECE", "SERVICE", "FORFAIT", "SOUS_TRAITANCE", "CONSOMMABLE"]).default("PIECE"),
         produitId: z.number().int().optional(),
         libelle: z.string().min(1),
         quantite: z.number().min(0.01).default(1),
@@ -2182,6 +2440,37 @@ export const orRouter = createTRPCRouter({
       return { kpis, repPriorite, repStatut, topAnciens, parc, seuils };
     }),
 
+  // ─── Pointages des interventions d'un OR ───
+  listerPointages: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await db
+        .select({
+          id: interventionsTechniciens.id,
+          ordreId: interventionsTechniciens.ordreId,
+          ligneId: interventionsTechniciens.ligneId,
+          technicienId: interventionsTechniciens.technicienId,
+          technicienNom: employes.nom,
+          technicienPrenom: employes.prenom,
+          dateIntervention: interventionsTechniciens.dateIntervention,
+          heureDebut: interventionsTechniciens.heureDebut,
+          heureFin: interventionsTechniciens.heureFin,
+          dureeHeures: interventionsTechniciens.dureeHeures,
+          description: interventionsTechniciens.description,
+          ligneLibelle: lignesOrdreReparation.libelle,
+        })
+        .from(interventionsTechniciens)
+        .leftJoin(employes, eq(interventionsTechniciens.technicienId, employes.id))
+        .leftJoin(lignesOrdreReparation, eq(interventionsTechniciens.ligneId, lignesOrdreReparation.id))
+        .where(and(eq(interventionsTechniciens.ordreId, input.orId), eq(interventionsTechniciens.agenceId, ctx.user.agenceId)))
+        .orderBy(desc(interventionsTechniciens.heureDebut));
+      return rows.map((r) => ({
+        ...r,
+        enCours: r.heureDebut != null && r.heureFin == null,
+        duree: r.dureeHeures != null ? Number(r.dureeHeures) : r.heureDebut && r.heureFin ? Math.max(0.1, (new Date(r.heureFin).getTime() - new Date(r.heureDebut).getTime()) / 3600000) : null,
+      }));
+    }),
+
   // ─── Pointage d'une intervention technicien sur un OR ───
   pointageIntervention: requirePermissionProcedure("or.modifier")
     .input(z.object({
@@ -2399,6 +2688,9 @@ export const orRouter = createTRPCRouter({
           }
         }
 
+        // Verrou anti-doublon FAC- : sérialise le comptage dans la transaction (P2-11).
+        await verrouillerSequenceFacture(tx, ctx.user.agenceId);
+
         const [last] = await tx
           .select({ n: sql<number>`count(*)::int` })
           .from(ventes)
@@ -2463,12 +2755,9 @@ export const orRouter = createTRPCRouter({
           .set({
             venteId: or.venteId ?? vente.id,
             totalFacture: String(dejaFacture + restant),
-            statut: "LIVRE",
-            dateCloture: or.dateCloture ?? new Date(),
             updatedAt: new Date(),
           } as any)
           .where(eq(ordresReparation.id, input.id));
-        await tx.update(vehicules).set({ statutImmobilisation: "sorti", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
 
         // Crédit → dette client (encaissable via Finance → Créances)
         if (input.modePaiement === "credit" && montantPaye < restant) {
@@ -2484,7 +2773,7 @@ export const orRouter = createTRPCRouter({
           } as any);
         }
 
-        return { venteId: vente.id, reference, montantTotal: restant, statut: "LIVRE", resteAFacturer: totalComplet - (dejaFacture + restant) };
+        return { venteId: vente.id, reference, montantTotal: restant, statut: or.statut, resteAFacturer: totalComplet - (dejaFacture + restant) };
       }) as any;
     }),
 
@@ -2531,6 +2820,9 @@ export const orRouter = createTRPCRouter({
         }
         if (totalGroupe <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Aucun montant à facturer (dossiers déjà facturés)." });
         const totalAvecRemise = Math.round(totalGroupe * (1 - remisePourcent / 100));
+
+        // Verrou anti-doublon FAC- : sérialise le comptage dans la transaction (P2-11).
+        await verrouillerSequenceFacture(tx, ctx.user.agenceId);
 
         const [last] = await tx.select({ n: sql<number>`count(*)::int` }).from(ventes).where(sql`${ventes.reference} LIKE ${`FAC-${new Date().getFullYear()}-%`}`);
         const reference = genererReferenceFacture((last?.n ?? 0) + 1);
@@ -2582,11 +2874,8 @@ export const orRouter = createTRPCRouter({
           await tx.update(ordresReparation).set({
             venteId: vente.id,
             totalFacture: String(g.total),
-            statut: "LIVRE",
-            dateCloture: new Date(),
             updatedAt: new Date(),
           } as any).where(eq(ordresReparation.id, g.orId));
-          await tx.update(vehicules).set({ statutImmobilisation: "sorti", updatedAt: new Date() } as any).where(eq(vehicules.id, ors.find((o) => o.id === g.orId)!.vehiculeId));
         }
 
         if (input.modePaiement === "credit" && montantPaye < totalAvecRemise) {
@@ -2674,7 +2963,25 @@ export const orRouter = createTRPCRouter({
       const tel = (or.clientTelephone ?? "").replace(/\D/g, "");
       const whatsappUrl = tel ? `https://wa.me/${tel.length > 8 ? tel : `237${tel}`}?text=${encodeURIComponent(texte)}` : null;
 
-      return { texte, whatsappUrl, numeroOR: or.numero, immatriculation: or.immatriculation, promesse };
+      // Événement métier : l'accusé de réception est un document remis au client.
+      // Trace or_historique (type ACCUSE_RECEPTION, une seule entrée par OR) :
+      // OR, véhicule, client, utilisateur (changePar), date/heure (changeLe), contenu et canal.
+      const [trace] = await db
+        .select({ id: orHistorique.id })
+        .from(orHistorique)
+        .where(and(eq(orHistorique.orId, input.orId), eq(orHistorique.type, "ACCUSE_RECEPTION")))
+        .limit(1);
+      if (!trace) {
+        await db.insert(orHistorique).values({
+          orId: input.orId,
+          type: "ACCUSE_RECEPTION",
+          nouvelleValeur: or.numero,
+          commentaire: `Accusé de réception remis — véhicule ${or.immatriculation}${or.clientNom ? ` (client : ${(or.clientPrenom ?? "").trim()} ${or.clientNom})` : ""} — ${texte} — canal ${whatsappUrl ? "WHATSAPP" : "ECRAN"}`,
+          changePar: Number(ctx.user.id),
+        } as any);
+      }
+
+      return { texte, whatsappUrl, numeroOR: or.numero, immatriculation: or.immatriculation, promesse, dejaTrace: !!trace };
     }),
 
   // ─── E1 — Notifications atelier ───

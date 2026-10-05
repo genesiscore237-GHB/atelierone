@@ -3,15 +3,21 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
+import { useEmployeFromUrl } from "~/hooks/useEmployeFromUrl";
+import { usePermissions } from "~/hooks/usePermissions";
+import { downloadCsv } from "./csv-download";
 import {
+  BarChart3,
   CalendarCheck,
   Check,
   ChevronDown,
   ClipboardList,
   Clock,
+  Download,
   FileBarChart,
   Loader2,
   Plus,
+  Printer,
   Save,
   Sparkles,
   X,
@@ -26,6 +32,7 @@ const TABS = [
   { id: "hs", label: "Heures supplémentaires", icon: Clock },
   { id: "historique", label: "Historique", icon: ClipboardList },
   { id: "mensuel", label: "Mensuel & clôture", icon: FileBarChart },
+  { id: "analyse", label: "Analyse de période", icon: BarChart3 },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -77,6 +84,7 @@ export default function PresencesRH() {
         {tab === "hs" && <OvertimeSection />}
         {tab === "historique" && <HistoriqueSection />}
         {tab === "mensuel" && <MensuelSection />}
+        {tab === "analyse" && <AnalyseSection />}
       </div>
     </div>
   );
@@ -236,7 +244,7 @@ function SaisieSection() {
           <span>Arrivée</span>
           <span>Départ</span>
           <span>Statut</span>
-          <span className="hidden md:block">Prime (FCFA)</span>
+          <span className="hidden md:block">Prime (XOF)</span>
           <span className="hidden text-right md:block">Travail.</span>
           <span className="hidden text-right md:block">HN</span>
           <span className="hidden text-right md:block">HS</span>
@@ -317,7 +325,7 @@ function SaisieSection() {
                         Valider départ tardif
                       </label>
                       <label className="flex items-center gap-1.5 text-xs text-muted-foreground sm:col-span-2">
-                        Prime de tâche (FCFA)
+                        Prime de tâche (XOF)
                         <Input type="number" min={0} className="h-7 w-24" value={r.taskBonus ?? ""} onChange={(ev) => setRow(e.id, { taskBonus: ev.target.value })} />
                       </label>
                       <Input className="h-7 sm:col-span-4" placeholder="Notes / motif (ex. arrivé 15 min avant — non compté)" value={r.notes ?? ""} onChange={(ev) => setRow(e.id, { notes: ev.target.value })} />
@@ -335,7 +343,7 @@ function SaisieSection() {
         )}
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Arrivée avant l&apos;heure de début et départ après l&apos;heure de fin ne sont pas comptés, sauf validation Admin (colonne détail). Les retards et départs anticipés sont déduits automatiquement. Prime de tâche = bonus FCFA saisi jour par jour (repris en paie).
+        Arrivée avant l&apos;heure de début et départ après l&apos;heure de fin ne sont pas comptés, sauf validation Admin (colonne détail). Les retards et départs anticipés sont déduits automatiquement. Prime de tâche = bonus XOF saisi jour par jour (repris en paie).
       </p>
     </div>
   );
@@ -380,7 +388,7 @@ function OvertimeSection() {
       <div className="rounded-xl border border-border bg-card p-4">
         <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Nouvelle demande</h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Optionnel : les HS au-delà du seuil journalier sont comptées automatiquement ; une autorisation approuvée les plafonne, une refusée les bloque.
+          Règle HS (CDC) : les heures supplémentaires ne sont comptées que si une autorisation approuvée existe pour la journée. Sans autorisation, les minutes au-delà de l'horaire sont ignorées.
         </p>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-5">
           <select
@@ -455,6 +463,8 @@ function HistoriqueSection() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [expanded, setExpanded] = useState<number | null>(null);
+  const employeUrl = useEmployeFromUrl();
+  useEffect(() => { if (employeUrl) setEmployeeId(String(employeUrl)); }, [employeUrl]);
   const { data: employees } = api.rh.list.useQuery({ limit: 100 });
   const { data: entries } = api.rhPresence.listEntries.useQuery({
     employeeId: employeeId ? Number(employeeId) : undefined,
@@ -503,7 +513,7 @@ function HistoriqueSection() {
         <div className="flex flex-wrap gap-2">
           <span className="rounded-full bg-success/10 px-3 py-1 text-xs font-semibold text-success-foreground">Σ HN : {fmt(totals.hn)}</span>
           <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">Σ HS : {fmt(totals.hs)}</span>
-          <span className="rounded-full bg-warning/10 px-3 py-1 text-xs font-semibold text-warning-foreground">Σ Primes : {totals.bonus.toLocaleString("fr-FR")} F</span>
+          <span className="rounded-full bg-warning/10 px-3 py-1 text-xs font-semibold text-warning-foreground">Σ Primes : {totals.bonus.toLocaleString("fr-FR")} XOF</span>
           <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">Jours présents : {totals.present}</span>
         </div>
       )}
@@ -550,7 +560,7 @@ function HistoriqueSection() {
                   </td>
                   <td className="px-4 py-2 text-right font-mono text-xs">{e.calculation ? fmt(e.calculation.normalMinutes) : "-"}</td>
                   <td className="px-4 py-2 text-right font-mono text-xs text-primary">{e.calculation && e.calculation.overtimeMinutes > 0 ? fmt(e.calculation.overtimeMinutes) : "-"}</td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-warning-foreground">{Number(e.taskBonus ?? 0) > 0 ? `${Number(e.taskBonus).toLocaleString("fr-FR")} F` : "-"}</td>
+                  <td className="px-4 py-2 text-right font-mono text-xs text-warning-foreground">{Number(e.taskBonus ?? 0) > 0 ? `${Number(e.taskBonus).toLocaleString("fr-FR")} XOF` : "-"}</td>
                 </tr>
                 {expanded === e.id && (
                   <tr className="bg-muted/20 text-xs text-muted-foreground">
@@ -560,7 +570,7 @@ function HistoriqueSection() {
                         <span>Départ anticipé : <b className={e.calculation?.earlyDepartureMinutes ? "text-destructive" : ""}>{e.calculation ? fmt(e.calculation.earlyDepartureMinutes) : "-"}</b></span>
                         <span>Arrivée anticipée validée : {e.validateEarlyArrival ? "Oui" : "Non"}</span>
                         <span>Départ tardif validé : {e.validateLateDeparture ? "Oui" : "Non"}</span>
-                        {e.taskBonus && Number(e.taskBonus) > 0 && <span>Prime de tâche : {Number(e.taskBonus).toLocaleString("fr-FR")} F</span>}
+                        {e.taskBonus && Number(e.taskBonus) > 0 && <span>Prime de tâche : {Number(e.taskBonus).toLocaleString("fr-FR")} XOF</span>}
                       </div>
                     </td>
                   </tr>
@@ -569,10 +579,164 @@ function HistoriqueSection() {
             ))}
             {list.length === 0 && (
               <tr><td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">Aucune présence sur cette période.</td></tr>
-            )}
+)}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ─── 5. Analyse de période (Phase 4 — N06/P08 : lecture seule, diagnostics) ───
+type AnalyseLigne = {
+  employeeId: number;
+  employePrenom: string;
+  employeNom: string;
+  matricule: string;
+  analyse: {
+    joursTheoriques: number;
+    joursPresence: number;
+    joursAbsence: number;
+    joursConges: number;
+    joursMuets: number;
+    heuresTheoriques: number;
+    heuresTravaillees: number;
+    heuresNormales: number;
+    heuresSupp: number;
+    retardTotalMinutes: number;
+    departAnticipeTotalMinutes: number;
+    tauxPresence: number;
+    anomalies: Array<{ date: string; code: string; detail: string }>;
+  };
+};
+
+const ANOMALIE_STYLE: Record<string, string> = {
+  A: "bg-destructive/10 text-destructive",
+  R: "bg-warning/10 text-warning-foreground",
+  MUET: "bg-muted text-muted-foreground",
+};
+
+function AnalyseSection() {
+  const today = new Date().toISOString().split("T")[0];
+  const firstOfMonth = `${today.slice(0, 7)}-01`;
+  const [from, setFrom] = useState(firstOfMonth);
+  const [to, setTo] = useState(today);
+  const [employeeId, setEmployeeId] = useState("");
+  const [recherche, setRecherche] = useState("");
+
+  const { data: employees } = api.rh.list.useQuery({ limit: 500 });
+  const { data: resultats, isLoading, error } = api.rhPresence.analysePeriode.useQuery(
+    { from, to, employeeId: employeeId ? Number(employeeId) : undefined },
+    { enabled: !!from && !!to && from <= to }
+  );
+
+  const lignes = (resultats ?? []) as unknown as AnalyseLigne[];
+  const filtrees = lignes.filter((l) => {
+    if (!recherche.trim()) return true;
+    const q = recherche.toLowerCase();
+    return `${l.employePrenom} ${l.employeNom} ${l.matricule}`.toLowerCase().includes(q);
+  });
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+        Erreur de chargement de l&apos;analyse : {error.message}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <Label>Du</Label>
+          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-44" />
+        </div>
+        <div>
+          <Label>Au</Label>
+          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-44" />
+        </div>
+        <div>
+          <Label>Employé</Label>
+          <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} className="h-10 rounded-lg border border-border bg-accent/30 px-3 text-sm text-foreground outline-none">
+            <option value="">Tous</option>
+            {(employees?.employees ?? []).map((e) => (
+              <option key={e.id} value={e.id} className="bg-background">
+                {(e as { prenom?: string }).prenom} {(e as { nom?: string }).nom}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <Label>Recherche (matricule / nom)</Label>
+          <Input value={recherche} onChange={(e) => setRecherche(e.target.value)} placeholder="Filtrer…" className="w-56" />
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center rounded-xl border border-border bg-card py-10">
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : filtrees.length === 0 ? (
+        <div className="rounded-xl border border-border bg-card py-10 text-center text-sm text-muted-foreground">
+          Aucune donnée sur la période sélectionnée.
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {filtrees.map((l) => (
+            <div key={l.employeeId} className="rounded-xl border border-border bg-card p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-bold text-foreground">
+                  {l.employePrenom} {l.employeNom} <span className="ml-1 font-mono text-[10px] font-normal text-muted-foreground">{l.matricule}</span>
+                </div>
+                <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
+                  Taux de présence : {l.analyse.tauxPresence.toFixed(1)} %
+                </span>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <Stat label="Jours théoriques" value={String(l.analyse.joursTheoriques)} />
+                <Stat label="Présences" value={String(l.analyse.joursPresence)} className="text-success-foreground" />
+                <Stat label="Absences" value={String(l.analyse.joursAbsence)} className="text-destructive" />
+                <Stat label="Congés" value={String(l.analyse.joursConges)} className="text-primary" />
+                <Stat label="Non pointés" value={String(l.analyse.joursMuets)} className="text-muted-foreground" />
+                <Stat label="Heures théoriques" value={`${l.analyse.heuresTheoriques.toFixed(1)} h`} />
+                <Stat label="Heures travaillées" value={`${l.analyse.heuresTravaillees.toFixed(1)} h`} />
+                <Stat label="Heures sup." value={`${l.analyse.heuresSupp.toFixed(1)} h`} className="text-warning-foreground" />
+                <Stat label="Heures normales" value={`${l.analyse.heuresNormales.toFixed(1)} h`} />
+                <Stat label="Retards" value={`${l.analyse.retardTotalMinutes} min`} />
+                <Stat label="Départs anticipés" value={`${l.analyse.departAnticipeTotalMinutes} min`} />
+                <Stat label="Jours anormaux" value={String(l.analyse.anomalies.length)} />
+              </div>
+
+              {l.analyse.anomalies.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {l.analyse.anomalies.map((a, i) => (
+                    <span
+                      key={`${a.date}-${i}`}
+                      title={a.detail}
+                      className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${ANOMALIE_STYLE[a.code] ?? "bg-muted text-muted-foreground"}`}
+                    >
+                      {a.date}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 text-xs text-muted-foreground">Aucune anomalie détectée sur la période.</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, className }: { label: string; value: string; className?: string }) {
+  return (
+    <div className="rounded-lg bg-muted/40 px-3 py-2">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{label}</p>
+      <p className={`font-mono text-sm font-bold text-foreground ${className ?? ""}`}>{value}</p>
     </div>
   );
 }
@@ -583,7 +747,9 @@ function MensuelSection() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const utils = api.useUtils();
+  const { hasPermission } = usePermissions();
   const { data: summaries } = api.rhPresence.listSummaries.useQuery({ year, month });
+  const exportPresences = api.rhDashboard.exportPresences.useQuery({ year, month }, { enabled: false });
 
   const close = api.rhPresence.closeMonth.useMutation({
     onSuccess: (res) => {
@@ -596,7 +762,7 @@ function MensuelSection() {
   const list = (summaries ?? []) as unknown as Array<{
     id: number; employeNom: string; employePrenom: string; matricule: string;
     totalNormalMinutes: number; totalOvertimeMinutes: number; totalLateMinutes: number; totalTaskBonus: string;
-    daysPresent: number; daysAbsent: number; locked: boolean;
+    daysPresent: number; daysAbsent: number; daysOnLeave: number; locked: boolean;
   }>;
 
   const totalBonus = list.reduce((s, x) => s + Number(x.totalTaskBonus ?? 0), 0);
@@ -620,8 +786,22 @@ function MensuelSection() {
           {close.isPending ? <Loader2 className="size-4 animate-spin" /> : <Check size={15} />}
           Clôturer le mois
         </Button>
+        {hasPermission("rh.presence.consulter") && (
+          <Button
+            variant="outline"
+            onClick={async () => {
+              if (!exportPresences.data) await exportPresences.refetch();
+              downloadCsv(exportPresences.data, `presences-${year}-${String(month).padStart(2, "0")}.csv`);
+            }}
+          >
+            <Download size={15} /> Exporter
+          </Button>
+        )}
+        <Button variant="outline" onClick={() => window.print()} className="print:hidden">
+          <Printer size={15} /> Imprimer
+        </Button>
         {totalBonus > 0 && (
-          <span className="rounded-full bg-warning/10 px-3 py-1 text-xs font-semibold text-warning-foreground">Σ Primes de tâche : {totalBonus.toLocaleString("fr-FR")} F</span>
+          <span className="rounded-full bg-warning/10 px-3 py-1 text-xs font-semibold text-warning-foreground">Σ Primes de tâche : {totalBonus.toLocaleString("fr-FR")} XOF</span>
         )}
       </div>
 
@@ -635,6 +815,7 @@ function MensuelSection() {
               <th className="px-4 py-2.5 text-right">Primes de tâche</th>
               <th className="px-4 py-2.5 text-right">Retards</th>
               <th className="px-4 py-2.5 text-right">Jours présents</th>
+              <th className="px-4 py-2.5 text-right">Congés</th>
               <th className="px-4 py-2.5 text-right">Absences</th>
               <th className="px-4 py-2.5">État</th>
             </tr>
@@ -645,9 +826,10 @@ function MensuelSection() {
                 <td className="px-4 py-2">{s.employePrenom} {s.employeNom} <span className="ml-1 font-mono text-[10px] text-muted-foreground">{s.matricule}</span></td>
                 <td className="px-4 py-2 text-right font-mono text-xs">{fmt(s.totalNormalMinutes)}</td>
                 <td className="px-4 py-2 text-right font-mono text-xs text-primary">{s.totalOvertimeMinutes > 0 ? fmt(s.totalOvertimeMinutes) : "-"}</td>
-                <td className="px-4 py-2 text-right font-mono text-xs text-warning-foreground">{Number(s.totalTaskBonus ?? 0) > 0 ? `${Number(s.totalTaskBonus).toLocaleString("fr-FR")} F` : "-"}</td>
+                <td className="px-4 py-2 text-right font-mono text-xs text-warning-foreground">{Number(s.totalTaskBonus ?? 0) > 0 ? `${Number(s.totalTaskBonus).toLocaleString("fr-FR")} XOF` : "-"}</td>
                 <td className="px-4 py-2 text-right font-mono text-xs text-destructive">{fmt(s.totalLateMinutes)}</td>
                 <td className="px-4 py-2 text-right">{s.daysPresent}</td>
+                <td className="px-4 py-2 text-right text-primary">{s.daysOnLeave > 0 ? s.daysOnLeave : "-"}</td>
                 <td className="px-4 py-2 text-right">{s.daysAbsent}</td>
                 <td className="px-4 py-2">
                   {s.locked ? (

@@ -2,6 +2,7 @@
  * FACTURATION DU CYCLE — Client → Véhicule → OR → Pièces + MO → Facture.
  * Fonctions pures (testables) + transactions.
  */
+import { sql, type SQL } from "drizzle-orm";
 
 /** Montant d'une ligne d'OR (totalLigne sinon quantité × PU). */
 export function montantLigne(ligne: { quantite: number | string; prixUnitaire: number | string; totalLigne?: number | string | null; tva?: number | string | null }): number {
@@ -39,6 +40,24 @@ export function genererReferenceFacture(sequence: number, date = new Date()): st
   return `FAC-${date.getFullYear()}-${String(sequence).padStart(5, "0")}`;
 }
 
+/**
+ * VERROU ANTI-DOUBLON FAC- (P2-11).
+ *
+ * Le comptage `LIKE 'FAC-{année}-%'` n'est pas transactionnel : deux facturations
+ * concurrentes peuvent générer la même référence (P1). On sérialise la
+ * génération avec un verrou advisory transactionnel (`pg_advisory_xact_lock`),
+ * clé par (agence, année), relâché automatiquement au commit/rollback.
+ * À appeler en tout début de transaction, AVANT le comptage.
+ */
+export function verrouillerSequenceFacture(
+  exec: { execute(sql: SQL): Promise<unknown> },
+  agenceId: number,
+  annee = new Date().getFullYear(),
+): Promise<unknown> {
+  const cle = BigInt(agenceId) * 100_000n + BigInt(annee);
+  return exec.execute(sql`select pg_advisory_xact_lock(${cle})`);
+}
+
 /** Statuts d'OR facturables. */
 export const STATUTS_OR_FACTURABLES = ["termine"] as const;
 
@@ -48,4 +67,20 @@ export type ModePaiement = (typeof MODES_PAIEMENT)[number];
 /** Une facture à crédit est-elle comptant ? */
 export function estComptant(mode: ModePaiement): boolean {
   return mode !== "credit";
+}
+
+/** Statut d'une créance dérivé des données financières réelles (montants + échéance). */
+export function classerDette(
+  montantTotal: number,
+  montantPaye: number,
+  echeanceLe?: Date | string | null,
+  maintenant: Date = new Date(),
+): "PAID" | "PARTIAL" | "UNPAID" | "OVERDUE" {
+  const restant = Math.max(0, montantTotal - montantPaye);
+  if (restant <= 0) return "PAID";
+  const jour = new Date(maintenant);
+  jour.setHours(0, 0, 0, 0);
+  const echeance = echeanceLe ? new Date(echeanceLe) : null;
+  if (echeance && echeance.getTime() < jour.getTime()) return "OVERDUE";
+  return montantPaye <= 0 ? "UNPAID" : "PARTIAL";
 }

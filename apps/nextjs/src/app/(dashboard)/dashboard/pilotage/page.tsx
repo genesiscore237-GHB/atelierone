@@ -56,7 +56,7 @@ export default function PilotageHubPage() {
               transition={{ delay: index * 0.03 }}
             >
               <Link
-                href={d.href}
+                href={d.homeHref ?? d.href}
                 className="group flex items-center gap-4 px-5 py-3 transition-colors hover:bg-accent/50"
               >
                 <div

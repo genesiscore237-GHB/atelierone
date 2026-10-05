@@ -5,6 +5,7 @@ import { TRPCError } from "@trpc/server";
 import { ComptaService } from "./compta-service";
 import { getFacteurVersBase } from "./stock-engine";
 import { sortirStockFIFO } from "./lot-service";
+import { calculerEcheance } from "./facturation-service";
 
 type Tx = Parameters<Parameters<(typeof db)["transaction"]>[0]>[0];
 
@@ -181,11 +182,14 @@ export class SaleService {
         .limit(1);
 
       const montantPaye = options?.montantPaye ?? String(montantTotal);
+      // Montant réellement encaissé (jamais supérieur au total), reste → créance client
+      const encaisse = Math.min(montantTotal, Math.max(0, Number(montantPaye)));
+      const resteACredit = montantTotal - encaisse;
       await tx.update(ventes).set({
         montantTotal: String(montantTotal),
         statut: "termine",
         modePaiement: options?.modePaiement ?? vente.modePaiement,
-        montantPaye: montantPaye,
+        montantPaye: String(encaisse),
         sessionCaisseId: sessionRow?.id ?? null,
       }).where(eq(ventes.id, venteId));
 
@@ -193,11 +197,38 @@ export class SaleService {
         await tx.insert(mouvementsCaisse).values({
           caisseId: sessionRow.caisseId,
           type: "vente",
-          montant: String(montantTotal),
+          montant: String(encaisse),
           reference: vente.reference,
           effectuePar: options?.encaissePar ?? vente.operateurId,
         });
-        await tx.update(sessionsCaisse).set({ soldeActuel: String(Number(sessionRow.soldeActuel ?? 0) + montantTotal) }).where(eq(sessionsCaisse.id, sessionRow.id));
+        await tx.update(sessionsCaisse).set({ soldeActuel: String(Number(sessionRow.soldeActuel ?? 0) + encaisse) }).where(eq(sessionsCaisse.id, sessionRow.id));
+      }
+
+      await tx.insert(paiements).values({
+        venteId: vente.id,
+        montant: String(encaisse),
+        modePaiement: options?.modePaiement ?? vente.modePaiement,
+        reference: vente.reference,
+        statut: "valide",
+      } as any);
+
+      // Crédit partiel → créance client visible dans Finance → Créances et fiche client
+      if ((options?.modePaiement ?? vente.modePaiement) === "credit" && resteACredit > 0) {
+        let delaiJours = 0;
+        if (vente.clientId) {
+          const [clientRow] = await tx.select({ delaiPaiementJours: clients.delaiPaiementJours }).from(clients).where(eq(clients.id, vente.clientId)).limit(1);
+          if (clientRow?.delaiPaiementJours != null) delaiJours = Number(clientRow.delaiPaiementJours);
+        }
+        await tx.insert(dettesClients).values({
+          venteId: vente.id,
+          clientId: vente.clientId ?? null,
+          agenceId,
+          montantTotal: String(montantTotal),
+          montantPaye: String(encaisse),
+          montantRestant: String(resteACredit),
+          statut: encaisse > 0 ? "partiel" : "impaye",
+          echeanceLe: new Date(`${calculerEcheance(delaiJours)}T00:00:00`),
+        } as any);
       }
 
       return { id: vente.id, reference: vente.reference, montantTotal };
@@ -458,6 +489,11 @@ async function executeSaleTransaction(params: CreateSaleParams): Promise<SaleRes
       }
     }
 
+    // Montant réellement encaissé : comptant → total, sauf encaissement partiel explicite ;
+    // crédit → montantPaye (0 par défaut). Jamais supérieur au total de la facture.
+    const encaisse = Math.min(montantTotal, Math.max(0, Number(params.montantPaye ?? (params.modePaiement === "credit" ? 0 : montantTotal))));
+    const resteACredit = montantTotal - encaisse;
+
     if (params.statut !== "brouillon") {
       await ComptaService.genererEcritureVente({
         tx, agenceId: params.agenceId, reference: ref, montantTotal, operateurId: params.operateurId,
@@ -465,22 +501,43 @@ async function executeSaleTransaction(params: CreateSaleParams): Promise<SaleRes
 
       await tx.insert(paiements).values({
         venteId: vente.id,
-        montant: params.montantPaye ?? String(montantTotal),
+        montant: String(encaisse),
         modePaiement: params.modePaiement,
+        reference: ref,
         statut: "valide",
-      });
+      } as any);
 
       if (sessionRow) {
         await tx.insert(mouvementsCaisse).values({
           caisseId: sessionRow.caisseId,
           type: "vente",
-          montant: String(montantTotal),
+          montant: String(encaisse),
           reference: ref,
           effectuePar: params.operateurId,
         });
-        await tx.update(sessionsCaisse).set({ soldeActuel: String(Number(sessionRow.soldeActuel ?? 0) + montantTotal) }).where(eq(sessionsCaisse.id, sessionRow.id));
+        await tx.update(sessionsCaisse).set({ soldeActuel: String(Number(sessionRow.soldeActuel ?? 0) + encaisse) }).where(eq(sessionsCaisse.id, sessionRow.id));
+      }
+
+      // Crédit partiel → créance client visible dans Finance → Créances et fiche client
+      if (params.modePaiement === "credit" && resteACredit > 0 && params.clientId) {
+        let delaiJours = 0;
+        const [clientRow] = await tx.select({ delaiPaiementJours: clients.delaiPaiementJours }).from(clients).where(eq(clients.id, params.clientId)).limit(1);
+        if (clientRow?.delaiPaiementJours != null) delaiJours = Number(clientRow.delaiPaiementJours);
+        await tx.insert(dettesClients).values({
+          venteId: vente.id,
+          clientId: params.clientId,
+          agenceId: params.agenceId,
+          montantTotal: String(montantTotal),
+          montantPaye: String(encaisse),
+          montantRestant: String(resteACredit),
+          statut: encaisse > 0 ? "partiel" : "impaye",
+          echeanceLe: new Date(`${calculerEcheance(delaiJours)}T00:00:00`),
+        } as any);
       }
     }
+
+    // Persiste le montant réellement payé (donnée financière réelle utilisée par les créances)
+    await tx.update(ventes).set({ montantPaye: String(encaisse) }).where(eq(ventes.id, vente.id));
 
     return { id: vente.id, reference: ref, montantTotal, warnings: warnings.length > 0 ? warnings : undefined };
   }) as any;

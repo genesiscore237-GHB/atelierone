@@ -38,7 +38,13 @@
     "migrate:clean": "drizzle-kit migrate --config drizzle-clean.config.ts",
     "generate:clean": "drizzle-kit generate --config drizzle-clean.config.ts",
     "seed:rayons": "tsx src/seed-rayons.ts",
+    "seed:ontologie": "tsx src/seed-ontologie-filtres.ts",
     "extract": "tsx src/extract-old-data.ts",
+    "migrate:guide": "tsx src/migrate-guide-saisie.ts",
+    "migrate:parking": "tsx src/migrate-parking.ts",
+    "seed:guide": "tsx src/seed-guide-saisie.ts",
+    "migrate:guide-concepts": "tsx src/migrate-guide-concepts.ts",
+    "seed:guide-v2": "tsx src/seed-guide-v2.ts",
     "fix:employes": "tsx src/fix-employe-links.ts",
     "apply:rayons": "tsx src/apply-rayons.ts",
     "db:seed-rayons": "tsx src/seed-rayons.ts",
@@ -50,6 +56,14 @@
     "verify:data": "tsx src/verify-deploy.ts --data",
     "seed:socle": "tsx src/seed-socle.ts",
     "seed:rh": "tsx src/seed-rh.ts",
-    "seed:employes": "tsx src/seed-employes-gpj.ts"
+    "seed:rh:situations": "tsx src/seed-rh-situations.ts",
+    "seed:employes": "tsx src/seed-employes-gpj.ts",
+    "import:gpj": "tsx src/import-gpj-v31.ts",
+    "migrate:matricules": "tsx src/migrate-matricules-gpj.ts",
+    "migrate:rh-status": "tsx src/migrate-rh-status-history.ts",
+    "migrate:rh-sortie": "tsx src/migrate-rh-sortie.ts",
+    "migrate:rh-modes-avances": "tsx src/migrate-rh-modes-avances.ts",
+    "migrate:rh-salary-history": "tsx src/migrate-rh-salary-history.ts",
+    "migrate:rh-snapshots": "tsx src/migrate-rh-snapshots.ts"
   }
 }

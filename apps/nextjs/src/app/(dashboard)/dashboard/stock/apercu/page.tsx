@@ -15,16 +15,19 @@ export default function StockDashboardPage() {
   const { data: dormants } = api.stock.getStocksDormants.useQuery({ jours: 90, limit: 10 });
   const { data: dlcAlertes } = api.stock.dlcAlertes.useQuery({ seuilJours: 30 });
   const { data: pretsOutils } = api.outillage.pretsEnCours.useQuery(undefined, { refetchInterval: 30_000 });
+  const { data: bureauSousSeuil } = api.outillage.bureauList.useQuery({ sousSeuilOnly: true }, { refetchInterval: 30_000 });
 
   const alertesList = (alertes ?? []) as any[];
   const huilesSousSeuil = alertesList.filter((a: any) => a.typeProduit === "CONSOMMABLE");
   const pretsList = (pretsOutils ?? []) as any[];
   const enRetard = pretsList.filter((p: any) => p.enRetard);
+  const bureauSousSeuilList = (bureauSousSeuil ?? []) as any[];
 
   // Dashboard magasinier (specs §04-1) : 4 cartes + 4 actions rapides
   const magasinCards = [
     { label: "Outils en prêt", value: pretsList.length, icon: Hammer, color: "text-warning-foreground", bg: "bg-warning/10", href: "/dashboard/stock/outillage" },
     { label: "Outils en retard", value: enRetard.length, icon: AlertTriangle, color: "text-destructive", bg: "bg-destructive/10", href: "/dashboard/stock/alertes" },
+    { label: "Bureau sous seuil", value: bureauSousSeuilList.length, icon: Store, color: "text-warning-foreground", bg: "bg-warning/10", href: "/dashboard/stock/outillage" },
     { label: "Pièces stock bas", value: alertesList.filter((a: any) => a.typeProduit !== "CONSOMMABLE").length, icon: Package, color: "text-warning-foreground", bg: "bg-warning/10", href: "/dashboard/stock/alertes" },
     { label: "Huiles sous seuil", value: huilesSousSeuil.length, icon: Droplets, color: "text-info-foreground", bg: "bg-info/10", href: "/dashboard/stock/alertes" },
   ];
@@ -32,7 +35,7 @@ export default function StockDashboardPage() {
     { label: "Nouvelle sortie d'outil", href: "/dashboard/stock/outillage", icon: HandHelping, color: "text-primary", bg: "bg-primary/10" },
     { label: "Recherche pièce", href: "/dashboard/stock/chercher-avant-commander", icon: Search, color: "text-success-foreground", bg: "bg-success/10" },
     { label: "Sortie d'huile", href: "/dashboard/stock/chercher-avant-commander", icon: Droplets, color: "text-info-foreground", bg: "bg-info/10" },
-    { label: "Nouvel enregistrement", href: "/dashboard/catalog/produits/nouveau", icon: Plus, color: "text-primary", bg: "bg-primary/10" },
+    { label: "Nouvel article", href: "/dashboard/catalog/article/nouveau", icon: Plus, color: "text-primary", bg: "bg-primary/10" },
   ];
 
   const summaryCards = [

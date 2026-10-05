@@ -5,6 +5,8 @@ import { eq, and, desc, asc, sql, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { calculerSalaireIntervalle, gainJour, tauxHoraire } from "~/server/lib/rh-posture-engine";
 import { runCalculation, moisCloture, reconstruireJournee, annulerEvenement } from "~/server/lib/rh-projection";
+import { assertEmployeEnAgence } from "~/server/lib/rh-scope";
+import { canSeeSalary as canVoirSalairesRH } from "~/server/lib/rh-secrets";
 
 /**
  * RH — POSTURE DES EMPLOYÉS EN TEMPS RÉEL.
@@ -32,7 +34,7 @@ const dateAujourdhui = () => new Date().toISOString().slice(0, 10);
 
 export const rhPostureRouter = createTRPCRouter({
   // ─── Pointage en direct (responsable) ───
-  pointer: requirePermissionProcedure("rh.utilisateur.modifier")
+  pointer: requirePermissionProcedure("rh.presence.modifier")
     .input(z.object({
       employeId: z.number().int(),
       action: z.enum(["ARRIVEE", "DEPART_PAUSE", "RETOUR_PAUSE", "MISSION_DEBUT", "MISSION_RETOUR", "DEPART"]),
@@ -48,9 +50,15 @@ export const rhPostureRouter = createTRPCRouter({
       const [emp] = await db
         .select({ id: employes.id, nom: employes.nom, prenom: employes.prenom, workCycleId: employes.workCycleId, salaireBase: employes.salaireBase, modePaie: employes.modePaie, statut: employes.statut })
         .from(employes)
-        .where(and(eq(employes.id, input.employeId), eq(employes.statut, "actif")))
+        .where(and(eq(employes.id, input.employeId), eq(employes.agenceId, ctx.user.agenceId), eq(employes.statut, "actif")))
         .limit(1);
       if (!emp) throw new TRPCError({ code: "NOT_FOUND", message: "Employé actif introuvable." });
+      if (!emp.workCycleId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `${emp.prenom} ${emp.nom} n'a pas de cycle de travail — le pointage est désactivé (affecter un cycle sur sa fiche).`,
+        });
+      }
       if (input.action === "MISSION_DEBUT" && !input.motifMission) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Le motif de mission est obligatoire." });
       }
@@ -114,11 +122,12 @@ export const rhPostureRouter = createTRPCRouter({
     }),
 
   // ─── Annulation tracée d'un événement (motif obligatoire) ───
-  annulerEvenement: requirePermissionProcedure("rh.utilisateur.modifier")
+  annulerEvenement: requirePermissionProcedure("rh.presence.modifier")
     .input(z.object({ evenementId: z.number().int(), motif: z.string().min(3).max(300) }))
     .mutation(async ({ ctx, input }) => {
       const [evt] = await db.select().from(employeePostures).where(eq(employeePostures.id, input.evenementId)).limit(1);
       if (!evt) throw new TRPCError({ code: "NOT_FOUND", message: "Événement introuvable." });
+      await assertEmployeEnAgence(evt.employeeId, ctx.user.agenceId);
       if (evt.annule) throw new TRPCError({ code: "BAD_REQUEST", message: "Cet événement est déjà annulé." });
       if (await moisCloture(ctx.user.agenceId, evt.date)) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Ce mois est clôturé — l'annulation est verrouillée." });
@@ -128,7 +137,7 @@ export const rhPostureRouter = createTRPCRouter({
     }),
 
   // ─── Correction d'heure (1 clic : invalide l'ancien + pose SAISIE_HEURE tracé) ───
-  corrigerHeure: requirePermissionProcedure("rh.utilisateur.modifier")
+  corrigerHeure: requirePermissionProcedure("rh.presence.modifier")
     .input(z.object({
       employeId: z.number().int(),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -139,6 +148,7 @@ export const rhPostureRouter = createTRPCRouter({
       if (await moisCloture(ctx.user.agenceId, input.date)) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Ce mois est clôturé — la correction est verrouillée." });
       }
+      await assertEmployeEnAgence(input.employeId, ctx.user.agenceId);
       const POSTURE_MOMENT: Record<string, string> = {
         timeIn: "EN_TRAVAIL",
         timeInBreak: "EN_PAUSE",
@@ -187,12 +197,13 @@ export const rhPostureRouter = createTRPCRouter({
     }),
 
   // ─── Annulation du pointage de toute la journée (re-pointe global) ───
-  annulerJournee: requirePermissionProcedure("rh.utilisateur.modifier")
+  annulerJournee: requirePermissionProcedure("rh.presence.modifier")
     .input(z.object({ employeId: z.number().int(), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), motif: z.string().min(3).max(300) }))
     .mutation(async ({ ctx, input }) => {
       if (await moisCloture(ctx.user.agenceId, input.date)) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Ce mois est clôturé — l'annulation est verrouillée." });
       }
+      await assertEmployeEnAgence(input.employeId, ctx.user.agenceId);
       const evts = await db
         .select({ id: employeePostures.id })
         .from(employeePostures)
@@ -210,6 +221,7 @@ export const rhPostureRouter = createTRPCRouter({
   // ─── Vue temps réel : tous les employés, posture + gain du jour ───
   now: rhProcedure.query(async ({ ctx }) => {
     const today = dateAujourdhui();
+    const salaireOk = await canVoirSalairesRH(ctx);
     const emps = await db
       .select({
         id: employes.id, matricule: employes.matricule, nom: employes.nom, prenom: employes.prenom,
@@ -217,7 +229,7 @@ export const rhPostureRouter = createTRPCRouter({
         modePaie: employes.modePaie, workCycleId: employes.workCycleId,
       })
       .from(employes)
-      .where(eq(employes.statut, "actif"))
+      .where(and(eq(employes.agenceId, ctx.user.agenceId), eq(employes.statut, "actif")))
       .orderBy(employes.nom);
 
     const [settings] = await db.select().from(hrAttendanceSettings).where(eq(hrAttendanceSettings.agenceId, ctx.user.agenceId)).limit(1);
@@ -271,14 +283,16 @@ export const rhPostureRouter = createTRPCRouter({
         nom: `${e.prenom ?? ""} ${e.nom}`.trim(),
         fonction: e.fonction ?? null,
         modePaie: e.modePaie,
-        salaireBase: Number(e.salaireBase ?? 0),
-        tauxHoraire: rate,
+        // RPT-05 : `tauxHoraire` est un salaire horaire DERIVE de salaireBase :
+        // le multiplier par les heures du mois redonne le salaire mensuel, donc
+        // le divulguer revient a divulguer le salaire. Meme regle pour `gainJour`.
+        ...(salaireOk ? { tauxHoraire: rate } : {}),
         posture: evt?.posture ?? "ABSENT",
         action: evt?.action ?? null,
         motifMission: evt?.motifMission ?? null,
         reference: evt?.reference ?? null,
         depuis: evt?.horodatage ?? null,
-        gainJour: gain,
+        ...(salaireOk ? { gainJour: gain } : {}),
         pointage: entry
           ? {
               timeIn: entry.timeIn,
@@ -303,8 +317,9 @@ export const rhPostureRouter = createTRPCRouter({
   // ─── Timeline d'une journée d'un employé ───
   journee: rhProcedure
     .input(z.object({ employeId: z.number().int(), date: z.string().optional() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const d = input.date ?? dateAujourdhui();
+      await assertEmployeEnAgence(input.employeId, ctx.user.agenceId);
       const [entry] = await db.select().from(attendanceEntries).where(and(eq(attendanceEntries.employeeId, input.employeId), eq(attendanceEntries.date, d))).limit(1);
       const [calc] = await db.select().from(attendanceCalculations).where(and(eq(attendanceCalculations.employeeId, input.employeId), eq(attendanceCalculations.date, d))).limit(1);
       const events = await db.select().from(employeePostures).where(and(eq(employeePostures.employeeId, input.employeId), eq(employeePostures.date, d))).orderBy(desc(employeePostures.horodatage));
@@ -317,13 +332,17 @@ export const rhPostureRouter = createTRPCRouter({
     }),
 
   // ─── Salaire sur intervalle (base présences) ───
-  salaireIntervalle: rhProcedure
+  // RPT-05 : cet endpoint EST un endpoint salarial. Masquer `salaireBase` et
+  // `resultat` ne laisserait qu'une coquille inutile et un calcul sur des
+  // montants non autorises ; on exige donc la competence, et on ne revele l'existence
+  // d'aucun employe pour quelqu'un qui n'a pas le droit (NOT_FOUND > FORBIDDEN).
+  salaireIntervalle: requirePermissionProcedure("rh.salaire.consulter")
     .input(z.object({ employeId: z.number().int(), dateDebut: z.string(), dateFin: z.string() }))
     .query(async ({ ctx, input }) => {
       const [emp] = await db
         .select({ id: employes.id, salaireBase: employes.salaireBase, modePaie: employes.modePaie, nom: employes.nom, prenom: employes.prenom })
         .from(employes)
-        .where(eq(employes.id, input.employeId))
+        .where(and(eq(employes.id, input.employeId), eq(employes.agenceId, ctx.user.agenceId)))
         .limit(1);
       if (!emp) throw new TRPCError({ code: "NOT_FOUND", message: "Employé introuvable." });
       const [general] = await db.select().from(hrGeneralSettings).where(eq(hrGeneralSettings.agenceId, ctx.user.agenceId)).limit(1);
@@ -385,8 +404,9 @@ export const rhPostureRouter = createTRPCRouter({
           horodatage: employeePostures.horodatage,
         })
         .from(employeePostures)
-        .leftJoin(employes, eq(employeePostures.employeeId, employes.id))
+        .innerJoin(employes, eq(employeePostures.employeeId, employes.id))
         .where(and(
+          eq(employes.agenceId, ctx.user.agenceId),
           input?.employeId ? eq(employeePostures.employeeId, input.employeId) : undefined,
           input?.dateDebut ? sql`${employeePostures.date} >= ${input.dateDebut}` : undefined,
         ))

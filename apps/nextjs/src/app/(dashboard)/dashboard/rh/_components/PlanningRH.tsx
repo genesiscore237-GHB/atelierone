@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useClientPaging, PaginationBar } from "./ClientPagination";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
-import { CalendarRange, ChevronLeft, ChevronRight, Loader2, Save, Sparkles } from "lucide-react";
+import { CalendarRange, ChevronLeft, ChevronRight, History, Loader2, Save, Sparkles } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { AFFECTATIONS_PLANNING } from "~/lib/rh-planning-constants";
+import { usePermissions } from "~/hooks/usePermissions";
+import HistoriqueDialog from "./HistoriqueDialog";
 
 const JOURS = [
   { idx: 1, label: "Lundi" },
@@ -35,9 +38,12 @@ const COLORS: Record<string, string> = Object.fromEntries(AFFECTATIONS_PLANNING.
 
 export function PlanningPageClient() {
   const utils = api.useUtils();
+  const { hasPermission } = usePermissions();
   const [monday, setMonday] = useState(() => mondayOf(new Date()));
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState<Record<string, string>>({}); // key = employeId:date
+  const [histOpen, setHistOpen] = useState(false);
+  const { data: historiques, isLoading: histLoading, isError: histError, refetch: histRefetch } = api.rhPlanning.listWeekSnapshots.useQuery(undefined, { enabled: histOpen });
 
   const from = fmtISO(monday);
   const to = fmtISO(new Date(monday.getTime() + 5 * 86400000)); // lundi → samedi
@@ -72,6 +78,8 @@ export function PlanningPageClient() {
     const q = search.toLowerCase().replace(/[àâä]/g, "a").replace(/[éèêë]/g, "e").replace(/[îï]/g, "i").replace(/[ôö]/g, "o").replace(/[ùûü]/g, "u").replace(/ç/g, "c");
     return emps.filter((e) => `${e.prenom} ${e.nom} ${e.matricule} ${e.fonction}`.toLowerCase().includes(q));
   }, [emps, search]);
+
+  const { page, setPage, pageItems, total: listTotal, totalPages } = useClientPaging(filtered, 25);
 
   const semaineDates = JOURS.map((j) => fmtISO(new Date(monday.getTime() + (j.idx - 1) * 86400000)));
 
@@ -149,6 +157,11 @@ export function PlanningPageClient() {
         <Button variant="outline" onClick={reprendre}>
           <Sparkles size={15} /> Reprendre la semaine précédente
         </Button>
+        {hasPermission("rh.presence.modifier") && (
+          <Button variant="outline" onClick={() => setHistOpen(true)}>
+            <History size={15} /> Historique
+          </Button>
+        )}
         <Button onClick={saveAll} disabled={save.isPending} className="ml-auto">
           {save.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save size={15} />}
           Enregistrer la semaine
@@ -177,7 +190,7 @@ export function PlanningPageClient() {
             ) : filtered.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">Aucun employé actif.</td></tr>
             ) : (
-              filtered.map((e) => (
+              pageItems.map((e) => (
                 <tr key={e.id} className="text-sm text-foreground">
                   <td className="sticky left-0 bg-background px-4 py-1.5">
                     <p className="font-medium">{e.prenom} {e.nom}</p>
@@ -212,9 +225,29 @@ export function PlanningPageClient() {
           </tbody>
         </table>
       </div>
+      <PaginationBar page={page} totalPages={totalPages} total={listTotal} onPage={setPage} label="employé(s)" empty={!listTotal} />
       <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <CalendarRange size={13} /> Une cellule rouge signale un conflit avec un congé approuvé. La saisie n&apos;est effective qu&apos;après « Enregistrer la semaine ».
       </p>
+
+      <HistoriqueDialog
+        open={histOpen}
+        onClose={() => setHistOpen(false)}
+        title="Historique du planning hebdomadaire"
+        emptyLabel="Aucune réécriture archivée pour le moment."
+        rows={(historiques ?? []).map((h: any) => ({
+          id: h.id,
+          raison: h.raison,
+          creatorPrenom: h.creatorPrenom,
+          creatorName: h.creatorName,
+          createdBy: h.createdBy,
+          createdAt: h.createdAt,
+          detail: { employes: h.employeIdsJson, dates: h.datesJson, lignes: h.rowsJson },
+        }))}
+        isLoading={histLoading}
+        isError={histError}
+        onRetry={() => histRefetch()}
+      />
     </div>
   );
 }

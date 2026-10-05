@@ -3,6 +3,7 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { api } from "~/trpc/react";
 import { motion } from "framer-motion";
+import { toast } from "sonner";
 import {
   BarChart3, Calendar, ChevronDown, Download, FileText, FileSpreadsheet, FileBarChart,
   FlaskConical, Loader2, RefreshCcw, Save, Search, Star, Trash2, X, Sparkles,
@@ -382,7 +383,7 @@ export default function RapportsPage() {
       doc.save(`${base}.pdf`);
     } catch (e) {
       console.error("Export failed:", e);
-      alert("Échec de l'export. Réessayez.");
+      toast.error("Échec de l'export. Réessayez.");
     } finally {
       setExporting(null);
     }

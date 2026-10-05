@@ -85,11 +85,11 @@ describe("Parc V2 — alertes automatiques (seuils paramétrables)", () => {
 });
 
 describe("Parc V2 — transitions de statut (règles strictes)", () => {
-  it("cycle nominal : diagnostic → cours → qualité → prêt → livré", () => {
+  it("cycle nominal : diagnostic → cours → qualité → prêt (sortie uniquement par restitution)", () => {
     expect(transitionStatutAtelierValide("EN_ATTENTE_DIAGNOSTIC", "EN_COURS").ok).toBe(true);
     expect(transitionStatutAtelierValide("EN_COURS", "CONTROLE_QUALITE").ok).toBe(true);
     expect(transitionStatutAtelierValide("CONTROLE_QUALITE", "PRET_A_LIVRER").ok).toBe(true);
-    expect(transitionStatutAtelierValide("PRET_A_LIVRER", "LIVRE").ok).toBe(true);
+    expect(transitionStatutAtelierValide("PRET_A_LIVRER", "LIVRE").ok).toBe(false);
   });
   it("BLOQUÉ exige une raison ; ANNULE exige un motif", () => {
     expect(transitionStatutAtelierValide("EN_COURS", "BLOQUE").ok).toBe(false);

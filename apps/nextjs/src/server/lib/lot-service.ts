@@ -1,5 +1,5 @@
 import { db, stocksLots, lots, mouvementsStock, produits } from "@atelierone/db";
-import { and, asc, desc, eq, gte, isNotNull, isNull, lt, sum } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lt, sql, sum } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 
 type Tx = Parameters<Parameters<(typeof db)["transaction"]>[0]>[0];
@@ -33,6 +33,10 @@ export async function creerLotEtStock(
     numeroLot?: string;
     reference: string;
     datePeremption?: Date | null;
+    dateFabrication?: Date | null;
+    provenance?: string | null;
+    qualite?: string | null;
+    fabricant?: string | null;
   },
 ): Promise<{ lotId: number; numeroLot: string }> {
   const numeroLot = params.numeroLot || `LOT-${params.reference}`;
@@ -52,6 +56,10 @@ export async function creerLotEtStock(
       quantiteInitiale: Math.round(params.quantite),
       coutUnitaire: String(params.coutUnitaire),
       datePeremption: params.datePeremption || null,
+      dateFabrication: params.dateFabrication || null,
+      provenance: params.provenance || null,
+      qualite: params.qualite || null,
+      fabricant: params.fabricant || null,
       dateEntree: new Date(),
       isActive: true,
     } as any).returning() as any[];
@@ -81,7 +89,8 @@ export async function creerLotEtStock(
   return { lotId, numeroLot };
 }
 
-// I1.4 — Sortie FIFO par lot (lots les plus anciens d'abord). Insère un mouvement
+// I1.4 — Sortie FEFO (plus proche péremption d'abord) puis FIFO (date d'entrée).
+// Les lots sans DLC partent en dernier (COALESCE lointain). Insère un mouvement
 // par lot consommé (avec lotId + coût unitaire du lot). Retourne [] si aucun lot
 // ne porte de stock (comportement legacy conservé chez l'appelant).
 export async function sortirStockFIFO(
@@ -106,6 +115,7 @@ export async function sortirStockFIFO(
     quantite: stocksLots.quantite,
     coutUnitaire: lots.coutUnitaire,
     dateEntree: lots.dateEntree,
+    datePeremption: lots.datePeremption,
   })
     .from(stocksLots)
     .innerJoin(lots, eq(lots.id, stocksLots.lotId))
@@ -113,7 +123,11 @@ export async function sortirStockFIFO(
       eq(stocksLots.produitId, params.produitId),
       eq(stocksLots.agenceId, params.agenceId),
     ))
-    .orderBy(asc(lots.dateEntree), asc(lots.id))
+    .orderBy(
+      sql`COALESCE(${lots.datePeremption}, '9999-12-31'::date) ASC`,
+      asc(lots.dateEntree),
+      asc(lots.id),
+    )
     .for("update") as any[];
 
   let reste = params.quantite;

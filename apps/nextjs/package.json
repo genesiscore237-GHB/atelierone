@@ -23,6 +23,7 @@
     "@atelierone/auth": "workspace:*",
     "@atelierone/db": "workspace:*",
     "@atelierone/design-system": "workspace:*",
+    "@atelierone/geo": "workspace:*",
     "@atelierone/ui": "workspace:*",
     "@atelierone/validators": "workspace:*",
     "@t3-oss/env-nextjs": "^0.12.0",

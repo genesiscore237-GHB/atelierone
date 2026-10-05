@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import {
@@ -16,6 +17,8 @@ import {
   Wallet,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
+import { usePermissions } from "~/hooks/usePermissions";
+import { downloadCsv } from "./csv-download";
 
 const TABS = [
   { id: "dashboard", label: "Tableau de bord", icon: BarChart3 },
@@ -23,7 +26,7 @@ const TABS = [
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
-const fmtFCFA = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n));
+const fmtXOF = (n: number | null) => (n === null ? "—" : new Intl.NumberFormat("fr-FR").format(Math.round(n)));
 
 export default function DashboardRH() {
   const [tab, setTab] = useState<TabId>("dashboard");
@@ -83,12 +86,12 @@ function KpisSection() {
   const a = data!.alertes;
 
   const cards = [
-    { label: "Effectif total", value: k.effectif, sub: `${k.actifs} actifs · ${k.inactifs} inactifs`, icon: Users, cls: "text-primary bg-primary/10" },
-    { label: "CDI", value: k.effectifCDI, sub: "contrats à durée indéterminée", icon: FileCheck2, cls: "text-success-foreground bg-success/10" },
-    { label: "Apprentissage", value: k.effectifApprentissage, sub: "apprentis en formation", icon: GraduationCap, cls: "text-info-foreground bg-info/10" },
-    { label: "Taux de présence", value: `${k.presence} %`, sub: `${k.presenceDays} j présents / ${k.workingDays} j ouvrés`, icon: Timer, cls: "text-success-foreground bg-success/10" },
-    { label: "Masse salariale (base)", value: `${fmtFCFA(k.masseSalariale)} F`, sub: "somme des salaires de base", icon: Wallet, cls: "text-info-foreground bg-info/10" },
-    { label: "Absences du mois", value: k.absentTotal, sub: "jours absents", icon: CalendarClock, cls: "text-destructive bg-destructive/10" },
+    { href: "/dashboard/rh/employes", label: "Effectif total", value: k.effectif, sub: `${k.actifs} actifs · ${k.inactifs} inactifs`, icon: Users, cls: "text-primary bg-primary/10" },
+    { href: "/dashboard/rh/employes?type=permanent", label: "CDI", value: k.effectifCDI, sub: "contrats à durée indéterminée", icon: FileCheck2, cls: "text-success-foreground bg-success/10" },
+    { href: "/dashboard/rh/employes?type=apprenti", label: "Apprentissage", value: k.effectifApprentissage, sub: "apprentis en formation", icon: GraduationCap, cls: "text-info-foreground bg-info/10" },
+    { href: "/dashboard/rh/presences", label: "Taux de présence", value: `${k.presence} %`, sub: `${k.presenceDays} j présents / ${k.workingDays} j ouvrés`, icon: Timer, cls: "text-success-foreground bg-success/10" },
+    { href: "/dashboard/rh/paie", label: "Masse salariale (base)", value: `${fmtXOF(k.masseSalariale)} XOF`, sub: "somme des salaires de base", icon: Wallet, cls: "text-info-foreground bg-info/10" },
+    { href: "/dashboard/rh/absences", label: "Absences du mois", value: k.absentTotal, sub: "jours absents", icon: CalendarClock, cls: "text-destructive bg-destructive/10" },
   ];
 
   const totalAlertes = a.contratsExpirants + a.docsExpires + a.soldesNegatifs;
@@ -97,7 +100,12 @@ function KpisSection() {
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
         {cards.map((c) => (
-          <div key={c.label} className="rounded-xl border border-border bg-card p-4">
+          <Link
+            key={c.label}
+            href={c.href}
+            title={`Ouvrir ${c.label}`}
+            className="block rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/40 hover:bg-accent/20"
+          >
             <div className="flex items-center gap-3">
               <div className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${c.cls}`}>
                 <c.icon size={20} />
@@ -108,7 +116,7 @@ function KpisSection() {
                 <p className="truncate text-[11px] text-muted-foreground">{c.sub}</p>
               </div>
             </div>
-          </div>
+          </Link>
         ))}
       </div>
 
@@ -189,6 +197,7 @@ function KpisSection() {
 // ─── 2. Centre de rapports ───
 function RapportsSection() {
   const utils = api.useUtils();
+  const { hasPermission } = usePermissions();
   const [month, setMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`);
 
   const exportEmployes = api.rhDashboard.exportEmployes.useQuery(undefined, { enabled: false });
@@ -199,28 +208,24 @@ function RapportsSection() {
   const exportMatrice = api.rhDashboard.exportMatrice.useQuery(undefined, { enabled: false });
   const exportDisciplinaire = api.rhDashboard.exportDisciplinaire.useQuery(undefined, { enabled: false });
 
-  const download = (csv: string | undefined, filename: string) => {
-    if (!csv) return;
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(`${filename} téléchargé`);
-  };
-
   const run = async (q: any, filename: string) => {
-    const res = await q.refetch();
-    download(res.data as string, filename);
+    try {
+      const res = await q.refetch();
+      if (res.error) {
+        toast.error((res.error as any)?.message ?? "Export refusé");
+        return;
+      }
+      downloadCsv(res.data as string, filename);
+    } catch {
+      toast.error("Export impossible");
+    }
   };
 
   const rapports = [
-    { label: "Liste des employés", desc: "Matricule, nom, fonction, département, statut, salaire", icon: Users, action: () => run(exportEmployes, "employes.csv") },
-    { label: "Présences mensuelles", desc: `Résumés RH-02 (jours présents/absents/congé, heures) — ${month}`, icon: CalendarClock, action: () => run(exportPresences, `presences-${month}.csv`) },
-    { label: "Matrice de compétences", desc: "Niveaux actuels vs requis par poste (RH-06)", icon: GraduationCap, action: () => run(exportMatrice, "matrice-competences.csv") },
-    { label: "Registre disciplinaire", desc: "Sanctions et décisions (accès restreint RH/Direction)", icon: FileText, action: () => run(exportDisciplinaire, "registre-disciplinaire.csv") },
+    { label: "Liste des employés", desc: "Matricule, nom, fonction, département, statut, salaire", icon: Users, perm: "rh.employe.consulter" as const, action: () => run(exportEmployes, "employes.csv") },
+    { label: "Présences mensuelles", desc: `Résumés RH-02 (jours présents/absents/congé, heures) — ${month}`, icon: CalendarClock, perm: "rh.presence.consulter" as const, action: () => run(exportPresences, `presences-${month}.csv`) },
+    { label: "Matrice de compétences", desc: "Niveaux actuels vs requis par poste (RH-06)", icon: GraduationCap, perm: "rh.competence.consulter" as const, action: () => run(exportMatrice, "matrice-competences.csv") },
+    { label: "Registre disciplinaire", desc: "Sanctions et décisions (accès restreint RH/Direction)", icon: FileText, perm: "rh.discipline.consulter" as const, action: () => run(exportDisciplinaire, "registre-disciplinaire.csv") },
   ];
 
   return (
@@ -240,7 +245,7 @@ function RapportsSection() {
               </div>
               <p className="mt-1 text-xs text-muted-foreground">{r.desc}</p>
             </div>
-            <Button variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={r.action}>
+            <Button variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={r.action} disabled={!hasPermission(r.perm)}>
               <Download size={13} /> CSV
             </Button>
           </div>

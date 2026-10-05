@@ -1,14 +1,24 @@
 import { z } from "zod";
-import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
+import {
+  createTRPCRouter,
+  protectedProcedure,
+  requirePermissionProcedure,
+} from "~/server/api/trpc";
 import { db } from "~/server/db";
 import { profiles } from "~/server/db/schema";
 import { eq } from "drizzle-orm";
 import { ExportService } from "~/server/lib/export-service";
+import { TRPCError } from "@trpc/server";
 
 // Simple in-memory queue for background exports
 interface ExportJob {
   id: string;
   options: any;
+  // RPT-05 : proprietaire du job. Sans ce champ, `export_...` etait devinable et
+  // n'importe quel utilisateur authentifie de n'importe quelle agence pouvait
+  // telecharger les donnees d'autrui : le tenant etait rompu sur ces deux
+  // procedures, pas seulement l'ownership.
+  userId: string;
   status: "pending" | "processing" | "completed" | "failed";
   result?: Buffer;
   error?: string;
@@ -16,10 +26,31 @@ interface ExportJob {
   completedAt?: Date;
 }
 
+/**
+ * Recuperation d'un job avec controle d'ownership ET de tenant.
+ *
+ * NOT_FOUND (et non FORBIDDEN) quand le job appartient a quelqu'un d'autre :
+ * repondre "interdit" confirmerait l'existence du job et son identifiant.
+ */
+function exigerJobProprietaire(jobId: string, ctx: { user: { id: string; agenceId: number | null } }): ExportJob {
+  const job = exportQueue.get(jobId);
+  if (
+    !job ||
+    job.userId !== ctx.user.id ||
+    job.options?.organizationId !== ctx.user.agenceId
+  ) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Export job not found" });
+  }
+  return job;
+}
+
 const exportQueue: Map<string, ExportJob> = new Map();
 
 export const exportRouter = createTRPCRouter({
-  requestExport: protectedProcedure
+  // RPT-05 : `requestExport` n'exigeait AUCUNE permission — n'importe quel profil
+  // authentifie declenchait des exports ventes/stock/analytics. Le socle
+  // definit deja `export.consulter`.
+  requestExport: requirePermissionProcedure("export.consulter")
     .input(z.object({
       type: z.enum(["sales", "inventory", "analytics"]),
       format: z.enum(["csv", "pdf", "xlsx"]),
@@ -45,6 +76,7 @@ export const exportRouter = createTRPCRouter({
           ...input,
           organizationId: profile[0]!.agenceId,
         },
+        userId: String(ctx.user.id),
         status: "pending",
         createdAt: new Date(),
       };
@@ -59,11 +91,8 @@ export const exportRouter = createTRPCRouter({
 
   getExportStatus: protectedProcedure
     .input(z.object({ jobId: z.string() }))
-    .query(({ input }) => {
-      const job = exportQueue.get(input.jobId);
-      if (!job) {
-        throw new Error("Export job not found");
-      }
+    .query(({ ctx, input }) => {
+      const job = exigerJobProprietaire(input.jobId, ctx);
 
       return {
         jobId: job.id,
@@ -76,11 +105,8 @@ export const exportRouter = createTRPCRouter({
 
   downloadExport: protectedProcedure
     .input(z.object({ jobId: z.string() }))
-    .query(({ input }) => {
-      const job = exportQueue.get(input.jobId);
-      if (!job) {
-        throw new Error("Export job not found");
-      }
+    .query(({ ctx, input }) => {
+      const job = exigerJobProprietaire(input.jobId, ctx);
 
       if (job.status !== "completed") {
         throw new Error("Export not ready yet");

@@ -41,12 +41,13 @@ const SANCTION_TYPES = [
 
 // Fériés camerounais à date fixe (récurrents chaque année)
 const PUBLIC_HOLIDAYS = [
+  // Format "MM-JJ" explicite (jour férié du Cameroun).
   { date: "01-01", name: "Nouvel An" },
   { date: "11-02", name: "Fête de la Jeunesse" },
-  { date: "01-05", name: "Fête du Travail" },
-  { date: "20-05", name: "Fête Nationale" },
-  { date: "15-08", name: "Assomption" },
-  { date: "25-12", name: "Noël" },
+  { date: "05-01", name: "Fête du Travail" },
+  { date: "05-20", name: "Fête Nationale" },
+  { date: "08-15", name: "Assomption" },
+  { date: "12-25", name: "Noël" },
 ];
 
 const WEEK_SCHEDULES = [
@@ -285,7 +286,13 @@ async function main() {
     // 5. Jours fériés (récurrents annuels, année courante)
     const year = new Date().getFullYear();
     for (const h of PUBLIC_HOLIDAYS) {
-      const fullDate = `${year}-${h.date}`;
+      // `h.date` est au format "MM-JJ" (ordre explicite) : la concaténation
+      // `${year}-${h.date}` produisait "2026-20-05", une date inexistante (RPT-02).
+      const [mm, jj] = h.date.split("-");
+      const fullDate = `${year}-${mm}-${jj}`;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fullDate) || Number.isNaN(Date.parse(`${fullDate}T00:00:00Z`))) {
+        throw new Error(`Jour férié invalide : "${h.date}" (${h.name}) -> ${fullDate}`);
+      }
       const [existing] = await db
         .select({ id: schema.hrPublicHolidays.id })
         .from(schema.hrPublicHolidays)

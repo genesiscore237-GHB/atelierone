@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Home, Gauge, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
@@ -8,6 +8,7 @@ import { ThemeToggle } from "@atelierone/ui";
 import { AppSidebar } from "~/components/layout/AppSidebar";
 import { SaasStatusBar } from "~/components/layout/SaasStatusBar";
 import { ModuleGuard } from "~/hooks/usePermissions";
+import { GlobalSearch } from "~/components/layout/GlobalSearch";
 import { MobileBottomNav } from "~/app/(dashboard)/dashboard/_components/MobileBottomNav";
 import { HelpButton } from "~/components/help/HelpButton";
 
@@ -25,10 +26,12 @@ const SIDEBAR_KEY = "ao.sidebar.collapsed";
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return localStorage.getItem(SIDEBAR_KEY) === "1";
-  });
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setCollapsed(localStorage.getItem(SIDEBAR_KEY) === "1");
+  }, []);
 
   const isBureau = pathname === "/dashboard" || pathname === "/dashboard/";
   const isPilotage = pathname.startsWith("/dashboard/pilotage");
@@ -108,6 +111,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
           <div className="flex items-center gap-1">
+            <GlobalSearch />
             <HelpButton />
             <ThemeToggle />
           </div>

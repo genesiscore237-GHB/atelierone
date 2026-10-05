@@ -13,6 +13,7 @@ import {
 } from "@atelierone/ui";
 import { RH_HELP_FICHES, findHelpFicheByRoute, searchHelpFiches, type HelpFiche } from "~/lib/help/rh-help";
 import { STOCK_HELP_FICHES } from "~/lib/help/stock-help";
+import { AideSaisieInline } from "~/components/catalogue/aide/AideSaisieInline";
 
 const PRIORITE_BADGE: Record<string, string> = {
   P0: "bg-destructive/10 text-destructive",
@@ -21,10 +22,10 @@ const PRIORITE_BADGE: Record<string, string> = {
 };
 
 /** Registres d'aide par domaine (extensible) */
-const HELP_REGISTRES: Array<{ prefix: string; titre: string; centreHref: string; fiches: HelpFiche[] }> = [
+const HELP_REGISTRES: Array<{ prefix: string; titre: string; centreHref: string; fiches: HelpFiche[]; intelligent?: boolean }> = [
   { prefix: "/dashboard/rh", titre: "Personnel (RH)", centreHref: "/dashboard/rh/aide", fiches: RH_HELP_FICHES },
   { prefix: "/dashboard/stock", titre: "Stock & Magasin", centreHref: "/dashboard/stock/aide", fiches: STOCK_HELP_FICHES },
-  { prefix: "/dashboard/catalog", titre: "Stock & Magasin", centreHref: "/dashboard/stock/aide", fiches: STOCK_HELP_FICHES },
+  { prefix: "/dashboard/catalog", titre: "Catalogue", centreHref: "/dashboard/catalog/aide", fiches: STOCK_HELP_FICHES, intelligent: true },
 ];
 
 /**
@@ -66,7 +67,9 @@ export function HelpButton() {
         </SheetHeader>
 
         <div className="space-y-4 p-4">
-          {current ? (
+          {registre.intelligent ? (
+            <AideSaisieInline />
+          ) : current ? (
             <FicheDetail fiche={current} compact />
           ) : (
             <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">

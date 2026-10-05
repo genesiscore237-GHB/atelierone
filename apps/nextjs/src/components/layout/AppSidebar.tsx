@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ChevronDown, Home, LayoutGrid, LogOut, X } from "lucide-react";
 import { signOut } from "next-auth/react";
-import { DOMAINS } from "~/lib/app-nav";
+import { DOMAINS, moduleVisible } from "~/lib/app-nav";
 import { usePermissions } from "~/hooks/usePermissions";
 
 interface AppSidebarProps {
@@ -25,13 +25,16 @@ export function AppSidebar({ variant = "desktop", onNavigate }: AppSidebarProps)
 
   const [openDomains, setOpenDomains] = useState<Set<string>>(() => {
     const seg = pathname.split("/")[2];
-    return new Set(DOMAINS.filter((d) => d.id === seg).map((d) => d.id));
+    return new Set(DOMAINS.filter((d) => d.href.split("/")[2] === seg).map((d) => d.id));
   });
 
   useEffect(() => {
     const seg = pathname.split("/")[2];
     if (seg) {
-      setOpenDomains((prev) => new Set(prev).add(seg));
+      const matching = new Set(DOMAINS.filter((d) => d.href.split("/")[2] === seg).map((d) => d.id));
+      if (matching.size > 0) {
+        setOpenDomains((prev) => new Set([...prev, ...matching]));
+      }
     }
   }, [pathname]);
 
@@ -126,7 +129,7 @@ export function AppSidebar({ variant = "desktop", onNavigate }: AppSidebarProps)
             const isOpen = openDomains.has(domain.id);
             const active = isDomainActive(domain.href);
             const visibleModules = domain.modules.filter((m) =>
-              canAccessModule(m.moduleId ?? domain.id)
+              canAccessModule(m.moduleId ?? domain.id) && moduleVisible(m.status)
             );
             return (
               <div key={domain.id}>
@@ -152,9 +155,9 @@ export function AppSidebar({ variant = "desktop", onNavigate }: AppSidebarProps)
                 {isOpen && (
                   <div className="mt-0.5 space-y-0.5">
                     <Link
-                      href={domain.href}
+                      href={domain.homeHref ?? domain.href}
                       onClick={onNavigate}
-                      className={linkClasses(pathname === domain.href, true)}
+                      className={linkClasses(pathname === (domain.homeHref ?? domain.href), true)}
                     >
                       <LayoutGrid size={14} className="shrink-0 text-muted-foreground" />
                       Vue d&apos;ensemble
@@ -170,6 +173,11 @@ export function AppSidebar({ variant = "desktop", onNavigate }: AppSidebarProps)
                         >
                           <m.icon size={14} className="shrink-0 text-muted-foreground" />
                           <span className="truncate">{m.label}</span>
+                          {m.status === "enConstruction" && (
+                            <span className="ml-1 rounded bg-amber-500/20 px-1 py-0.5 text-[9px] font-bold text-amber-600">
+                              DEV
+                            </span>
+                          )}
                         </Link>
                       );
                     })}

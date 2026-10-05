@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "es2022",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": false,
@@ -14,16 +18,39 @@
     "jsx": "preserve",
     "incremental": true,
     "noUncheckedIndexedAccess": true,
-    "plugins": [{ "name": "next" }],
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
     "paths": {
-      "@/*": ["./src/*"],
-      "~/*": ["./src/*"],
-      "@atelierone/ui/*": ["../../packages/ui/src/*"],
-      "@atelierone/auth/*": ["../../packages/auth/src/*"],
-      "@atelierone/db/*": ["../../packages/db/src/*"],
-      "@atelierone/design-system/*": ["../../packages/design-system/src/*"]
+      "@/*": [
+        "./src/*"
+      ],
+      "~/*": [
+        "./src/*"
+      ],
+      "@atelierone/ui/*": [
+        "../../packages/ui/src/*"
+      ],
+      "@atelierone/auth/*": [
+        "../../packages/auth/src/*"
+      ],
+      "@atelierone/db/*": [
+        "../../packages/db/src/*"
+      ],
+      "@atelierone/design-system/*": [
+        "../../packages/design-system/src/*"
+      ]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+"include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    "next-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }

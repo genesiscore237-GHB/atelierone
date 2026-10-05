@@ -12,7 +12,7 @@ export function PlanningAtelier() {
   const { hasPermission } = usePermissions();
   const utils = api.useUtils();
   const { data, isLoading } = api.or.getPlanning.useQuery();
-  const { data: techniciens } = api.rh.list.useQuery({ limit: 100, statut: "actif" });
+  const { data: techniciens } = api.rh.roster.useQuery({ statut: "actif" });
   const [selTech, setSelTech] = useState<Record<number, number>>({});
 
   const assigner = api.or.assignerTechnicien.useMutation({
@@ -21,7 +21,7 @@ export function PlanningAtelier() {
   });
 
   const canModifier = hasPermission("or.modifier");
-  const listTech = ((techniciens?.employees ?? []) as any[]).filter((e) => e.statut === "actif");
+  const listTech = ((techniciens ?? []) as any[]).filter((e) => e.statut === "actif");
   const planning = (data ?? { parTechnicien: [], nonAssignes: [], totalParc: 0 }) as any;
 
   return (

@@ -14,5 +14,9 @@ export const lots = pgTable("lots", {
   dateFabrication: date("date_fabrication"),
   datePeremption: date("date_peremption"),
   dateEntree: timestamp("date_entree").defaultNow(),
+  // Traçabilité lot (specs garage) : provenance / qualité / fabricant
+  provenance: varchar("provenance", { length: 200 }),
+  qualite: varchar("qualite", { length: 80 }),
+  fabricant: varchar("fabricant", { length: 120 }),
   isActive: boolean("is_active").default(true),
 });

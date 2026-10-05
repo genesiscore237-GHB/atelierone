@@ -12,8 +12,8 @@ import { Input } from "~/components/ui/input";
  * Masquée quand le mode SaaS est inactif (LICENCE_MODE != on).
  */
 export function SaasStatusBar() {
-  const { data: licence, refetch: refetchLicence } = api.licence.etat.useQuery(undefined, { refetchInterval: 60_000 });
-  const { data: sync } = api.sync.etat.useQuery(undefined, { refetchInterval: 60_000 });
+  const { data: licence, refetch: refetchLicence } = api.licence.etat.useQuery(undefined, { refetchInterval: 60_000, staleTime: 5 * 60_000 });
+  const { data: sync } = api.sync.etat.useQuery(undefined, { refetchInterval: 60_000, staleTime: 5 * 60_000 });
   const renouveler = api.licence.renouveler.useMutation({
     onSuccess: () => { toast.success("Licence renouvelée"); refetchLicence(); },
     onError: (e) => toast.error(e.message),

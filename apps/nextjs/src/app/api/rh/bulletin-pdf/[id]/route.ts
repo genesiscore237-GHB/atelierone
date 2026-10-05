@@ -12,7 +12,7 @@ import { jsPDF } from "jspdf";
 
 export const dynamic = "force-dynamic";
 
-const fmtFCFA = (n: number | string | null | undefined) =>
+const fmtXOF = (n: number | string | null | undefined) =>
   new Intl.NumberFormat("fr-FR").format(Number(n ?? 0));
 
 /** RH-04 — PDF du bulletin de paie (modèle camerounais) */
@@ -154,13 +154,13 @@ export async function GET(
   doc.line(14, y - 3, right, y - 3);
   doc.setFont("helvetica", "bold");
   doc.text("Désignation", 14, y);
-  doc.text("Montant (FCFA)", right, y, { align: "right" });
+  doc.text("Montant (XOF)", right, y, { align: "right" });
   doc.line(14, y + 1, right, y + 1);
   y += 8;
   doc.setFont("helvetica", "normal");
 
   for (const line of lines) {
-    const amount = line.direction === "retenue" ? `-${fmtFCFA(line.amount)}` : fmtFCFA(line.amount);
+    const amount = line.direction === "retenue" ? `-${fmtXOF(line.amount)}` : fmtXOF(line.amount);
     doc.text(line.label, 14, y);
     doc.text(amount, right, y, { align: "right" });
     y += 6;
@@ -176,30 +176,30 @@ export async function GET(
   y += 8;
   doc.setFont("helvetica", "bold");
   doc.text("Salaire brut", 14, y);
-  doc.text(fmtFCFA(e.totalEarnings), right, y, { align: "right" });
+  doc.text(fmtXOF(e.totalEarnings), right, y, { align: "right" });
   y += 6;
   doc.setFont("helvetica", "normal");
   doc.text("Cotisations salariales (CNPS 4,5 %)", 14, y);
-  doc.text(`-${fmtFCFA(e.cnpsEmployee)}`, right, y, { align: "right" });
+  doc.text(`-${fmtXOF(e.cnpsEmployee)}`, right, y, { align: "right" });
   y += 6;
   doc.setFont("helvetica", "bold");
   doc.text("NET IMPOSABLE", 14, y);
-  doc.text(fmtFCFA(e.netImposable), right, y, { align: "right" });
+  doc.text(fmtXOF(e.netImposable), right, y, { align: "right" });
   y += 6;
   doc.setFont("helvetica", "normal");
   doc.text("IRPP (retenue à la source)", 14, y);
-  doc.text(`-${fmtFCFA(e.irpp)}`, right, y, { align: "right" });
+  doc.text(`-${fmtXOF(e.irpp)}`, right, y, { align: "right" });
   y += 8;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.text("NET À PAYER", 14, y);
-  doc.text(`${fmtFCFA(e.netPay)} FCFA`, right, y, { align: "right" });
+  doc.text(`${fmtXOF(e.netPay)} XOF`, right, y, { align: "right" });
 
   // ── Pied : charges patronales + statut ──
   y += 12;
   doc.setFontSize(8);
   doc.setFont("helvetica", "normal");
-  doc.text(`Charges patronales : CNPS 5,6 % = ${fmtFCFA(e.cnpsEmployer)} FCFA (supportées par l'employeur)`, 14, y);
+  doc.text(`Charges patronales : CNPS 5,6 % = ${fmtXOF(e.cnpsEmployer)} XOF (supportées par l'employeur)`, 14, y);
   y += 5;
   doc.text(
     `Mode de paiement : ${e.paymentMethod === "om" ? "Orange Money" : e.paymentMethod === "momo" ? "MTN MoMo" : e.paymentMethod === "virement" ? "Virement" : "Espèces"} | Statut : ${e.status === "paye" ? "PAYÉ" : e.status}`,

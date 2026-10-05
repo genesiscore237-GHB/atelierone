@@ -1,28 +1,49 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { api } from "~/trpc/react";
-import { Phone, Mail, Search, Users, Loader2 } from "lucide-react";
+import { Download, Phone, Mail, Printer, Search, Users } from "lucide-react";
+import { statutLabel } from "~/lib/rh-labels";
+import { usePermissions } from "~/hooks/usePermissions";
+import { downloadCsv } from "../_components/csv-download";
+import { PaginationBar } from "../_components/ClientPagination";
 
 /** RH — Annuaire interne (specs MVP 09_Contacts) : généré depuis les employés actifs. */
 export default function AnnuairePage() {
   const [search, setSearch] = useState("");
   const [dept, setDept] = useState("");
-  const { data: employees, isLoading, isError, refetch } = api.rh.list.useQuery({ limit: 100 });
+  const [page, setPage] = useState(1);
+  const limit = 50;
+  const { hasPermission } = usePermissions();
 
-  const emps = ((employees?.employees ?? []) as unknown as Array<{
+  const { data: departments } = api.rh.listDepartments.useQuery();
+  const { data, isLoading, isError, refetch } = api.rh.list.useQuery({
+    page,
+    limit,
+    search: search || undefined,
+    exclureArchives: true,
+    departmentId: dept ? Number(dept) : undefined,
+  });
+  const canExport = hasPermission("rh.employe.consulter");
+  const exportEmployes = api.rhDashboard.exportEmployes.useQuery(
+    {
+      search: search || undefined,
+      departmentId: dept ? dept : undefined,
+      exclureArchives: true,
+    },
+    { enabled: false }
+  );
+
+  useEffect(() => { setPage(1); }, [search, dept]);
+
+  const emps = (data?.employees ?? []) as unknown as Array<{
     id: number; matricule: string; nom: string; prenom: string; fonction: string;
     telephone: string | null; emailPersonnel: string | null; statut: string | null;
     departmentId: number | null; departmentName: string | null;
-  }>).filter((e) => e.statut !== "archive");
-
-  const depts = useMemo(() => [...new Set(emps.map((e) => e.departmentName).filter(Boolean))].sort(), [emps]);
-
-  const filtered = emps.filter((e) => {
-    const q = search.toLowerCase().replace(/[àâä]/g, "a").replace(/[éèêë]/g, "e").replace(/[îï]/g, "i").replace(/[ôö]/g, "o").replace(/[ùûü]/g, "u").replace(/ç/g, "c");
-    const name = `${e.prenom} ${e.nom} ${e.matricule} ${e.fonction}`.toLowerCase();
-    return (!q || name.includes(q)) && (!dept || e.departmentName === dept);
-  });
+  }>;
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   const initials = (prenom: string, nom: string) => `${(prenom?.[0] ?? "").toUpperCase()}${(nom?.[0] ?? "").toUpperCase()}`;
 
@@ -39,17 +60,31 @@ export default function AnnuairePage() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Rechercher un contact…"
+            placeholder="Rechercher (nom, prénom, matricule)…"
             className="h-10 w-72 rounded-lg border border-border bg-accent/30 pl-9 pr-3 text-sm text-foreground outline-none focus:border-primary/50"
           />
         </div>
         <select value={dept} onChange={(e) => setDept(e.target.value)} className="h-10 rounded-lg border border-border bg-accent/30 px-3 text-sm text-foreground outline-none">
           <option value="">Tous les départements</option>
-          {depts.map((d) => <option key={d} value={d} className="bg-background">{d}</option>)}
+          {(departments ?? []).map((d) => <option key={d.id} value={d.id} className="bg-background">{d.name}</option>)}
         </select>
-        <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
-          {filtered.length} contact(s)
-        </span>
+        {canExport && (
+          <button
+            onClick={async () => {
+              if (!exportEmployes.data) await exportEmployes.refetch();
+              downloadCsv(exportEmployes.data, "annuaire.csv");
+            }}
+            className="flex h-10 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-sm font-semibold text-foreground hover:bg-accent"
+          >
+            <Download size={15} /> Exporter
+          </button>
+        )}
+        <button
+          onClick={() => window.print()}
+          className="flex h-10 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-sm font-semibold text-foreground hover:bg-accent print:hidden"
+        >
+          <Printer size={15} /> Imprimer
+        </button>
       </div>
 
       {isLoading ? (
@@ -61,14 +96,14 @@ export default function AnnuairePage() {
           <p className="text-sm text-muted-foreground">Impossible de charger l&apos;annuaire.</p>
           <button onClick={() => refetch()} className="mt-3 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground hover:bg-accent">Réessayer</button>
         </div>
-      ) : filtered.length === 0 ? (
+      ) : emps.length === 0 ? (
         <div className="rounded-xl border border-border bg-card p-12 text-center text-muted-foreground">
           <Users size={36} className="mx-auto mb-3 opacity-40" />
-          <p className="text-sm">Aucun contact. Créez des employés actifs dans le module Employés.</p>
+          <p className="text-sm">{search || dept ? "Aucun contact ne correspond à la recherche." : "Aucun contact. Créez des employés actifs dans le module Employés."}</p>
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((e) => (
+          {emps.map((e) => (
             <div key={e.id} className="rounded-xl border border-border bg-card p-4">
               <div className="flex items-center gap-3">
                 <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
@@ -76,7 +111,7 @@ export default function AnnuairePage() {
                 </div>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-foreground">{e.prenom} {e.nom}</p>
-                  <p className="truncate text-xs text-muted-foreground">{e.fonction} · {e.departmentName ?? "—"}</p>
+                  <p className="truncate text-xs text-muted-foreground">{e.fonction} · {e.departmentName ?? "—"} · {statutLabel(e.statut)}</p>
                 </div>
               </div>
               <div className="mt-3 space-y-1.5 text-xs text-muted-foreground">
@@ -92,10 +127,18 @@ export default function AnnuairePage() {
                 )}
                 {!e.telephone && !e.emailPersonnel && <span className="italic">Aucun contact renseigné</span>}
               </div>
+              <Link
+                href={`/dashboard/rh/employes/${e.id}`}
+                className="mt-3 block rounded-lg border border-primary/30 px-3 py-1.5 text-center text-xs font-bold text-primary transition-colors hover:bg-primary/10"
+              >
+                Ouvrir la fiche
+              </Link>
             </div>
           ))}
         </div>
       )}
+
+      <PaginationBar page={page} totalPages={totalPages} total={total} onPage={setPage} label="contact(s)" empty={true} />
     </div>
   );
 }

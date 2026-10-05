@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { api } from "~/trpc/react";
-import { ArrowLeft, Search, Plus, CheckCircle2, Loader2, Trash2, AlertTriangle, FileSpreadsheet, Save, Printer } from "lucide-react";
+import { ArrowLeft, Search, Plus, CheckCircle2, Loader2, Trash2, AlertTriangle, FileSpreadsheet, Save, Printer, Layers } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
 import { toast } from "sonner";
@@ -35,6 +35,13 @@ type LigneReception = {
   prixReglemente: boolean;
   marge: number;
   unitesDisponibles: { id: string; libelle: string; facteurConversion: number; prixAchat: number | null; estDefaut: boolean }[];
+  lotOpen: boolean;
+  numeroLot: string;
+  datePeremption: string;
+  dateFabrication: string;
+  provenance: string;
+  qualite: string;
+  fabricant: string;
 };
 
 export default function ReceptionPage() {
@@ -172,6 +179,13 @@ export default function ReceptionPage() {
       prixReglemente: !!produit.prixReglemente,
       marge: estManuel && homologue > 0 ? margeDefaut : (prix > 0 && Number(produit.prixVente ?? 0) > 0 ? Math.round(((Number(produit.prixVente) - prix) / prix) * 100) : 20),
       unitesDisponibles: unites,
+      lotOpen: false,
+      numeroLot: "",
+      datePeremption: "",
+      dateFabrication: "",
+      provenance: "",
+      qualite: "",
+      fabricant: "",
     }]);
     setSearchQuery("");
     setShowDropdown(false);
@@ -263,6 +277,12 @@ export default function ReceptionPage() {
         prixReglementeValeur: l.appliquerPrixCatalogue && l.prixReglementeValeur != null ? String(l.prixReglementeValeur) : null,
         prixMaximumRachat: l.appliquerPrixCatalogue && l.prixMaximumRachat != null ? String(l.prixMaximumRachat) : null,
         tva: l.appliquerPrixCatalogue ? String(l.tva ?? 0) : null,
+        numeroLot: l.numeroLot?.trim() || undefined,
+        datePeremption: l.datePeremption?.trim() || undefined,
+        dateFabrication: l.dateFabrication?.trim() || undefined,
+        provenance: l.provenance?.trim() || undefined,
+        qualite: l.qualite?.trim() || undefined,
+        fabricant: l.fabricant?.trim() || undefined,
       })),
       paiement: recepPay.actif && Number(recepPay.montant) > 0
         ? {
@@ -431,6 +451,7 @@ export default function ReceptionPage() {
                 const sousTotal = l.quantiteRecue * l.prixUnitaire;
                 const equivBase = l.quantiteRecue * l.facteurConversion;
                 return (
+                  <>
                   <tr key={l.id} className="text-foreground/80">
                     <td className="px-3 py-2">
                       <div className="text-foreground text-sm font-medium">{l.produitLabel}</div>
@@ -518,12 +539,69 @@ export default function ReceptionPage() {
                     </td>
                     <td className="px-3 py-2 text-right font-mono">{sousTotal.toLocaleString()} F</td>
                     <td className="px-3 py-2 text-center">
-                      <button onClick={() => removeLigne(l.id)}
-                        className="text-muted-foreground hover:text-destructive transition-colors">
-                        <Trash2 className="size-4" />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => updateLigne(l.id, "lotOpen", !l.lotOpen)} title="Détails du lot (péremption, provenance…)"
+                          className={`text-muted-foreground transition-colors hover:text-primary ${l.lotOpen ? "text-primary" : ""}`}>
+                          <Layers className="size-4" />
+                        </button>
+                        <button onClick={() => removeLigne(l.id)}
+                          className="text-muted-foreground hover:text-destructive transition-colors">
+                          <Trash2 className="size-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
+                  {l.lotOpen && (
+                    <tr className="border-0 bg-muted/20">
+                      <td colSpan={8} className="px-3 pt-1 pb-3">
+                        <div className="rounded-lg border border-border/60 bg-background p-3">
+                          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Détails du lot (optionnel) — traçabilité et FEFO</p>
+                          <div className="grid gap-2 md:grid-cols-3 lg:grid-cols-6">
+                            <label className="space-y-1">
+                              <span className="text-[11px] text-muted-foreground">N° lot</span>
+                              <input value={l.numeroLot} onChange={e => updateLigne(l.id, "numeroLot", e.target.value)}
+                                placeholder="auto"
+                                className="h-8 w-full rounded border border-border bg-muted/50 px-2 text-xs text-foreground" />
+                            </label>
+                            <label className="space-y-1">
+                              <span className="text-[11px] text-muted-foreground">Date péremption</span>
+                              <input type="date" value={l.datePeremption} onChange={e => updateLigne(l.id, "datePeremption", e.target.value)}
+                                className="h-8 w-full rounded border border-border bg-muted/50 px-2 text-xs text-foreground" />
+                            </label>
+                            <label className="space-y-1">
+                              <span className="text-[11px] text-muted-foreground">Date fabrication</span>
+                              <input type="date" value={l.dateFabrication} onChange={e => updateLigne(l.id, "dateFabrication", e.target.value)}
+                                className="h-8 w-full rounded border border-border bg-muted/50 px-2 text-xs text-foreground" />
+                            </label>
+                            <label className="space-y-1">
+                              <span className="text-[11px] text-muted-foreground">Provenance</span>
+                              <input value={l.provenance} onChange={e => updateLigne(l.id, "provenance", e.target.value)}
+                                placeholder="Ex: Douala port"
+                                className="h-8 w-full rounded border border-border bg-muted/50 px-2 text-xs text-foreground" />
+                            </label>
+                            <label className="space-y-1">
+                              <span className="text-[11px] text-muted-foreground">Qualité</span>
+                              <input value={l.qualite} onChange={e => updateLigne(l.id, "qualite", e.target.value)}
+                                placeholder="Ex: Grade A / Original"
+                                className="h-8 w-full rounded border border-border bg-muted/50 px-2 text-xs text-foreground" />
+                            </label>
+                            <label className="space-y-1">
+                              <span className="text-[11px] text-muted-foreground">Fabricant</span>
+                              <input value={l.fabricant} onChange={e => updateLigne(l.id, "fabricant", e.target.value)}
+                                placeholder="Ex: MANN, Total…"
+                                className="h-8 w-full rounded border border-border bg-muted/50 px-2 text-xs text-foreground" />
+                            </label>
+                          </div>
+                          {l.datePeremption && l.dateFabrication && l.datePeremption < l.dateFabrication && (
+                            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-destructive">
+                              <AlertTriangle className="size-3.5" /> La date de péremption précède la date de fabrication — vérifiez la saisie.
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </>
                 );
               })}
             </tbody>

@@ -18,6 +18,7 @@ import {
   UserPlus,
   Users,
   Wallet,
+  ChevronRight,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "~/components/ui/button";
@@ -296,10 +297,18 @@ export function CustomerDetail({ id }: { id: string }) {
           <div className="space-y-2">
             {vehicules.length === 0 && <p className="text-sm text-muted-foreground">Aucun véhicule lié.</p>}
             {vehicules.map((v: any) => (
-              <div key={v.id} className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm">
+              <Link
+                key={v.id}
+                href={`/dashboard/vehicules/${v.id}`}
+                className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm transition-colors hover:border-primary/50 hover:bg-accent"
+                title="Voir la fiche 360° du véhicule"
+              >
                 <span className="font-mono font-semibold">{v.immatriculation}</span>
-                <span className="text-muted-foreground">{v.marque} {v.modele}{v.annee ? ` · ${v.annee}` : ""}</span>
-              </div>
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  {v.marque} {v.modele}{v.annee ? ` · ${v.annee}` : ""}
+                  <ChevronRight size={14} />
+                </span>
+              </Link>
             ))}
           </div>
         )}

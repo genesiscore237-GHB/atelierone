@@ -6,6 +6,7 @@ import {
   respectePlafondCredit,
   genererReferenceFacture,
   estComptant,
+  classerDette,
 } from "./facturation-service";
 
 describe("Facturation du cycle — totaux et échéances", () => {
@@ -45,5 +46,23 @@ describe("Facturation du cycle — totaux et échéances", () => {
   it("mode crédit vs comptant", () => {
     expect(estComptant("especes")).toBe(true);
     expect(estComptant("credit")).toBe(false);
+  });
+
+  it("classement créances (P0-1) : statistut dérivé des montants et de l'échéance réels", () => {
+    const maintenant = new Date("2026-09-15T12:00:00");
+    // non payée (100 000 / 0) → UNPAID
+    expect(classerDette(100000, 0, new Date("2026-09-30"), maintenant)).toBe("UNPAID");
+    // partiellement payée (100 000 / 40 000) → PARTIAL
+    expect(classerDette(100000, 40000, new Date("2026-09-30"), maintenant)).toBe("PARTIAL");
+    // entièrement payée (100 000 / 100 000), échéance passée → PAID (pas de retard)
+    expect(classerDette(100000, 100000, new Date("2026-09-01"), maintenant)).toBe("PAID");
+    // échéance dépassée + reste > 0 → OVERDUE
+    expect(classerDette(100000, 40000, new Date("2026-09-10"), maintenant)).toBe("OVERDUE");
+    // échéance le jour même → pas encore en retard (PARTIAL)
+    expect(classerDette(100000, 40000, "2026-09-15", maintenant)).toBe("PARTIAL");
+    // aucune échéance → retard impossible
+    expect(classerDette(100000, 0, null, maintenant)).toBe("UNPAID");
+    // remise 0 n'influence pas le reste dû : 100 000 total, 120 000 payé → PAID
+    expect(classerDette(100000, 120000, null, maintenant)).toBe("PAID");
   });
 });

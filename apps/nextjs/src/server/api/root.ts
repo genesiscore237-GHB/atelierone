@@ -1,6 +1,7 @@
 import { userRouter } from "~/server/api/routers/user";
 import { settingsRouter } from "~/server/api/routers/settings";
 import { catalogRouter } from "~/server/api/routers/catalog";
+import { articlesRouter } from "~/server/api/routers/articles-router";
 import { inventoryRouter } from "~/server/api/routers/inventory";
 import { posRouter } from "~/server/api/routers/pos";
 import { financeRouter } from "~/server/api/routers/finance";
@@ -31,21 +32,32 @@ import { rhSettingsRouter } from "~/server/api/routers/rh-settings";
 import { rhPresenceRouter } from "~/server/api/routers/rh-presence";
 import { rhLeaveRouter } from "~/server/api/routers/rh-leave";
 import { rhPayrollRouter } from "~/server/api/routers/rh-payroll";
+import { rhAdvancesRouter } from "~/server/api/routers/rh-advances";
 import { rhEvaluationRouter } from "~/server/api/routers/rh-evaluation";
 import { rhCompetencesRouter } from "~/server/api/routers/rh-competences";
 import { rhDisciplineRouter } from "~/server/api/routers/rh-discipline";
 import { rhDocumentsRouter } from "~/server/api/routers/rh-documents";
 import { rhDashboardRouter } from "~/server/api/routers/rh-dashboard";
+import { rhReportsRouter } from "~/server/api/routers/rh-reports";
 import { rhPostureRouter } from "~/server/api/routers/rh-posture";
 import { rhPlanningRouter } from "~/server/api/routers/rh-planning";
-import { partnerRouter } from "~/server/api/routers/partner";
+import { rhPeriodeRouter } from "~/server/api/routers/rh-situation";
+import { rhCentreRapportsRouter } from "~/server/api/routers/rh-centre-rapports";
+import { rhSensibilisationRouter } from "~/server/api/routers/rh-sensibilisation";
+import { rhJournalRouter } from "~/server/api/routers/rh-journal";
+import { rhSituationsRouter } from "~/server/api/routers/rh-situations";
+import { rhHistoryRouter } from "~/server/api/routers/rh-history";
 import { stockRouter } from "~/server/api/routers/stock";
 import { orRouter } from "~/server/api/routers/or-router";
+import { garageRouter } from "~/server/api/routers/garage-router";
 import { margeRouter } from "~/server/api/routers/marge";
 import { profitRouter } from "~/server/api/routers/profit";
 import { exportRouter } from "~/server/api/routers/export";
 import { reportsRouter } from "~/server/api/routers/reports";
 import { referenceRouter } from "~/server/api/routers/reference";
+import { ontologyRouter } from "~/server/api/routers/ontology-router";
+import { guideRouter } from "~/server/api/routers/guide-router";
+import { rechercheRouter } from "~/server/api/routers/recherche";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 
 export const appRouter = createTRPCRouter({
@@ -56,6 +68,7 @@ export const appRouter = createTRPCRouter({
   ...(process.env.APP_ROLE === "central" ? { central: centralRouter } : {}),
   settings: settingsRouter,
   catalog: catalogRouter,
+  articles: articlesRouter,
   reference: referenceRouter,
   inventory: inventoryRouter,
   pos: posRouter,
@@ -85,19 +98,30 @@ export const appRouter = createTRPCRouter({
   rhPosture: rhPostureRouter,
   rhLeave: rhLeaveRouter,
   rhPayroll: rhPayrollRouter,
+  rhAdvances: rhAdvancesRouter,
   rhEvaluation: rhEvaluationRouter,
   rhCompetences: rhCompetencesRouter,
   rhDiscipline: rhDisciplineRouter,
   rhDocuments: rhDocumentsRouter,
   rhDashboard: rhDashboardRouter,
+  rhReports: rhReportsRouter,
   rhPlanning: rhPlanningRouter,
+  rhPeriode: rhPeriodeRouter,
+  rhCentreRapports: rhCentreRapportsRouter,
+  rhSensibilisation: rhSensibilisationRouter,
+rhJournal: rhJournalRouter,
+  rhSituations: rhSituationsRouter,
+  rhHistory: rhHistoryRouter,
   stock: stockRouter,
   or: orRouter,
-  partner: partnerRouter,
+  garage: garageRouter,
   marge: margeRouter,
   profit: profitRouter,
   export: exportRouter,
   reports: reportsRouter,
+  ontology: ontologyRouter,
+  guide: guideRouter,
+  recherche: rechercheRouter,
 });
 
 // export type definition of API

@@ -5,6 +5,9 @@ import { TRPCError } from "@trpc/server";
 type Tx = Parameters<Parameters<(typeof db)["transaction"]>[0]>[0];
 
 export const TYPES_MOUVEMENT = {
+  // Solde d'ouverture tracé : stock initial saisi à la création du SKU (moteur catalogue universel).
+  // Jamais utilisé pour un achat réel (→ ACHAT_RECEPTION) : type distinct pour l'audit des entrées initiales.
+  INITIAL_RECEIPT: "INITIAL_RECEIPT",
   ACHAT_RECEPTION: "ACHAT_RECEPTION",
   DECONDITIONNEMENT_SORTIE: "DECONDITIONNEMENT_SORTIE",
   DECONDITIONNEMENT_ENTREE: "DECONDITIONNEMENT_ENTREE",
@@ -21,11 +24,16 @@ export const TYPES_MOUVEMENT = {
   PERTE: "PERTE",
   VOL: "VOL",
   CASSE: "CASSE",
-  // Specs V2 Â§04/Â§05 : sortie atelier liÃ©e Ã  un OR + retour atelier
+// Specs V2 Â§04/Â§05 : sortie atelier liÃ©e Ã  un OR + retour atelier
   SORTIE_OR: "SORTIE_OR",
   RETOUR_ATELIER: "RETOUR_ATELIER",
   SORTIE_OUTIL: "SORTIE_OUTIL",
   RETOUR_OUTIL: "RETOUR_OUTIL",
+  // Conception Stock + Bureau (MVP) : approvisionnement du bureau depuis un
+  // grand magasin (transfert tracé) et dotation de consommable (sans retour)
+  APPROVISIONNEMENT_BUREAU_SORTIE: "APPROVISIONNEMENT_BUREAU_SORTIE",
+  APPROVISIONNEMENT_BUREAU_ENTREE: "APPROVISIONNEMENT_BUREAU_ENTREE",
+  DOTATION_CONSOMMABLE: "DOTATION_CONSOMMABLE",
   // Specs V2 Â§04 processus 5 : rÃ©servation / libÃ©ration de stock
   RESERVATION: "RESERVATION",
   LIBERATION_RESERVATION: "LIBERATION_RESERVATION",
@@ -69,6 +77,10 @@ type MouvementParams = {
   effectuePar?: number;
   validePar?: number;
   audit?: boolean;
+  // Synchroniser le stock par unité (stocks_unites) en plus du stock par emplacement.
+  // Activé sur les entrées de stock (àchat, stock initial) afin que les transferts
+  // et sorties par unité disposent d'une base stocks_unites.
+  synchroniserStocksUnites?: boolean;
 };
 
 async function verifierStockDisponible(
@@ -204,6 +216,45 @@ export async function enregistrerMouvement(tx: Tx, params: MouvementParams) {
       uniteReferenceId: params.uniteId || null,
       coutUnitaireMoyen: params.coutUnitaireBase ? String(params.coutUnitaireBase) : null,
     } as any);
+  }
+
+  // Synchronisation du stock par unité (stocks_unites) : rend le stock entré
+  // visible pour les transferts / sorties par unité (specs stock multi-unités).
+  if (params.synchroniserStocksUnites && params.uniteId) {
+    const [su] = await tx
+      .select({ quantite: stocksUnites.quantite })
+      .from(stocksUnites)
+      .where(and(
+        eq(stocksUnites.produitId, params.produitId),
+        eq(stocksUnites.agenceId, params.agenceId),
+        eq(stocksUnites.uniteId, params.uniteId),
+      ))
+      .for("update");
+    const suAvant = su ? Number(su.quantite) : 0;
+    const suApres = params.sens === "E" ? suAvant + qte : suAvant - qte;
+    if (suApres < 0) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Stock unité insuffisant pour synchroniser la sortie.",
+      });
+    }
+    if (su) {
+      await tx
+        .update(stocksUnites)
+        .set({ quantite: String(suApres) } as any)
+        .where(and(
+          eq(stocksUnites.produitId, params.produitId),
+          eq(stocksUnites.agenceId, params.agenceId),
+          eq(stocksUnites.uniteId, params.uniteId),
+        ));
+    } else {
+      await tx.insert(stocksUnites).values({
+        produitId: params.produitId,
+        agenceId: params.agenceId,
+        uniteId: params.uniteId,
+        quantite: String(suApres),
+      } as any);
+    }
   }
 
   return { stockAvant, stockApres, mouvementId: mvt?.id };

@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
+import { useEmployeFromUrl } from "~/hooks/useEmployeFromUrl";
+import { usePermissions } from "~/hooks/usePermissions";
 import {
   AlertTriangle,
   CalendarClock,
@@ -10,13 +13,16 @@ import {
   FileText,
   Files,
   FolderOpen,
+  Pencil,
   Plus,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { useClientPaging, PaginationBar } from "./ClientPagination";
 
 const TABS = [
   { id: "documents", label: "Documents", icon: Files },
@@ -93,6 +99,12 @@ function DocumentsSection() {
     dateExpiration: "",
     notes: "",
   });
+  const employeUrl = useEmployeFromUrl();
+  useEffect(() => { if (employeUrl) setForm((f) => ({ ...f, employeId: employeUrl })); }, [employeUrl]);
+
+  const { hasPermission } = usePermissions();
+  const canModifier = hasPermission("rh.document.modifier");
+  const [editId, setEditId] = useState<number | null>(null);
 
   const create = api.rhDocuments.createDocument.useMutation({
     onSuccess: () => {
@@ -100,7 +112,18 @@ function DocumentsSection() {
       utils.rhDocuments.listDocuments.invalidate();
       utils.rhDocuments.getExpirationAlerts.invalidate();
       setShowForm(false);
+      setEditId(null);
       setForm({ employeId: 0, documentTypeId: 0, titre: "", fichierUrl: "", dateEmission: "", dateExpiration: "", notes: "" });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const update = api.rhDocuments.updateDocument.useMutation({
+    onSuccess: () => {
+      toast.success("Document modifié");
+      utils.rhDocuments.listDocuments.invalidate();
+      utils.rhDocuments.getExpirationAlerts.invalidate();
+      setShowForm(false);
+      setEditId(null);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -113,22 +136,51 @@ function DocumentsSection() {
     onError: (e) => toast.error(e.message),
   });
 
+  const list = (documents ?? []).filter(
+    (d: any) =>
+      !(employeUrl && d.employeId !== employeUrl) &&
+      (!search ||
+        `${d.employePrenom} ${d.employeNom}`.toLowerCase().includes(search.toLowerCase()) ||
+        (d.titre ?? "").toLowerCase().includes(search.toLowerCase()) ||
+        (d.typeName ?? "").toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const { page, setPage, pageItems, total: listTotal, totalPages } = useClientPaging(list, 25);
+
   if (isLoading) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
   if (isError) return <ErrorState onRetry={() => refetch()} />;
 
-  const list = (documents ?? []).filter(
-    (d: any) =>
-      !search ||
-      `${d.employePrenom} ${d.employeNom}`.toLowerCase().includes(search.toLowerCase()) ||
-      (d.titre ?? "").toLowerCase().includes(search.toLowerCase()) ||
-      (d.typeName ?? "").toLowerCase().includes(search.toLowerCase())
-  );
   const typeList = (types ?? []) as any[];
   const empList = (employes?.employees ?? []) as any[];
+
+  const startEdit = (d: any) => {
+    setEditId(d.id);
+    setForm({
+      employeId: d.employeId,
+      documentTypeId: d.documentTypeId ?? 0,
+      titre: d.titre ?? "",
+      fichierUrl: d.fichierUrl ?? "",
+      dateEmission: d.dateEmission ?? "",
+      dateExpiration: d.dateExpiration ?? "",
+      notes: d.notes ?? "",
+    });
+    setShowForm(true);
+  };
 
   const save = () => {
     if (!form.employeId || !form.documentTypeId || !form.fichierUrl.trim()) {
       toast.error("Employé, type et fichier requis");
+      return;
+    }
+    if (editId) {
+      update.mutate({
+        id: editId,
+        titre: form.titre.trim() || undefined,
+        fichierUrl: form.fichierUrl.trim(),
+        dateEmission: form.dateEmission || null,
+        dateExpiration: form.dateExpiration || null,
+        notes: form.notes.trim() || null,
+      });
       return;
     }
     create.mutate({
@@ -144,19 +196,31 @@ function DocumentsSection() {
 
   return (
     <div className="space-y-4">
+      {employeUrl && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+          <span>
+            Documents de <b>{empList.find((e) => e.id === employeUrl)?.prenom} {empList.find((e) => e.id === employeUrl)?.nom}</b>
+          </span>
+          <Link href="/dashboard/rh/documents" className="inline-flex items-center gap-1 font-bold text-primary hover:underline">
+            <X size={12} /> Effacer le filtre employé
+          </Link>
+        </div>
+      )}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
           <Input placeholder="Rechercher (employé, type, titre)..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
         </div>
-        <Button onClick={() => setShowForm((v) => !v)} className="gap-2">
-          <Plus size={16} /> Ajouter un document
-        </Button>
+        {canModifier && (
+          <Button onClick={() => setShowForm((v) => !v)} className="gap-2">
+            <Plus size={16} /> Ajouter un document
+          </Button>
+        )}
       </div>
 
       {showForm && (
         <div className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-3 text-sm font-bold uppercase tracking-wider text-foreground">Nouveau document</div>
+          <div className="mb-3 text-sm font-bold uppercase tracking-wider text-foreground">{editId ? "Modifier le document" : "Nouveau document"}</div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label className="text-xs text-muted-foreground">Employé *</Label>
@@ -194,17 +258,18 @@ function DocumentsSection() {
             </div>
           </div>
           <div className="mt-4 flex gap-2">
-            <Button onClick={save} disabled={create.isPending} className="gap-2">
-              <Check size={14} /> {create.isPending ? "Ajout..." : "Enregistrer"}
+            <Button onClick={save} disabled={create.isPending || update.isPending} className="gap-2">
+              <Check size={14} /> {create.isPending || update.isPending ? "Enregistrement..." : "Enregistrer"}
             </Button>
-            <Button variant="outline" onClick={() => setShowForm(false)}>Annuler</Button>
+            <Button variant="outline" onClick={() => { setShowForm(false); setEditId(null); }}>Annuler</Button>
           </div>
         </div>
       )}
 
       {list.length === 0 ? (
-        <EmptyState icon={Files} title="Aucun document" description="Ajoutez le premier document d'un employé." />
+        <EmptyState icon={Files} title="Aucun document" description={canModifier ? "Ajoutez le premier document d'un employé." : "Aucun document pour le moment."} />
       ) : (
+        <>
         <div className="overflow-x-auto rounded-xl border border-border">
           <table className="w-full text-sm">
             <thead>
@@ -216,11 +281,11 @@ function DocumentsSection() {
                 <th className="px-4 py-3 text-center font-medium text-muted-foreground">Expiration</th>
                 <th className="px-4 py-3 text-center font-medium text-muted-foreground">Statut</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Fichier</th>
-                <th className="px-4 py-3 text-right font-medium text-muted-foreground">Action</th>
+                {canModifier && <th className="px-4 py-3 text-right font-medium text-muted-foreground">Action</th>}
               </tr>
             </thead>
             <tbody>
-              {list.map((d: any) => (
+              {pageItems.map((d: any) => (
                 <tr key={d.id} className="border-t border-border hover:bg-accent/40">
                   <td className="px-4 py-2.5 font-medium">{d.employePrenom} {d.employeNom}</td>
                   <td className="px-4 py-2.5">{d.typeName ?? d.typeDocument}</td>
@@ -231,16 +296,23 @@ function DocumentsSection() {
                   <td className="px-4 py-2.5">
                     <a href={d.fichierUrl} target="_blank" rel="noreferrer" className="text-xs font-medium text-primary underline">{d.fichierUrl.split("/").pop()}</a>
                   </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <Button variant="ghost" size="icon" className="text-destructive" title="Supprimer" onClick={() => setConfirmDelete(d)}>
-                      <Trash2 size={15} />
-                    </Button>
-                  </td>
+                  {canModifier && (
+                    <td className="px-4 py-2.5 text-right">
+                      <Button variant="ghost" size="icon" title="Modifier" onClick={() => startEdit(d)}>
+                        <Pencil size={15} />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="text-destructive" title="Supprimer" onClick={() => setConfirmDelete(d)}>
+                        <Trash2 size={15} />
+                      </Button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <PaginationBar page={page} totalPages={totalPages} total={listTotal} onPage={setPage} label="document(s)" empty={!list.length} />
+        </>
       )}
 
       {confirmDelete && (
@@ -273,6 +345,9 @@ function TypesSection() {
   const [form, setForm] = useState({ code: "", name: "", hasExpiration: false });
   const [confirmDelete, setConfirmDelete] = useState<any>(null);
 
+  const { hasPermission } = usePermissions();
+  const canModifier = hasPermission("rh.document.modifier");
+
   const create = api.rhDocuments.createDocumentType.useMutation({
     onSuccess: () => { toast.success("Type créé"); utils.rhDocuments.listDocumentTypes.invalidate(); setShowForm(false); setForm({ code: "", name: "", hasExpiration: false }); },
     onError: (e) => toast.error(e.message),
@@ -298,7 +373,7 @@ function TypesSection() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold uppercase tracking-wider text-foreground">Types de documents paramétrables</h2>
-        <Button onClick={() => setShowForm((v) => !v)} className="gap-2"><Plus size={15} /> Nouveau type</Button>
+        {canModifier && <Button onClick={() => setShowForm((v) => !v)} className="gap-2"><Plus size={15} /> Nouveau type</Button>}
       </div>
 
       {showForm && (
@@ -328,7 +403,7 @@ function TypesSection() {
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">Nom</th>
               <th className="px-4 py-3 text-center font-medium text-muted-foreground">Expiration</th>
               <th className="px-4 py-3 text-center font-medium text-muted-foreground">Actif</th>
-              <th className="px-4 py-3 text-right font-medium text-muted-foreground">Action</th>
+              {canModifier && <th className="px-4 py-3 text-right font-medium text-muted-foreground">Action</th>}
             </tr>
           </thead>
           <tbody>
@@ -342,13 +417,15 @@ function TypesSection() {
                   </span>
                 </td>
                 <td className="px-4 py-2.5 text-center">
-                  <button type="button" onClick={() => toggle.mutate({ id: t.id, active: !t.active })} className={`size-6 rounded-full transition-colors ${t.active ? "bg-success" : "bg-muted"}`} title="Activer/désactiver" />
+                  <button type="button" disabled={!canModifier} onClick={() => toggle.mutate({ id: t.id, active: !t.active })} className={`size-6 rounded-full transition-colors ${t.active ? "bg-success" : "bg-muted"} ${!canModifier ? "cursor-not-allowed opacity-50" : ""}`} title={canModifier ? "Activer/désactiver" : "Permission manquante"} />
                 </td>
-                <td className="px-4 py-2.5 text-right">
-                  <Button variant="ghost" size="icon" className="text-destructive" title="Supprimer" onClick={() => setConfirmDelete(t)}>
-                    <Trash2 size={15} />
-                  </Button>
-                </td>
+                {canModifier && (
+                  <td className="px-4 py-2.5 text-right">
+                    <Button variant="ghost" size="icon" className="text-destructive" title="Supprimer" onClick={() => setConfirmDelete(t)}>
+                      <Trash2 size={15} />
+                    </Button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

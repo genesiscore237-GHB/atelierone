@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure, adminProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
-import { db, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, modelesEmballage, fournisseurs, produitsFournisseurs, agences, articleEquivalences, kitsLignes, mouvementsStock, emplacements, compatibilitesProduits } from "@atelierone/db";
+import { db, produitArticles, produits, categories, codesBarres, tarifs, auditLogs, unitesMesureProduits, stocks, produitUnites, unitesMesure, unitesDomaines, modelesEmballage, fournisseurs, produitsFournisseurs, agences, articleEquivalences, kitsLignes, mouvementsStock, emplacements, compatibilitesProduits, pretsOutils } from "@atelierone/db";
 import { eq, ilike, and, desc, sql, inArray, ne, getTableColumns, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { generateBarcode, autoGenerateBarcode, ensureBarcodeSequence } from "@atelierone/db/utils";
 import { appendFileSync } from "fs";
 import { join } from "path";
 import { listerKitLignes } from "~/server/lib/kit-service";
+import { getCatalogueQualite, getQualiteDetail } from "~/server/lib/catalog-service";
 
 const ADMIN_ROLES = ["superadmin", "directeur", "admin"];
 
@@ -19,7 +20,7 @@ function detectBarcodeType(v: string): string {
 // Bornes de validation commune (create + update) : le type de produit doit être
 // une valeur connue et le prix de vente strictement positif (0 FCFA interdit).
 // PIECE = pièce de rechange · SERVICE = main d'œuvre · OUTIL = outillage prêté aux techniciens · CONSOMMABLE = huiles, EPI, fournitures
-const typeProduitEnum = z.enum(["PIECE", "SERVICE", "OUTIL", "CONSOMMABLE"]);
+const typeProduitEnum = z.enum(["PIECE", "SERVICE", "OUTIL", "CONSOMMABLE", "EQUIPEMENT", "FOURNITURE", "KIT"]);
 const prixVenteRefine = z.string().refine(v => Number(v) > 0, { message: "Le prix de vente doit être strictement positif" });
 const photoDataUrl = z.string().refine(v => v.startsWith("data:image/") && v.length <= 3_000_000, { message: "Photo invalide ou trop volumineuse (max 2 Mo)" });
 const photosInput = z.array(photoDataUrl).max(3, "3 photos maximum").optional();
@@ -978,6 +979,9 @@ export const catalogRouter = createTRPCRouter({
       description: c.description,
       parentId: c.parentId ? String(c.parentId) : null,
       typeBranche: c.typeBranche,
+      domaine: c.domaine,
+      niveauOntologie: c.niveauOntologie,
+      rendererHint: c.rendererHint,
       isActive: c.isActive,
       name: c.nom,
       childrenCount: countMap.get(c.id) ?? 0,
@@ -1010,6 +1014,10 @@ export const catalogRouter = createTRPCRouter({
         code: c.code,
         description: c.description,
         parentId: c.parentId,
+        typeBranche: c.typeBranche,
+        domaine: c.domaine,
+        niveauOntologie: c.niveauOntologie,
+        rendererHint: c.rendererHint,
         isActive: c.isActive,
         name: c.nom,
         childrenCount: countMap.get(c.id) ?? 0,
@@ -1036,14 +1044,29 @@ export const catalogRouter = createTRPCRouter({
       code: z.string().min(1),
       description: z.string().optional(),
       parentId: z.string().optional(),
+      domaine: z.string().optional(),
+      niveauOntologie: z.enum(["FAMILLE", "CATEGORIE", "SOUS", "TYPE"]).optional(),
+      rendererHint: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const existing = await db.select()
         .from(categories)
         .where(eq(categories.code, input.code))
         .limit(1);
       if (existing[0]) throw new TRPCError({ code: "CONFLICT", message: "Ce code existe déjà" });
-      const result = await db.insert(categories).values(input).returning();
+      if (input.domaine) {
+        const [dom] = await db.select({ code: unitesDomaines.code }).from(unitesDomaines).where(eq(unitesDomaines.code, input.domaine)).limit(1);
+        if (!dom) throw new TRPCError({ code: "BAD_REQUEST", message: `Domaine d'unité inconnu : ${input.domaine}` });
+      }
+      const result = await db.insert(categories).values({
+        nom: input.nom,
+        code: input.code,
+        description: input.description ?? null,
+        parentId: input.parentId ? Number(input.parentId) : null,
+        domaine: input.domaine ?? null,
+        niveauOntologie: input.niveauOntologie ?? null,
+        rendererHint: input.rendererHint ?? null,
+      }).returning();
       const c = result[0];
       if (!c) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       return {
@@ -1052,6 +1075,10 @@ export const catalogRouter = createTRPCRouter({
         code: c.code,
         description: c.description,
         parentId: c.parentId,
+        typeBranche: c.typeBranche,
+        domaine: c.domaine,
+        niveauOntologie: c.niveauOntologie,
+        rendererHint: c.rendererHint,
         isActive: c.isActive,
         name: c.nom,
       };
@@ -1062,18 +1089,34 @@ export const catalogRouter = createTRPCRouter({
       id: z.string(),
       nom: z.string().min(1).optional(),
       code: z.string().min(1).optional(),
-      description: z.string().optional(),
+      description: z.string().nullable().optional(),
       parentId: z.string().nullable().optional(),
+      domaine: z.string().nullable().optional(),
+      niveauOntologie: z.enum(["FAMILLE", "CATEGORIE", "SOUS", "TYPE"]).nullable().optional(),
+      rendererHint: z.string().nullable().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
+      if (data.code) {
+        const [dup] = await db.select({ id: categories.id }).from(categories).where(and(eq(categories.code, data.code), ne(categories.id, Number(id)))).limit(1);
+        if (dup) throw new TRPCError({ code: "CONFLICT", message: "Ce code existe déjà" });
+      }
+      if (data.parentId && String(data.parentId) === id) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Une catégorie ne peut pas être son propre parent" });
+      }
+      if (data.domaine) {
+        const [dom] = await db.select({ code: unitesDomaines.code }).from(unitesDomaines).where(eq(unitesDomaines.code, data.domaine)).limit(1);
+        if (!dom) throw new TRPCError({ code: "BAD_REQUEST", message: `Domaine d'unité inconnu : ${data.domaine}` });
+      }
+      const set: any = { ...data, updatedAt: sql`now()` };
+      if (set.parentId != null) set.parentId = Number(set.parentId);
       const result = await db.update(categories)
-        .set({ ...data, updatedAt: sql`now()` })
+        .set(set)
         .where(eq(categories.id, id))
         .returning();
       const c = result[0];
       if (!c) throw new TRPCError({ code: "NOT_FOUND" });
-      return { id: String(c.id), nom: c.nom, code: c.code, description: c.description, parentId: c.parentId, isActive: c.isActive, name: c.nom };
+      return { id: String(c.id), nom: c.nom, code: c.code, description: c.description, parentId: c.parentId, typeBranche: c.typeBranche, domaine: c.domaine, niveauOntologie: c.niveauOntologie, rendererHint: c.rendererHint, isActive: c.isActive, name: c.nom };
     }),
 
   deleteCategory: adminProcedure
@@ -1637,5 +1680,155 @@ export const catalogRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       await db.delete(kitsLignes).where(eq(kitsLignes.id, input.id));
       return { success: true };
+    }),
+
+  // ─── CAT-01 : Vue d'ensemble agrégée ───
+  apercu: requirePermissionProcedure("stock.consulter").query(async ({ ctx }) => {
+    const start = Date.now();
+
+    // 1. Compteurs catalogue (exhaustifs, server-side)
+    const [articleCountRes] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(produitArticles)
+      .where(eq(produitArticles.isActive, true));
+
+    const [varianteCountRes] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(produits)
+      .where(and(eq(produits.isActive, true), sql`${produits.niveau} = 'VARIANTE'`));
+
+    const [modeleCountRes] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(produits)
+      .where(and(
+        eq(produits.isActive, true),
+        sql`${produits.typeProduit} IN ('OUTIL', 'EQUIPEMENT')`,
+        sql`${produits.niveau} = 'EXEMPLAIRE'`
+      ));
+
+    const totalArticles = articleCountRes?.total ?? 0;
+    const totalVariantes = varianteCountRes?.total ?? 0;
+    const totalModeles = modeleCountRes?.total ?? 0;
+
+    // 2. Qualité (service avec snapshot, TTL 10 min)
+    const qualite = await getCatalogueQualite();
+
+    // 3. Stock : articles hors stock + sous seuil + mouvements aujourd'hui
+    const [horsStockRes] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(produits)
+      .where(and(
+        eq(produits.isActive, true),
+        sql`COALESCE((SELECT SUM(s.quantite) FROM stocks s WHERE s.produit_id = ${produits.id}), 0) = 0`
+      ));
+    const outOfStock = horsStockRes?.total ?? 0;
+
+    const [sousSeuilRes] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(produits)
+      .where(and(
+        eq(produits.isActive, true),
+        sql`${produits.seuilAlerte} IS NOT NULL`,
+        sql`COALESCE((SELECT SUM(s.quantite) FROM stocks s WHERE s.produit_id = ${produits.id}), 0) < ${produits.seuilAlerte}`
+      ));
+    const belowThreshold = sousSeuilRes?.total ?? 0;
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const [mouvementsJourRes] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(mouvementsStock)
+      .where(sql`${mouvementsStock.dateMouvement} >= ${todayStart.toISOString()}`);
+    const movementsToday = mouvementsJourRes?.total ?? 0;
+
+    // 4. Outillage : prêts en retard + calibration due
+    const [pretsRetardRes] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(pretsOutils)
+      .where(and(
+        eq(pretsOutils.actif, true),
+        sql`${pretsOutils.dateRetour} < now()`
+      ));
+    const overdueLoans = pretsRetardRes?.total ?? 0;
+
+    const [calibrationDueRes] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(produits)
+      .where(and(
+        eq(produits.isActive, true),
+        sql`${produits.calibrable} = true`,
+        sql`EXISTS (SELECT 1 FROM outillage_calibration oc WHERE oc.outil_id = ${produits.id} AND oc.prochaine_calibration < now())`
+      ));
+    const calibrationDue = calibrationDueRes?.total ?? 0;
+
+    // 5. Répartition par type
+    const typeRepRes = await db
+      .select({
+        type: produits.typeProduit,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(produits)
+      .where(eq(produits.isActive, true))
+      .groupBy(produits.typeProduit);
+    const typeRepartition = typeRepRes.map(r => ({ type: r.type ?? "INCONNU", count: r.count }));
+
+    // 6. Activité récente (derniers produits créés/modifiés)
+    const recentActivity = await db
+      .select({
+        id: produits.id,
+        titre: produits.titre,
+        codeArticle: produits.codeArticle,
+        typeProduit: produits.typeProduit,
+        statutCycleVie: produits.statutCycleVie,
+        updatedAt: produits.updatedAt,
+      })
+      .from(produits)
+      .where(eq(produits.isActive, true))
+      .orderBy(desc(produits.updatedAt))
+      .limit(8);
+
+    return {
+      catalogue: {
+        articles: totalArticles,
+        variantes: totalVariantes,
+        toolModels: totalModeles,
+        toolInstances: totalModeles, // en attente distinction claire
+        equipment: null as null, // En construction
+        services: null as null, // En construction
+      },
+      quality: {
+        incompleteArticles: qualite.problemes.find(p => p.code === "INCOMPLETE_ARTICLE")?.count ?? 0,
+        duplicateCandidates: qualite.problemes.find(p => p.code === "DUPLICATE_CANDIDATE")?.count ?? 0,
+        missingCategory: qualite.problemes.find(p => p.code === "MISSING_CATEGORY")?.count ?? 0,
+        missingPrimaryReference: qualite.problemes.find(p => p.code === "MISSING_PRIMARY_REFERENCE")?.count ?? 0,
+        missingBrand: qualite.problemes.find(p => p.code === "MISSING_BRAND")?.count ?? 0,
+        score: qualite.score,
+        generatedAt: qualite.generatedAt.toISOString(),
+        problemsSummary: qualite.problemes,
+      },
+      stock: {
+        outOfStock,
+        belowThreshold,
+        movementsToday,
+      },
+      outillage: {
+        overdueLoans,
+        calibrationDue,
+      },
+      typeRepartition,
+      recentActivity,
+      serverDurationMs: Date.now() - start,
+    };
+  }),
+
+  // ─── CAT-01 : Drill-down qualité ───
+  qualiteDetail: requirePermissionProcedure("stock.consulter")
+    .input(z.object({
+      code: z.enum(["INCOMPLETE_ARTICLE", "MISSING_CATEGORY", "MISSING_BRAND", "MISSING_PRIMARY_REFERENCE", "DUPLICATE_CANDIDATE"]),
+      page: z.number().int().min(1).default(1),
+      limit: z.number().int().min(1).max(100).default(50),
+    }))
+    .query(async ({ input }) => {
+      return getQualiteDetail(input.code, input.page, input.limit);
     }),
 });

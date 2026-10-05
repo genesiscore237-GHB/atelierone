@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
-import { Check, ClipboardList, Plus, Settings2, Star, Target } from "lucide-react";
+import { useEmployeFromUrl } from "~/hooks/useEmployeFromUrl";
+import { Check, ClipboardList, History, Plus, Settings2, Star, Target } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { ConfirmationDialog } from "~/components/ui/confirmation-dialog";
+import { usePermissions } from "~/hooks/usePermissions";
+import HistoriqueDialog from "./HistoriqueDialog";
 
 const TABS = [
   { id: "grilles", label: "Grilles", icon: Settings2 },
@@ -16,7 +20,7 @@ const TABS = [
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
-const fmtFCFA = (n: number | string | null | undefined) =>
+const fmtXOF = (n: number | string | null | undefined) =>
   new Intl.NumberFormat("fr-FR").format(Number(n ?? 0));
 
 export default function EvaluationsRH() {
@@ -63,6 +67,7 @@ function GrillesSection() {
   const utils = api.useUtils();
   const { data: grids } = api.rhEvaluation.listGrids.useQuery();
   const [draft, setDraft] = useState<{ name: string; criteria: Array<{ name: string; weight: string }> } | null>(null);
+  const [confirmDel, setConfirmDel] = useState<null | { message: string; run: () => void }>(null);
 
   const create = api.rhEvaluation.createGrid.useMutation({
     onSuccess: () => { toast.success("Grille créée"); utils.rhEvaluation.listGrids.invalidate(); setDraft(null); },
@@ -103,7 +108,7 @@ function GrillesSection() {
           <div key={g.id} className="rounded-xl border border-border bg-card p-4">
             <div className="flex items-center justify-between">
               <p className="text-sm font-bold text-foreground">{g.name} <span className="ml-1 text-[10px] text-muted-foreground">échelle {g.scale}</span></p>
-              <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => { if (window.confirm(`Supprimer « ${g.name} » ?`)) remove.mutate({ id: g.id }); }}>
+              <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => setConfirmDel({ message: `Supprimer la grille « ${g.name} » ?`, run: () => remove.mutate({ id: g.id }) })}>
                 Supprimer
               </Button>
             </div>
@@ -154,6 +159,15 @@ function GrillesSection() {
           </div>
         </div>
       )}
+      <ConfirmationDialog
+        isOpen={!!confirmDel}
+        onClose={() => setConfirmDel(null)}
+        onConfirm={() => confirmDel?.run()}
+        title="Supprimer la grille"
+        description={confirmDel?.message ?? ""}
+        confirmText="Supprimer"
+        variant="destructive"
+      />
     </div>
   );
 }
@@ -348,6 +362,11 @@ function CampagnesSection() {
 // ─── 3. Historique par employé ───
 function HistoriqueSection() {
   const [employeeId, setEmployeeId] = useState("");
+  const { hasPermission } = usePermissions();
+  const [histOpen, setHistOpen] = useState(false);
+  const { data: snapshots, isLoading: histLoading, isError: histError, refetch: histRefetch } = api.rhEvaluation.listSnapshots.useQuery(undefined, { enabled: histOpen });
+  const employeUrl = useEmployeFromUrl();
+  useEffect(() => { if (employeUrl) setEmployeeId(String(employeUrl)); }, [employeUrl]);
   const { data: employees } = api.rh.list.useQuery({ limit: 100 });
   const { data: evaluations } = api.rhEvaluation.listEvaluations.useQuery(
     { employeeId: employeeId ? Number(employeeId) : undefined },
@@ -362,10 +381,17 @@ function HistoriqueSection() {
 
   return (
     <div className="space-y-4">
-      <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} className="rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none">
-        <option value="" className="bg-background">Tous les employés</option>
-        {emps.map((e) => <option key={e.id} value={String(e.id)} className="bg-background">{e.prenom} {e.nom}</option>)}
-      </select>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} className="rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none">
+          <option value="" className="bg-background">Tous les employés</option>
+          {emps.map((e) => <option key={e.id} value={String(e.id)} className="bg-background">{e.prenom} {e.nom}</option>)}
+        </select>
+        {hasPermission("rh.evaluation.modifier") && (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setHistOpen(true)}>
+            <History size={14} /> Versions archivées
+          </Button>
+        )}
+      </div>
 
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
         <table className="w-full">
@@ -394,6 +420,26 @@ function HistoriqueSection() {
           </tbody>
         </table>
       </div>
+
+      <HistoriqueDialog
+        open={histOpen}
+        onClose={() => setHistOpen(false)}
+        title="Historique des évaluations (versionné)"
+        emptyLabel="Aucune version archivée — chaque recalcul conservera l'évaluation antérieure."
+        rows={(snapshots ?? []).map((s: any) => ({
+          id: s.id,
+          version: s.version,
+          raison: s.raison,
+          creatorPrenom: s.creatorPrenom,
+          creatorName: s.creatorName,
+          createdBy: s.createdBy,
+          createdAt: s.createdAt,
+          detail: { evaluation: s.entityJson, scores: s.scoresJson },
+        }))}
+        isLoading={histLoading}
+        isError={histError}
+        onRetry={() => histRefetch()}
+      />
     </div>
   );
 }
@@ -428,7 +474,7 @@ function BaremeSection() {
               onBlur={(e) => update.mutate({ id: r.id, minScore: Number(r.minScore), maxScore: Number(r.maxScore), bonusAmount: Number(e.target.value), active: r.active })}
               className="h-8 w-32"
             />
-            <span className="text-xs text-muted-foreground">FCFA</span>
+            <span className="text-xs text-muted-foreground">XOF</span>
             <button
               type="button"
               onClick={() => update.mutate({ id: r.id, minScore: Number(r.minScore), maxScore: Number(r.maxScore), bonusAmount: Number(r.bonusAmount), active: !r.active })}

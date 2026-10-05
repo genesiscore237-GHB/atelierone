@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { createTRPCRouter, financeProcedure, requirePermissionProcedure } from "~/server/api/trpc";
 import { db, depenses, caisses, sessionsCaisse, mouvementsCaisse, ventes, clients, previsionsTresorerie, relances, dettesClients, paiements, pertesFinancieres } from "@atelierone/db";
-import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lte, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { CaisseService } from "~/server/lib/caisse-service";
+import { classerDette } from "~/server/lib/facturation-service";
 
 const EXPENSE_CATEGORIES = ["Loyer", "Salaires", "Transport", "Fournitures", "Électricité", "Maintenance", "Divers"] as const;
 
@@ -242,20 +243,30 @@ export const financeRouter = createTRPCRouter({
   getDebts: financeProcedure
     .input(z.object({
       status: z.enum(["UNPAID", "PARTIAL", "PAID", "OVERDUE"]).optional(),
+      search: z.string().trim().max(120).optional(),
     }).optional())
     .query(async ({ ctx, input }) => {
       const agenceId = ctx.user.agenceId;
+      const status = input?.status;
+      const search = input?.search?.trim().toLowerCase();
 
+      // Le restant dû est une donnée financière réelle : montantTotal − montantPaye.
+      // Les conditions SQL ne servent qu'à pré-filtrer ; le statut final est toujours
+      // recalculé en mémoire à partir des montants réels de chaque vente.
+      // Les ventes non définitives (annulée / pré-facture / brouillon) ne sont pas des créances.
       let whereConditions = [
         eq(ventes.agenceId, agenceId),
-        sql`COALESCE(${ventes.montantPaye}::numeric, 0) < COALESCE(${ventes.montantTotal}::numeric, 0)`,
+        sql`${ventes.statut} != 'annulee' AND ${ventes.statut} != 'pre_facture' AND ${ventes.statut} != 'brouillon'`,
       ];
-      if (input?.status === "PAID") {
+      if (status === "PAID") {
         whereConditions.push(sql`COALESCE(${ventes.montantPaye}::numeric, 0) >= COALESCE(${ventes.montantTotal}::numeric, 0)`);
-      } else if (input?.status === "UNPAID") {
-        whereConditions.push(sql`COALESCE(${ventes.montantPaye}::numeric, 0) = 0`);
-      } else if (input?.status === "PARTIAL") {
+      } else if (status === "UNPAID") {
+        whereConditions.push(sql`COALESCE(${ventes.montantPaye}::numeric, 0) <= 0`);
+      } else if (status === "PARTIAL") {
         whereConditions.push(sql`COALESCE(${ventes.montantPaye}::numeric, 0) > 0 AND COALESCE(${ventes.montantPaye}::numeric, 0) < COALESCE(${ventes.montantTotal}::numeric, 0)`);
+      } else {
+        // OVERDUE ou vue par défaut : créances encore dues
+        whereConditions.push(sql`COALESCE(${ventes.montantPaye}::numeric, 0) < COALESCE(${ventes.montantTotal}::numeric, 0)`);
       }
 
       const debtSales = await db
@@ -277,33 +288,67 @@ export const financeRouter = createTRPCRouter({
         .where(and(...whereConditions))
         .orderBy(desc(ventes.createdAt));
 
-      return debtSales.map((s) => {
-        const credit = Number(s.remise ?? 0);
+      // Date d'échéance réelle issue de la table des créances (dettesClients)
+      const dettesMap = new Map<number, { echeanceLe: Date | null }>();
+      const venteIds = debtSales.map((s) => s.id);
+      if (venteIds.length > 0) {
+        const dettes = await db
+          .select({ venteId: dettesClients.venteId, echeanceLe: dettesClients.echeanceLe })
+          .from(dettesClients)
+          .where(and(inArray(dettesClients.venteId, venteIds), eq(dettesClients.agenceId, agenceId)));
+        for (const d of dettes) {
+          const current = dettesMap.get(d.venteId);
+          if (!current || (d.echeanceLe && (!current.echeanceLe || new Date(d.echeanceLe) > new Date(current.echeanceLe)))) {
+            dettesMap.set(d.venteId, { echeanceLe: d.echeanceLe });
+          }
+        }
+      }
+
+      const aujourdhui = new Date();
+      aujourdhui.setHours(0, 0, 0, 0);
+
+      const debts = debtSales.map((s) => {
+        const amount = Number(s.montantTotal ?? 0);
         const paid = Number(s.montantPaye ?? 0);
-        const remaining = credit - paid;
+        const remaining = Math.max(0, amount - paid);
+        const dueDate = dettesMap.get(s.id)?.echeanceLe ?? null;
+        const computedStatus = classerDette(amount, paid, dueDate, aujourdhui);
+        const isOverdue = computedStatus === "OVERDUE";
+
+        const customerName = s.clientNom ? `${s.clientPrenom ?? ""} ${s.clientNom}`.trim() : "Client inconnu";
         return {
           id: String(s.id),
           venteId: s.id,
           reference: s.reference,
-          amount: Number(s.montantTotal),
-          remaining: Math.max(0, remaining),
-          isOverdue: false,
-          status: remaining <= 0 ? "PAID" : paid > 0 ? "PARTIAL" : "UNPAID",
-          customerName: s.clientNom ? `${s.clientPrenom ?? ""} ${s.clientNom}`.trim() : "Client inconnu",
+          amount,
+          remaining,
+          isOverdue,
+          status: computedStatus,
+          customerName,
           customerPhone: s.clientTelephone ?? null,
-          dueDate: null,
+          dueDate,
           createdAt: s.createdAt ?? new Date(),
           // French aliases
-          clientNom: s.clientNom ? `${s.clientPrenom ?? ""} ${s.clientNom}`.trim() : "Client inconnu",
+          clientNom: customerName,
           clientTelephone: s.clientTelephone ?? null,
-          montantTotal: Number(s.montantTotal),
-          credit: credit,
+          montantTotal: amount,
+          credit: Number(s.remise ?? 0),
           montantPaye: paid,
-          restant: Math.max(0, remaining),
-          statut: remaining <= 0 ? "PAID" : paid > 0 ? "PARTIAL" : "UNPAID",
+          restant: remaining,
+          statut: computedStatus,
           date: s.createdAt,
         };
       });
+
+      let result = status ? debts.filter((d) => d.status === status) : debts;
+      if (search) {
+        result = result.filter((d) =>
+          (d.reference ?? "").toLowerCase().includes(search)
+          || (d.customerName ?? "").toLowerCase().includes(search)
+          || (d.customerPhone ?? "").toLowerCase().includes(search)
+        );
+      }
+      return result;
     }),
 
   getLedger: financeProcedure

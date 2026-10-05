@@ -42,6 +42,23 @@ export const payrollItemsConfig = pgTable("payroll_items_config", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+/** Historique des modifications de la config des éléments de paie (R6-D4 : AVANT/APRÈS/QUI/QUAND/MOTIF) */
+export const payrollItemConfigHistory = pgTable("payroll_item_config_history", {
+  id: serial("id").primaryKey(),
+  itemId: integer("item_id").notNull().references(() => payrollItemsConfig.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 120 }).notNull(),
+  type: varchar("type", { length: 20 }).notNull(),
+  method: varchar("method", { length: 30 }).notNull(),
+  params: jsonb("params"),
+  isTaxable: boolean("is_taxable").default(false),
+  active: boolean("active").default(true),
+  sortOrder: integer("sort_order").default(0),
+  agenceId: integer("agence_id").notNull().references(() => agences.id),
+  reason: text("reason").notNull(),
+  changedBy: integer("changed_by").references(() => utilisateurs.id),
+  changedAt: timestamp("changed_at").defaultNow(),
+});
+
 /** Bulletins de paie mensuels */
 export const payrollEntries = pgTable("payroll_entries", {
   id: serial("id").primaryKey(),

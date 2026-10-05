@@ -1,0 +1,16 @@
+
+> @atelierone/db@0.1.0 migrate:matricules C:\Users\FAYA COMPUTER\Desktop\MES PROJETS\SAAS\atelierone\packages\db
+> tsx src/migrate-matricules-gpj.ts
+
+=== RH-02 — Conformité des matricules (GPJ-YYYY-NNNN) ===
+  #58 GPJ-NaN-0001 → GPJ-NaN-0006 (année NaN)
+  #59 GPJ-NaN-0002 → GPJ-NaN-0007 (année NaN)
+  #60 GPJ-NaN-0003 → GPJ-NaN-0008 (année NaN)
+  #61 GPJ-NaN-0004 → GPJ-NaN-0009 (année NaN)
+  #62 GPJ-NaN-0005 → GPJ-NaN-0010 (année NaN)
+
+=== RAPPORT RH-02 — Conformité des matricules ===
+  Employés vus      : 30
+  Matricules conformes conservés : 25
+  Matricules régénérés           : 5
+  Agence #1 → conservés 25 / régénérés 5

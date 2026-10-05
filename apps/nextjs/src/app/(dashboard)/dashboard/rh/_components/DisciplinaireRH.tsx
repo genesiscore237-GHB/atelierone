@@ -1,13 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
+import { useEmployeFromUrl } from "~/hooks/useEmployeFromUrl";
+import { usePermissions } from "~/hooks/usePermissions";
+import { statutLabel } from "~/lib/rh-labels";
+import { useClientPaging, PaginationBar } from "./ClientPagination";
+import { downloadCsv } from "./csv-download";
 import {
   AlertTriangle,
+  Download,
   FileText,
   Gavel,
   Plus,
+  Printer,
   Search,
   ShieldAlert,
   Trash2,
@@ -25,7 +32,7 @@ const TABS = [
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
-const fmtFCFA = (n: number | string | null | undefined) =>
+const fmtXOF = (n: number | string | null | undefined) =>
   new Intl.NumberFormat("fr-FR").format(Number(n ?? 0));
 
 function SeverityBadge({ label, level }: { label: string | null; level?: number | null }) {
@@ -77,6 +84,8 @@ export default function DisciplinaireRH() {
 // ─── 1. Registre (liste + filtres) ───
 function RegistreSection() {
   const utils = api.useUtils();
+  const { hasPermission } = usePermissions();
+  const exportDisciplinaire = api.rhDashboard.exportDisciplinaire.useQuery(undefined, { enabled: false });
   const { data: records, isLoading, isError, refetch } = api.rhDiscipline.listRecords.useQuery({});
   const [search, setSearch] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<any>(null);
@@ -86,9 +95,6 @@ function RegistreSection() {
     onError: (e) => toast.error(e.message),
   });
 
-  if (isLoading) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
-  if (isError) return <ErrorState onRetry={() => refetch()} />;
-
   const list = (records ?? []).filter(
     (r: any) =>
       !search ||
@@ -96,16 +102,38 @@ function RegistreSection() {
       (r.sanctionTypeName ?? r.typeSanction ?? "").toLowerCase().includes(search.toLowerCase())
   );
 
+  const { page, setPage, pageItems, total: listTotal, totalPages } = useClientPaging(list, 25);
+
+  if (isLoading) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
+  if (isError) return <ErrorState onRetry={() => refetch()} />;
+
   return (
     <div className="space-y-4">
-      <div className="relative w-full max-w-xs">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-        <Input placeholder="Rechercher (employé, type)..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative w-full max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
+          <Input placeholder="Rechercher (employé, type)..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+        </div>
+        {hasPermission("rh.discipline.consulter") && (
+          <Button
+            variant="outline"
+            onClick={async () => {
+              if (!exportDisciplinaire.data) await exportDisciplinaire.refetch();
+              downloadCsv(exportDisciplinaire.data, "registre-disciplinaire.csv");
+            }}
+          >
+            <Download size={15} /> Exporter
+          </Button>
+        )}
+        <Button variant="outline" onClick={() => window.print()} className="print:hidden">
+          <Printer size={15} /> Imprimer
+        </Button>
       </div>
 
       {list.length === 0 ? (
         <EmptyState icon={FileText} title="Aucun record disciplinaire" description="Enregistrez une sanction depuis l'onglet « Nouveau record »." />
       ) : (
+        <>
         <div className="overflow-x-auto rounded-xl border border-border">
           <table className="w-full text-sm">
             <thead>
@@ -120,7 +148,7 @@ function RegistreSection() {
               </tr>
             </thead>
             <tbody>
-              {list.map((r: any) => (
+              {pageItems.map((r: any) => (
                 <tr key={r.id} className="border-t border-border hover:bg-accent/40">
                   <td className="px-4 py-2.5 font-medium">{r.employePrenom} {r.employeNom}</td>
                   <td className="px-4 py-2.5">{r.sanctionTypeName ?? r.typeSanction}</td>
@@ -142,6 +170,8 @@ function RegistreSection() {
             </tbody>
           </table>
         </div>
+        <PaginationBar page={page} totalPages={totalPages} total={listTotal} onPage={setPage} label="record(s)" empty={!list.length} />
+        </>
       )}
 
       {confirmDelete && (
@@ -266,7 +296,7 @@ function NouveauSection() {
           <Input type="number" value={form.dureeJours} onChange={(e) => setForm({ ...form, dureeJours: e.target.value })} className="mt-1" />
         </div>
         <div>
-          <Label className="text-xs text-muted-foreground">Détails financiers (FCFA)</Label>
+          <Label className="text-xs text-muted-foreground">Détails financiers (XOF)</Label>
           <Input type="number" value={form.detailsFinanciers} onChange={(e) => setForm({ ...form, detailsFinanciers: e.target.value })} className="mt-1 font-mono" />
         </div>
         <div className="sm:col-span-2">
@@ -287,6 +317,8 @@ function NouveauSection() {
 function DossierSection() {
   const { data: employes } = api.rh.list.useQuery({ limit: 100 });
   const [employeeId, setEmployeeId] = useState<number | null>(null);
+  const employeUrl = useEmployeFromUrl();
+  useEffect(() => { if (employeUrl) setEmployeeId(employeUrl); }, [employeUrl]);
   const { data: dossier } = api.rhDiscipline.getEmployeeDossier.useQuery(
     { employeId: employeeId ?? 0 },
     { enabled: !!employeeId }
@@ -318,7 +350,7 @@ function DossierSection() {
             <div className="rounded-xl border border-border bg-card p-4">
               <div className="text-xs uppercase tracking-wider text-muted-foreground">Employé</div>
               <div className="mt-1 text-sm font-bold text-foreground">{dossier.employe.fullName}</div>
-              <div className="text-xs text-muted-foreground">{dossier.employe.statut}</div>
+              <div className="text-xs text-muted-foreground">{statutLabel(dossier.employe.statut)}</div>
             </div>
             <div className="rounded-xl border border-border bg-card p-4">
               <div className="text-xs uppercase tracking-wider text-muted-foreground">Records</div>
@@ -367,7 +399,7 @@ function DossierSection() {
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                        {r.creatorPrenom ? `${r.creatorPrenom} ${r.creatorNom}` : "—"}
+                        {r.creatorPrenom ? `${r.creatorPrenom} ${r.creatorNom ?? r.creatorName ?? ""}`.trim() : "—"}
                       </td>
                       <td className="px-4 py-2.5">
                         {r.documentUrl ? (

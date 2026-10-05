@@ -24,6 +24,7 @@
 13. [Règles métier transverses (référence)](#13-règles-métier-transverses--référence)
 14. [FAQ globale](#14-faq-globale)
 15. [Glossaire](#15-glossaire)
+16. [Données GPJ déjà chargées (import du fichier v3.1)](#16-données-gpj-déjà-chargées-import-du-fichier-v31)
 
 ---
 
@@ -835,6 +836,55 @@ Oui : Tableau de bord RH → Rapports → 4 exports CSV (employés, présences, 
 | **Record disciplinaire** | Enregistrement d'une sanction (faits, type, décision, auteur) |
 | **Décision notifiée** | Sanction officiellement notifiée à l'employé (horodatée) |
 | **Export CSV** | Fichier de données ouvrable dans Excel |
+
+---
+
+## 16. Données GPJ déjà chargées (import du fichier v3.1)
+
+Le module RH n'est pas livré vide : les données du fichier officiel
+**`Gestion_Personnel_GPJ_PRO_v3.1_Corrige.xlsx`** ont été importées une première fois
+lors de la mise en place. Vous pouvez les consulter immédiatement sans saisie préalable :
+
+| Feuille du fichier | Contenu chargé dans l'app | Où le voir |
+|---|---|---|
+| 01_Employes | Les **15 employés** (EMP001 → EMP015) avec nom, prénom, poste, département, téléphones, emails, salaire de base, type de contrat, CNPS, adresse | RH ▸ Fiches employés |
+| 02_Pointage | **264 journées de pointage** (24/08 → 30/09/2026) : arrivées, départs, validations (arrivée anticipée / départ tardif), primes de tâche, notes | RH ▸ Présences ▸ Historique |
+| 03_Paie | Parité calculée : les **heures normales de septembre 2026** par employé recalculées par l'app = celles du fichier (écart max 0,01 h) | RH ▸ Présences ▸ Mensuel & clôture |
+| 04_Congés | Le congé **EMP006 (Maladie — accident de travail, 28/08/2026), approuvé** | RH ▸ Congés & Absences |
+| 00_Parametres | Seuil HS **9,5 h semaine / 4,5 h samedi**, tolérance retard **0 min**, arrondi **désactivé**, base **225,3 h/mois**, majoration HS **×1,5**, congé annuel **30 j** | RH ▸ Paramétrage RH |
+| 05_Contrats | **15 contrats** (type, date de début, salaire, poste) alignés sur le fichier | RH ▸ Contrats |
+
+### 16.1 Pourquoi les heures sont-elles « recalculées par l'app » ?
+
+Dans le fichier, certaines colonnes vertes (heures normales, HS, retards) contiennent des
+valeurs **en cache** qui peuvent être fausses (ex. : total du mois d'EMP002 différent de la
+somme de ses propres journées). L'app ne stocke pas ces valeurs : elle conserve les
+**heures brutes** (arrivée / départ / pauses) et **recalcule tout** avec un moteur unique
+(une seule règle, toujours identique), ce qui garantit la cohérence des totaux de paie.
+
+### 16.2 Ré-importer ou mettre à jour les données
+
+Vous ne devrez normalement **jamais** relancer l'import : la saisie se fait désormais dans
+l'app. Toutefois, pour charger une version corrigée du fichier (ou relancer la démonstration
+sans doublons), l'import est **idempotent** :
+
+```bash
+# depuis packages/db
+npm run import:gpj
+```
+
+Il met à jour les 15 fiches, rejoue les 264 journées de pointage, reconstruit les résumés
+d'août et septembre 2026 (non clôturés : la clôture reste une action de l'administrateur
+dans RH ▸ Présences ▸ Mensuel & clôture, préalable à la paie) et réinjecte le congé EMP006.
+
+### 16.3 Points à connaître sur les données actuelles
+
+- **EMP013 (Nague Zemdjui)** : salaire de base **1 000 F** = valeur du fichier v3.1
+  (corrigée de 10 000 → 1 000). Demander au client la confirmation avant la première paie.
+- **EMP014** embauché le 20/07/2026 ; **EMP015** (contrat CDD) : dates de contrat déduites de
+  sa première présence (07/09/2026), à confirmer.
+- Les journées importées apparaissent à l'historique des présences ; le **pointage en direct**
+  (badges/preuves de présence) reste lui un usage à partir d'aujourd'hui.
 
 ---
 

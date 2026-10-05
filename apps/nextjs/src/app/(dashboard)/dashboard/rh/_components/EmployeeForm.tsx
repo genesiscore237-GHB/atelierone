@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Loader2, X } from "lucide-react";
+import { Loader2, Lock, X } from "lucide-react";
 import { toast } from "sonner";
+import { usePermissions } from "~/hooks/usePermissions";
+import { TYPE_EMPLOYE_OPTIONS as typeOptions, MODE_PAIE_OPTIONS as modePaieOptions, STATUT_EMPLOYE_OPTIONS_SAISIE as statutOptions } from "~/lib/rh-labels";
 import { api } from "~/trpc/react";
 
 interface EmployeeFormProps {
@@ -12,22 +14,6 @@ interface EmployeeFormProps {
   employeeId: string | null;
   onSaved: () => void;
 }
-
-const typeOptions = [
-  { value: "permanent", label: "CDI — Permanent" },
-  { value: "contractuel", label: "CDD — Contractuel" },
-  { value: "stagiaire", label: "Stagiaire" },
-  { value: "temporaire", label: "Temporaire / Saisonnier" },
-  { value: "apprenti", label: "Apprenti" },
-  { value: "prestataire", label: "Prestataire" },
-];
-
-const modePaieOptions = [
-  { value: "mensuel", label: "Mensuel" },
-  { value: "horaire", label: "Horaire" },
-  { value: "journalier", label: "Journalier" },
-  { value: "commission", label: "Commission" },
-];
 
 const emptyForm = {
   civilite: "",
@@ -49,6 +35,7 @@ const emptyForm = {
   positionId: "",
   workCycleId: "",
   managerId: "",
+  statut: "actif" as const,
   dateEmbauche: new Date().toISOString().split("T")[0],
   dateFinContrat: "",
   periodeEssaiFin: "",
@@ -62,6 +49,7 @@ const emptyForm = {
   numPieceIdentite: "",
   pieceExpireLe: "",
   diplome: "",
+  photoUrl: "",
   notes: "",
   langues: "",
   logiciels: "",
@@ -129,7 +117,9 @@ function AffectationSection({
 }
 
 export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeFormProps) {
-  const isEdit = employeeId !== null;
+  const isEdit = employeeId !== null     ;
+  const { hasPermission } = usePermissions();
+  const canSeeSalary = hasPermission("rh.salaire.consulter");
 
   const { data: existing, error: getError } = api.rh.get.useQuery(
     { id: String(employeeId) },
@@ -147,6 +137,7 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
 
   const [form, setForm] = useState<FormData>(emptyForm);
   const [isPending, setIsPending] = useState(false);
+  const [matricule, setMatricule] = useState("");
 
   useEffect(() => {
     if (isOpen) {
@@ -176,6 +167,7 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
           periodeEssaiFin: existing.periodeEssaiFin ?? "",
           salaireBase: existing.salaireBase ?? "",
           modePaie: (existing.modePaie as FormData["modePaie"]) ?? "mensuel",
+          statut: (existing.statut as FormData["statut"]) ?? "actif",
           numCnss: existing.numCnss ?? "",
           niu: existing.niu ?? "",
           numCompteBancaire: existing.numCompteBancaire ?? "",
@@ -184,6 +176,7 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
           numPieceIdentite: existing.numPieceIdentite ?? "",
           pieceExpireLe: existing.pieceExpireLe ?? "",
           diplome: existing.diplome ?? "",
+          photoUrl: existing.photoUrl ?? "",
           notes: existing.notes ?? "",
           langues: existing.langues ?? "",
           logiciels: existing.logiciels ?? "",
@@ -196,6 +189,14 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
     }
   }, [isOpen, isEdit, existing]);
 
+  // Génération automatique du matricule GPJ-YYYY-NNNN
+  const aujourdhui = new Date();
+  const annee = aujourdhui.getFullYear();
+  const matriculeExistant = matricule;
+  if (!matriculeExistant || !matriculeExistant.startsWith("GPJ")) {
+    setMatricule(`GPJ-${annee}-0001`);
+  }
+
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -205,6 +206,27 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
 
   const set = (key: keyof FormData, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const [uploading, setUploading] = useState(false);
+  const uploadPhoto = async (file: File) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { toast.error("Veuillez choisir une image (JPG, PNG, WebP)"); return; }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("folder", "photos");
+      fd.append("file", file);
+      const res = await fetch("/api/uploads", { method: "POST", body: fd });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error || "Échec de l'upload");
+      set("photoUrl", j.url || j.path || "");
+      toast.success("Photo importée");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Échec de l'upload");
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -230,6 +252,7 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
           nom: form.nom, prenom: form.prenom, fonction: form.fonction,
           typeEmploye: form.typeEmploye as any,
           modePaie: form.modePaie as any,
+          statut: form.statut as "actif" | "conge" | "suspendu" | "archive",
           sexe: sexeVal ?? null,
           telephone: form.telephone || null, adresse: form.adresse || null,
           ville: form.ville || null, telephoneSecondaire: form.telephoneSecondaire || null,
@@ -244,6 +267,7 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
           banque: form.banque || null,
           typePieceIdentite: form.typePieceIdentite || null, numPieceIdentite: form.numPieceIdentite || null,
           pieceExpireLe: form.pieceExpireLe || null, diplome: form.diplome || null,
+          photoUrl: form.photoUrl || null,
           notes: form.notes || null,
           langues: form.langues || null, logiciels: form.logiciels || null,
           pointsFort: form.pointsFort || null, axesAmelioration: form.axesAmelioration || null,
@@ -275,6 +299,7 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
           banque: form.banque || undefined,
           typePieceIdentite: form.typePieceIdentite || undefined, numPieceIdentite: form.numPieceIdentite || undefined,
           pieceExpireLe: form.pieceExpireLe || undefined, diplome: form.diplome || undefined,
+          photoUrl: form.photoUrl || undefined,
           notes: form.notes || undefined,
           langues: form.langues || undefined, logiciels: form.logiciels || undefined,
           pointsFort: form.pointsFort || undefined, axesAmelioration: form.axesAmelioration || undefined,
@@ -332,6 +357,18 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
               <input placeholder="Nom *" value={form.nom} onChange={(e) => set("nom", e.target.value)} required
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
+              <div className="col-span-2 flex items-center gap-3">
+                {form.photoUrl ? (
+                  <img src={form.photoUrl} alt="Photo" className="h-14 w-14 rounded-full object-cover ring-1 ring-border" />
+                ) : (
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-accent/40 text-xs text-muted-foreground">Photo</div>
+                )}
+                <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border bg-accent/30 px-3 py-2 text-sm text-foreground hover:border-primary/50">
+                  {uploading ? "Envoi…" : "Téléverser la photo"}
+                  <input type="file" accept="image/*" className="hidden" disabled={uploading}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
+                </label>
+              </div>
               <input placeholder="Date de naissance" type="date" value={form.dateNaissance} onChange={(e) => set("dateNaissance", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50 [color-scheme:dark]" />
               <input placeholder="Lieu de naissance" value={form.lieuNaissance} onChange={(e) => set("lieuNaissance", e.target.value)}
@@ -383,18 +420,35 @@ export function EmployeeForm({ isOpen, onClose, employeeId, onSaved }: EmployeeF
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
               <input placeholder="Date d'embauche" type="date" value={form.dateEmbauche} onChange={(e) => set("dateEmbauche", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50 [color-scheme:dark]" />
+              {isEdit && (
+                <select value={form.statut} onChange={(e) => set("statut", e.target.value)}
+                  className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50">
+                  {statutOptions.map((o) => (
+                    <option key={o.value} value={o.value} className="bg-background">{o.label}</option>
+                  ))}
+                </select>
+              )}
               <input placeholder="Date fin contrat" type="date" value={form.dateFinContrat} onChange={(e) => set("dateFinContrat", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50 [color-scheme:dark]" />
               <input placeholder="Fin période d'essai" type="date" value={form.periodeEssaiFin} onChange={(e) => set("periodeEssaiFin", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50 [color-scheme:dark]" />
-              <input placeholder="Salaire de base (XOF)" type="number" value={form.salaireBase} onChange={(e) => set("salaireBase", e.target.value)}
-                className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
-              <select value={form.modePaie} onChange={(e) => set("modePaie", e.target.value)}
-                className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50">
-                {modePaieOptions.map((o) => (
-                  <option key={o.value} value={o.value} className="bg-background">{o.label}</option>
-                ))}
-              </select>
+              {canSeeSalary ? (
+                <>
+                  <input placeholder="Salaire de base (XOF)" type="number" value={form.salaireBase} onChange={(e) => set("salaireBase", e.target.value)}
+                    className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
+                  <select value={form.modePaie} onChange={(e) => set("modePaie", e.target.value)}
+                    className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50">
+                    {modePaieOptions.map((o) => (
+                      <option key={o.value} value={o.value} className="bg-background">{o.label}</option>
+                    ))}
+                  </select>
+                </>
+              ) : (
+                <div className="col-span-2 flex items-center gap-2 rounded-xl border border-border bg-accent/10 p-3 text-xs text-muted-foreground">
+                  <Lock size={14} className="shrink-0" />
+                  Accès restreint : vos permissions ne permettent pas de consulter le salaire ni le mode de paiement.
+                </div>
+              )}
               <input placeholder="N° CNSS" value={form.numCnss} onChange={(e) => set("numCnss", e.target.value)}
                 className="rounded-xl border border-border bg-accent/30 p-3 text-sm text-foreground outline-none focus:border-primary/50" />
               <input placeholder="N° NIU" value={form.niu} onChange={(e) => set("niu", e.target.value)}

@@ -3,6 +3,13 @@ export function formatCurrency(amount: number | string | null | undefined): stri
   return `${n.toLocaleString("fr-FR")} F`;
 }
 
+export const DEVISE_DEFAUT = "XOF";
+
+export function formatDevise(amount: number | string | null | undefined, devise: string | null | undefined = DEVISE_DEFAUT): string {
+  const n = typeof amount === "string" ? Number(amount) : (amount ?? 0);
+  return `${n.toLocaleString("fr-FR")} ${devise || DEVISE_DEFAUT}`;
+}
+
 export function formatCurrencyShort(amount: number | string | null | undefined): string {
   const n = typeof amount === "string" ? Number(amount) : (amount ?? 0);
   return `${n.toLocaleString("fr-FR")} FCFA`;

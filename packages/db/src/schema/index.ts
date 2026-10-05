@@ -30,6 +30,7 @@ export { permissions } from "./permissions";
 export { rolePermissions } from "./role_permissions";
 export { userRoles } from "./user_roles";
 export { employes } from "./employes";
+export { archives } from "./archives";
 export { verificationTokens } from "./verification_tokens";
 export { organisations, clesApi } from "./platform";
 export { travauxExport } from "./travaux_export";
@@ -75,6 +76,7 @@ export {
   hrSanctionTypes,
   hrPublicHolidays,
   hrGeneralSettings,
+  hrSensibilisationRules,
 } from "./rh_parametrage";
 export {
   departments,
@@ -82,12 +84,17 @@ export {
   contractTypes,
   employeePositions,
   employeeSalaryHistory,
+  employeeStatusHistory,
+  employeeAdvances,
+  advanceRecoveries,
+  advanceTransitions,
 } from "./rh_employes";
 export {
   attendanceEntries,
   overtimeAuthorizations,
   attendanceCalculations,
   attendanceMonthlySummaries,
+  lateDeductionRules,
 } from "./rh_presences";
 export { planningAffectations } from "./rh_planning";
 export { employeePostures, TYPES_MISSION } from "./rh_postures";
@@ -99,6 +106,7 @@ export {
 export {
   payrollPeriods,
   payrollItemsConfig,
+  payrollItemConfigHistory,
   payrollEntries,
   payrollEntryLines,
 } from "./rh_paie";
@@ -111,6 +119,12 @@ export {
   performanceBonusRules,
 } from "./rh_evaluation";
 export {
+  payrollEntrySnapshots,
+  planningSnapshots,
+  evaluationSnapshots,
+  leaveBalanceSnapshots,
+} from "./rh_snapshots";
+export {
   skills,
   positionSkills,
   employeeSkills,
@@ -119,9 +133,60 @@ export {
   trainingParticipations,
 } from "./rh_competences";
 export { hrDocumentTypes } from "./rh_documents";
+export {
+  hrSituationTypes,
+  employeeSituations,
+  employeeSituationTransitions,
+} from "./rh_situations";
+export { contractVersions, rhAuditLogs } from "./rh_history";
+export {
+  rhAbsenceJustifications,
+  rhAbsenceJustificationDecisions,
+} from "./rh_absence_justifications";
+export type { StatutJustificatif } from "./rh_absence_justifications";
 export { tenantSites, tenantLicences, tenantPaiements, syncIngests, tenantSnapshots, tenantRelances, tenantAudit, tenantUsage } from "./tenant";
 export { licenceLocale, syncEtat, syncOutbox } from "./saa_local";
 export { pretsOutils } from "./prets_outils";
 export { demandesCommande } from "./demandes_commande";
 export { compatibilitesProduits } from "./compatibilites_produits";
+export { articleAttributs, articleDocuments, outillageMaintenance, outillageCalibration, varianteAttributs } from "./articles_avances";
+export { attributDefinitions, unitesDomaines, unitesConversions } from "./catalogue_ontologie";
+export { produitArticles } from "./produit_articles";
+export { produitReferencesEquiv } from "./produit_references_equiv";
+export { produitReferences, produitSupersessions, produitSubstitutions, attributTemplates } from "./produit_relations";
 export { orInspections, orInspectionPoints, orDevisVersions, orAutorisations, orControlesQualite, orRestitutions } from "./or_cycle_vie";
+export { catalogueQualite } from "./catalogue_qualite";
+export {
+  guideCategories,
+  guideSteps,
+  guideRules,
+  guideExamples,
+  guideCommonErrors,
+  guideSearchAliases,
+  guideVariantTypes,
+  guideVariantDifferentiators,
+  guideProcedures,
+  guideProcedureSteps,
+  guideFieldMappings,
+  guideModelingRules,
+  guideRelations,
+} from "./guide";
+export {
+  parkingSites,
+  parkingZones,
+  parkingSpots,
+  parkingVehicles,
+  parkingMovements,
+  parkingAlerts,
+  parkingTasks,
+  parkingConfigs,
+  parkingVehiclePhotos,
+} from "./parking";
+export type {
+  ParkingGeometry,
+  ParkingZoneType,
+  ParkingSpotStatus,
+  ParkingVehicleStatus,
+  ParkingMovementType,
+  ParkingAlertCode,
+} from "./parking";

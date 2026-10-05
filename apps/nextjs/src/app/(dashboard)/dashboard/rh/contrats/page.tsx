@@ -1,10 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { api } from "~/trpc/react";
+import { useEmployeFromUrl } from "~/hooks/useEmployeFromUrl";
 import { motion } from "framer-motion";
 import { Plus, Search, X, FileText, CheckCircle, Clock, RefreshCw, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import { statutLabel } from "~/lib/rh-labels";
+import { formatDevise } from "~/lib/format";
+import { useClientPaging, PaginationBar } from "../_components/ClientPagination";
 
 const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
 
@@ -15,6 +20,8 @@ export default function ContratsPage() {
     employeId: 0, typeContrat: "CDI", dateDebut: "", dateFin: "", dureeMois: 0,
     finPeriodeEssai: "", avantages: "", salaireBase: "", poste: "", notes: "",
   });
+  const employeUrl = useEmployeFromUrl();
+  useEffect(() => { if (employeUrl) setForm((f) => ({ ...f, employeId: employeUrl })); }, [employeUrl]);
   const utils = api.useUtils();
 
   const { data: contrats, isLoading } = api.rh.listContrats.useQuery({});
@@ -47,9 +54,12 @@ export default function ContratsPage() {
   const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
 
   const filtered = (contrats ?? []).filter((c: any) => {
+    if (employeUrl && c.employeId !== employeUrl) return false;
     const q = search.toLowerCase();
     return !q || empName(c.employeId).toLowerCase().includes(q) || String(c.typeContrat ?? "").toLowerCase().includes(q) || String(c.poste ?? "").toLowerCase().includes(q);
   });
+
+  const { page, setPage, pageItems, total: filteredTotal, totalPages } = useClientPaging(filtered, 25);
 
   return (
     <div>
@@ -62,6 +72,17 @@ export default function ContratsPage() {
           <Plus size={16} /> Nouveau contrat
         </button>
       </div>
+
+      {employeUrl && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+          <span>
+            Contrats de <b>{empName(employeUrl)}</b>
+          </span>
+          <Link href="/dashboard/rh/contrats" className="inline-flex items-center gap-1 font-bold text-primary hover:underline">
+            <X size={12} /> Effacer le filtre employé
+          </Link>
+        </div>
+      )}
 
       <div className="mb-6 relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
@@ -89,9 +110,9 @@ export default function ContratsPage() {
                 <tr key={i} className="border-t border-border"><td colSpan={9} className="px-4 py-3"><div className="h-4 bg-muted rounded animate-pulse" /></td></tr>
               ))
             ) : !filtered.length ? (
-              <tr><td colSpan={9} className="text-center py-12 text-muted-foreground"><FileText size={32} className="mx-auto mb-2 opacity-50" />Aucun contrat</td></tr>
+              <tr><td colSpan={9} className="text-center py-12 text-muted-foreground"><FileText size={32} className="mx-auto mb-2 opacity-50" />{search ? "Aucun contrat ne correspond à la recherche" : "Aucun contrat"}</td></tr>
             ) : (
-              filtered.map((c: any) => {
+              pageItems.map((c: any) => {
                 const expire = c.dateFin && c.dateFin >= today && c.dateFin <= in30;
                 const expireBientot = c.dateFin && c.dateFin < in30;
                 const essaiEnCours = c.finPeriodeEssai && c.finPeriodeEssai >= today;
@@ -110,10 +131,10 @@ export default function ContratsPage() {
                       {c.finPeriodeEssai ? new Date(c.finPeriodeEssai).toLocaleDateString("fr-FR") : "—"}
                       {essaiEnCours && <span className="ml-1.5 rounded-full bg-info/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-info-foreground">Essai</span>}
                     </td>
-                    <td className="px-4 py-3 text-right font-mono">{c.salaireBase ? `${Number(c.salaireBase).toLocaleString()} F` : "—"}</td>
+                    <td className="px-4 py-3 text-right font-mono">{c.salaireBase ? formatDevise(c.salaireBase) : "—"}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${c.statut === "actif" ? "bg-success/10 text-success-foreground dark:bg-success/10 dark:text-success-foreground" : "bg-muted text-foreground/80 dark:bg-muted/50 dark:text-muted-foreground"}`}>
-                        {c.statut === "actif" ? <CheckCircle size={12} /> : <Clock size={12} />} {c.statut === "actif" ? "Actif" : c.statut}
+                        {c.statut === "actif" ? <CheckCircle size={12} /> : <Clock size={12} />} {statutLabel(c.statut)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center">
@@ -133,6 +154,8 @@ export default function ContratsPage() {
           </tbody>
         </table>
       </div>
+
+      <PaginationBar page={page} totalPages={totalPages} total={filteredTotal} onPage={setPage} label="contrat(s)" empty={!filtered.length} />
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowModal(false)}>
@@ -172,7 +195,7 @@ export default function ContratsPage() {
                   <input type="date" className="w-full rounded-lg border border-border px-4 py-2.5 dark:bg-muted dark:border-border dark:text-foreground outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" value={form.finPeriodeEssai} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, finPeriodeEssai: e.target.value })} />
                 </div>
               </div>
-              <input type="number" placeholder="Salaire brut (FCFA)" className="w-full rounded-lg border border-border px-4 py-2.5 dark:bg-muted dark:border-border dark:text-foreground outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary font-mono" value={form.salaireBase} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, salaireBase: e.target.value })} />
+              <input type="number" placeholder="Salaire brut (XOF)" className="w-full rounded-lg border border-border px-4 py-2.5 dark:bg-muted dark:border-border dark:text-foreground outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary font-mono" value={form.salaireBase} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, salaireBase: e.target.value })} />
               <textarea placeholder="Avantages (un par ligne : logement, transport, mutuelle…)" rows={2} className="w-full rounded-lg border border-border px-4 py-2.5 dark:bg-muted dark:border-border dark:text-foreground outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" value={form.avantages} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setForm({ ...form, avantages: e.target.value })} />
               <button type="submit" disabled={createContrat.isPending} className="w-full rounded-lg bg-gradient-to-r from-primary to-primary py-2.5 text-sm font-semibold text-foreground hover:from-primary/80 hover:to-primary/80 disabled:opacity-50 transition-all">
                 {createContrat.isPending ? "Création..." : "Créer le contrat"}

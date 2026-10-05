@@ -162,7 +162,7 @@ export function ActivitesClient({ clientId, clientName }: { clientId: number; cl
                     )}
                     <span className="text-muted-foreground">{v.orCourant.statut}</span>
                     {v.orCourant.raisonBlocage && <span className="text-warning">bloqué : {v.orCourant.raisonBlocage}</span>}
-                    <Link href={`/dashboard/ordres-reparation?or=${v.orCourant.id}`} className="ml-auto inline-flex items-center gap-1 font-semibold text-primary hover:underline">
+                    <Link href={`/dashboard/ordres-reparation/${v.orCourant.id}`} className="ml-auto inline-flex items-center gap-1 font-semibold text-primary hover:underline">
                       Ouvrir l'OR <ArrowRight size={12} />
                     </Link>
                   </div>
@@ -198,7 +198,7 @@ export function ActivitesClient({ clientId, clientName }: { clientId: number; cl
                             </Button>
                           )}
                           {canConsulter && (
-                            <Link href={`/dashboard/ordres-reparation?or=${f.orId}`} className="ml-auto inline-flex items-center gap-1 font-semibold text-primary hover:underline">
+                            <Link href={`/dashboard/ordres-reparation/${f.orId}`} className="ml-auto inline-flex items-center gap-1 font-semibold text-primary hover:underline">
                               Fiche OR <ArrowRight size={11} />
                             </Link>
                           )}

@@ -12,6 +12,7 @@ import {
 } from "@atelierone/db";
 import { eq, and, desc } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import { estIsoDateValide } from "~/server/lib/payroll-engine";
 
 const scheduleSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
@@ -174,7 +175,7 @@ export const rhSettingsRouter = createTRPCRouter({
     }));
   }),
 
-  createCycle: requirePermissionProcedure("rh.utilisateur.modifier")
+  createCycle: requirePermissionProcedure("rh.parametrage.modifier")
     .input(cycleInputSchema)
     .mutation(async ({ ctx, input }) => {
       const agenceId = ctx.user.agenceId;
@@ -200,7 +201,7 @@ export const rhSettingsRouter = createTRPCRouter({
       return cycle;
     }),
 
-  updateCycle: requirePermissionProcedure("rh.utilisateur.modifier")
+  updateCycle: requirePermissionProcedure("rh.parametrage.modifier")
     .input(z.object({ id: z.number().int(), ...cycleInputSchema.shape }))
     .mutation(async ({ ctx, input }) => {
       const agenceId = ctx.user.agenceId;
@@ -229,7 +230,7 @@ export const rhSettingsRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  deleteCycle: requirePermissionProcedure("rh.utilisateur.modifier")
+  deleteCycle: requirePermissionProcedure("rh.parametrage.modifier")
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       await db
@@ -248,7 +249,7 @@ export const rhSettingsRouter = createTRPCRouter({
     return row ?? null;
   }),
 
-  updateAttendanceSettings: requirePermissionProcedure("rh.utilisateur.modifier")
+  updateAttendanceSettings: requirePermissionProcedure("rh.parametrage.modifier")
     .input(
       z.object({
         lateToleranceMinutes: z.number().int().min(0),
@@ -286,7 +287,7 @@ export const rhSettingsRouter = createTRPCRouter({
       .orderBy(hrLeaveTypes.id);
   }),
 
-  createLeaveType: requirePermissionProcedure("rh.utilisateur.modifier")
+  createLeaveType: requirePermissionProcedure("rh.parametrage.modifier")
     .input(
       z.object({
         code: z.string().min(1),
@@ -305,7 +306,7 @@ export const rhSettingsRouter = createTRPCRouter({
       return row;
     }),
 
-  updateLeaveType: requirePermissionProcedure("rh.utilisateur.modifier")
+  updateLeaveType: requirePermissionProcedure("rh.parametrage.modifier")
     .input(
       z.object({
         id: z.number().int(),
@@ -327,7 +328,7 @@ export const rhSettingsRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  deleteLeaveType: requirePermissionProcedure("rh.utilisateur.modifier")
+  deleteLeaveType: requirePermissionProcedure("rh.parametrage.modifier")
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       await db
@@ -345,7 +346,7 @@ export const rhSettingsRouter = createTRPCRouter({
       .orderBy(hrSanctionTypes.severityLevel);
   }),
 
-  createSanctionType: requirePermissionProcedure("rh.utilisateur.modifier")
+  createSanctionType: requirePermissionProcedure("rh.parametrage.modifier")
     .input(
       z.object({
         code: z.string().min(1),
@@ -361,7 +362,7 @@ export const rhSettingsRouter = createTRPCRouter({
       return row;
     }),
 
-  updateSanctionType: requirePermissionProcedure("rh.utilisateur.modifier")
+  updateSanctionType: requirePermissionProcedure("rh.parametrage.modifier")
     .input(
       z.object({
         id: z.number().int(),
@@ -380,7 +381,7 @@ export const rhSettingsRouter = createTRPCRouter({
       return { success: true };
     }),
 
-  deleteSanctionType: requirePermissionProcedure("rh.utilisateur.modifier")
+  deleteSanctionType: requirePermissionProcedure("rh.parametrage.modifier")
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       await db
@@ -398,15 +399,39 @@ export const rhSettingsRouter = createTRPCRouter({
       .orderBy(hrPublicHolidays.date);
   }),
 
-  addHoliday: requirePermissionProcedure("rh.utilisateur.modifier")
+  addHoliday: requirePermissionProcedure("rh.parametrage.modifier")
     .input(
       z.object({
-        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Format attendu : YYYY-MM-DD"),
+        // RPT-02 §3 : format ET realite. Une date impossible (2026-02-31)
+        // passerait le regex puis serait rejetee par la colonne DATE, ou pire,
+        // decalee les bornes de tous les calculs qui la consomment.
+        date: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/, "Format attendu : YYYY-MM-DD")
+          .refine((v) => estIsoDateValide(v), "Date inexistante : vérifiez le jour et le mois."),
         name: z.string().min(1),
         isRecurringYearly: z.boolean().default(false),
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Contrainte UNIQUE (agence_id, date) posee par la migration : le
+      // doublon est refuse avec un message clair, pas une erreur PostgreSQL.
+      const [existant] = await db
+        .select({ id: hrPublicHolidays.id })
+        .from(hrPublicHolidays)
+        .where(
+          and(
+            eq(hrPublicHolidays.agenceId, ctx.user.agenceId),
+            eq(hrPublicHolidays.date, input.date)
+          )
+        )
+        .limit(1);
+      if (existant) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: `Un jour férié existe déjà pour le ${input.date} sur cette agence.`,
+        });
+      }
       const [row] = await db
         .insert(hrPublicHolidays)
         .values({ ...input, agenceId: ctx.user.agenceId } as any)
@@ -414,7 +439,7 @@ export const rhSettingsRouter = createTRPCRouter({
       return row;
     }),
 
-  deleteHoliday: requirePermissionProcedure("rh.utilisateur.modifier")
+  deleteHoliday: requirePermissionProcedure("rh.parametrage.modifier")
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       await db
@@ -433,7 +458,7 @@ export const rhSettingsRouter = createTRPCRouter({
     return row ?? null;
   }),
 
-updateGeneralSettings: requirePermissionProcedure("rh.utilisateur.modifier")
+updateGeneralSettings: requirePermissionProcedure("rh.parametrage.modifier")
     .input(
       z.object({
         employeeCodePrefix: z.string().min(1).max(10),

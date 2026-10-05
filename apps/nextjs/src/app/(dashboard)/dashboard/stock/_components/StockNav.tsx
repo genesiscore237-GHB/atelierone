@@ -2,14 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, ListOrdered, Repeat, ClipboardList, Package, TrendingUp, Store, ArrowLeftRight, RefreshCw, LayoutGrid, SearchCheck, BellRing, Hammer } from "lucide-react";
+import { LayoutDashboard, ListOrdered, Repeat, ClipboardList, Package, TrendingUp, Store, ArrowLeftRight, RefreshCw, LayoutGrid, SearchCheck, BellRing } from "lucide-react";
 
 const tabs = [
   { href: "/dashboard/stock", label: "Dashboard", icon: LayoutDashboard, exact: true },
   { href: "/dashboard/stock/chercher-avant-commander", label: "Chercher avant de commander", icon: SearchCheck },
   { href: "/dashboard/stock/alertes", label: "Alertes", icon: BellRing },
   { href: "/dashboard/stock/mouvements", label: "Mouvements", icon: ListOrdered },
-  { href: "/dashboard/stock/outillage", label: "Outillage", icon: Hammer },
   { href: "/dashboard/stock/rayons", label: "Rayons", icon: LayoutGrid },
   { href: "/dashboard/stock/mise-en-rayon", label: "Mise en rayon", icon: Store },
   { href: "/dashboard/stock/deconditionnement", label: "Déconditionnement", icon: Repeat },
