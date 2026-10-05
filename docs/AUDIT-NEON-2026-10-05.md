@@ -478,7 +478,55 @@ Le build ne dépend plus d'aucune variable, mais **l'application en a besoin pou
 | `DATABASE_URL` | **absente sur Vercel** | première requête DB → `Error: DATABASE_URL is not set` (message explicite, pas de crash silencieux) |
 | `AUTH_SECRET` | **absente sur Vercel** | `resolveAuthSecret()` lève au runtime → `/api/auth/*` en 500 |
 
-Ces deux variables sont **obligatoires avant toute mise en ligne** : la base locale n'est pas joignable depuis Vercel, ce qui renvoie à la migration Neon (§16).
+Ces deux variables sont **obligatoires avant toute mise en ligne** : la base locale n'est pas joignable depuis Vercel. La cible retenue est Neon — procédure complète en §15 ter.
+
+---
+
+### 15 ter. Base Neon vérifiée et raccordement Vercel (2026-10-05)
+
+**État de `neondb` (relevé en lecture seule)** :
+
+| Critère | Valeur constatée | Impact |
+| --- | --- | --- |
+| Connexion applicative | **OK** — chemin réel du projet (`Proxy` lazy → `postgres-js 3.4.9`, `prepare:false`, `ssl=require`, pooler) | le client runtime est validé contre Neon, pas seulement le pilote brut |
+| Serveur | PostgreSQL 18.6 (aarch64, Linux) | conforme |
+| Bases joignables | `neondb`, `postgres` | plusieurs bases par endpoint → un essai ICU est envisageable |
+| Tables / index / publications | **0 / 0 / 0** | **base vide** : aucun écran ne fonctionnera avant la migration du schéma (§16) |
+| Poids | 7 968 kB | rien n'a été migré |
+| Extensions | `plpgsql` uniquement (`pg_trgm` absent) | aucun écart avec la source (C23) |
+| Collation | **`C.UTF-8`, `datlocprovider = b` (builtin)** | **C1 toujours ouvert** : la base cible existe déjà, l'étape 2 du plan (« créer la base avec ICU ») doit être reformulée — soit `CREATE DATABASE ... LOCALE_PROVIDER icu ICU_LOCALE 'fr-x-icu'` sur une base d'essai du même endpoint, soit recréation de l'endpoint/branche. **À valider avant migration**, la collation n'étant pas modifiable après coup |
+| Paramètre `channel_binding=require` | ignoré par `postgres-js` (sans erreur) | l'URL fournie est utilisable telle quelle |
+| Pooler | hôte `-pooler`, mode transaction | **C2 inchangé** : GUC/`SET` de session interdits, tenant scoping à refaire en `set_config(..., true)` |
+
+**Bascule des environnements locaux** (les trois fichiers sont mis à jour ensemble — `.env`, `apps/nextjs/.env.local`, `packages/db/.env` ; aucun secret n'est versionné) :
+
+| Commande | Cible |
+| --- | --- |
+| `pnpm db:use-local` | `localhost:5432` |
+| `pnpm db:use-neon` | `ep-small-dust-b2dmk7r4-pooler…neon.tech` |
+| `pnpm db:current` | affiche la cible active par fichier |
+
+Le script ne touche que la ligne `DATABASE_URL` (commente/décommente l'ancienne et l'active), idempotent à l'aller-retour, exactement une ligne active par fichier. Les scripts seeds/reset/migrations continuent de bloquer sur une cible non locale (`FORCE=1` pour forcer) — **drizzle-kit reste non protégé**.
+
+**Raccordement Vercel ↔ Neon — procédure exacte** (dashboard Vercel, projet `atelierone`) :
+
+1. **Settings → General → Root Directory → Edit → `apps/nextjs`** (indispensable : c'est la cause du `output directory ".next" was not found`).
+2. **Settings → General → Build & Development** : Install `npx pnpm install --no-frozen-lockfile`, Build `npx next build`, Output `.next`.
+3. **Settings → Environment Variables** — ajouter pour **Production, Preview et Development** :
+
+| Variable | Valeur |
+| --- | --- |
+| `DATABASE_URL` | URL Neon (hôte `-pooler`, `?sslmode=require&channel_binding=require`) — celle déjà active en local |
+| `AUTH_SECRET` | même secret que le local, généré par `openssl rand -base64 32` |
+| `APP_ROLE` | `site` (ou `central`) |
+| `LICENCE_SECRET`, `SITE_CODE`, `SITE_CLE_API`, `CENTRAL_URL` | si le module licence est utilisé |
+
+4. **Deployments → Redeploy** (les variables ajoutées ne sont pas rétroactives sur un build déjà lancé).
+5. Vérifier ensuite `https://<projet>.vercel.app/api/health` : la réponse `db: "ok"` confirme la chaîne complète Vercel → Neon.
+
+Variante : **Storage → Create → Neon** depuis Vercel branche le projet Neon à Vercel et injecte `DATABASE_URL` automatiquement — à privilégier si le projet Neon doit être créé/relié proprement (rotation des secrets incluse). Ici le projet Neon existe déjà : la méthode manuelle (étape 3) s'applique.
+
+**État au moment du rédaction** : build Vercel vert, variables `DATABASE_URL` et `AUTH_SECRET` **toujours absentes de Vercel**, base Neon vide.
 
 ---
 
@@ -520,7 +568,7 @@ Ces deux variables sont **obligatoires avant toute mise en ligne** : la base loc
 **Plan de migration Neon recommandé** :
 
 1. **Geler la source** : sauvegarde `pg_dump` fraîche hors machine (les 5 dumps locaux ont 7 semaines).
-2. **Créer la base Neon avec ICU** : `LOCALE_PROVIDER icu ICU_LOCALE 'fr-x-icu' TEMPLATE template0` (résout C1 à la racine).
+2. **Résoudre la collation à la racine** : `neondb` existe déjà en `C.UTF-8` builtin (§15 ter). Valider `CREATE DATABASE ... LOCALE_PROVIDER icu ICU_LOCALE 'fr-x-icu' TEMPLATE template0` sur une base d'essai du même endpoint, sinon recréer l'endpoint/branche avec ICU. **Ne pas migrer tant que ce point n'est pas tranché** : la collation n'est pas modifiable après création (résout C1).
 3. **Reconstruire un schéma reproductible complet** : baseline Drizzle complète + `schema-extras.sql` **dans un état arbitré** + vue `parking_spots_v` + colonnes soft-delete selon décision C3/C4 (résout C3, C4, C6).
 4. **Corriger le tenant scoping** : GUC transactionnels (`set_config(..., true)`) ou paramètre tenant explicite (résout C2).
 5. **Migrer les données** : `pg_dump` → base neuve → `pg_restore`, **sans** toucher au pipeline `deploy.mjs` (résout C7).
