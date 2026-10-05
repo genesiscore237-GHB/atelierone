@@ -3,7 +3,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import type { NextAuthConfig } from "next-auth";
 import { loginSchema } from "@atelierone/validators";
 import { loginRateLimiter } from "./rate-limiter";
-import { doThrow } from "./utils";
+import { resolveAuthSecret } from "./utils";
 import type { ExtendedUser, UserRole } from "./types";
 
 async function getDb() {
@@ -46,7 +46,7 @@ async function recordAuditLog(params: {
 export const config: Omit<NextAuthConfig, "providers"> & {
   providers: ReturnType<typeof CredentialsProvider>[];
 } = {
-  secret: process.env.AUTH_SECRET ?? doThrow("AUTH_SECRET is not set"),
+  secret: resolveAuthSecret(),
   session: {
     strategy: "jwt",
     maxAge: 7 * 24 * 60 * 60, // 7 jours d'inactivité maximum

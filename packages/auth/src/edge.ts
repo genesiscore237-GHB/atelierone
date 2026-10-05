@@ -1,6 +1,6 @@
 import NextAuth from "next-auth";
 import { authConfig } from "./auth.config";
-import { doThrow } from "./utils";
+import { resolveAuthSecret } from "./utils";
 
 /**
  * Entry edge-safe pour le middleware : AUCUNE dépendance serveur (node:crypto,
@@ -8,5 +8,5 @@ import { doThrow } from "./utils";
  */
 export const { auth, signIn, signOut } = NextAuth({
   ...authConfig,
-  secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? doThrow("AUTH_SECRET is not set"),
+  secret: resolveAuthSecret(),
 });
