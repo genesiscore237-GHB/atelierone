@@ -536,13 +536,13 @@ Variante : **Storage → Create → Neon** depuis Vercel branche le projet Neon 
 
 | ID | Sévérité | Risque | Remédiation |
 | --- | --- | --- | --- |
-| **C1** | **[CRITIQUE]** | Collation `French_France.1252` inexistante sur Neon (`C.UTF-8` par défaut, ICU dispo). 143 `ILIKE` + 63 `lower()` → recherches accentuées cassées. Collate/index non modifiables après création. | Créer la base Neon avec `LOCALE_PROVIDER icu ICU_LOCALE 'fr-x-icu' TEMPLATE template0`. Valider sur un jeu d'essai FR avant bascule. |
+| **C1** | **[RÉSOLU 2026-10-05]** | Collation `French_France.1252` inexistante sur Neon (`C.UTF-8` par défaut, ICU dispo). 143 `ILIKE` + 63 `lower()` → recherches accentuées cassées. Collate/index non modifiables après création. | Base créée : `CREATE DATABASE atelierone_erp TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'fr-FR'`. Tri et comparaison **identiques à la source** vérifiés (§18). `neondb` (C.UTF-8) **abandonnée** : tri binaire dégradé. |
 | **C2** | **[CRITIQUE]** | Tenant scoping par `SET` de session incompatible avec le pooler Neon (PgBouncer `transaction` mode : `SET` interdit). ≥100 transactions applicatives. | Passer les GUC en `set_config(..., true)` **dans** la transaction, ou filtrer par tenant via paramètre explicite plutôt que GUC. Utiliser le **direct** ou le pool WebSocket pour l'état de session. |
 | **C3** | **[CRITIQUE]** | `schema-extras.sql` dérive de la base (40 policies / RLS / soft-delete présents dans le fichier, absents en base). Le réappliquer sur Neon activerait RLS → `current_agence_id()` = NULL → **résultats vides silencieux**. | Décider explicitement : soit on **n'applique pas** le bloc RLS/soft-delete sur Neon (recréer la base à l'identique), soit on **l'active partout** et on corrige le tenant scoping (C2) d'abord. Ne jamais mélanger les deux états. |
 | **C4** | **[CRITIQUE]** | Soft delete : `deleted_at` sur 1 table/226 → `archive_row`/`restore_row` cassés. | Soit appliquer le bloc soft-delete partout (migration de données), soit retirer les fonctions du code. |
-| **C5** | **[CRITIQUE]** | 18 Mo de photos base64 → dépassement de la limite 10 Mo du driver HTTP Neon ; un `SELECT` de `parking_vehicles` peut être tronqué. | Externaliser les photos en stockage objet avant migration, ou filtrer explicitement les colonnes `photos` dans les SELECT. |
-| **C6** | **[CRITIQUE]** | Baseline Drizzle = 91/226 tables → base Neon neuve incomplète. | Générer une baseline complète et idempotente depuis l'état réel, versionnée. |
-| **C7** | **[CRITIQUE]** | `deploy.mjs` + `reset-schema.ts` détruisent la base. | Ne jamais exécuter sur Neon ; construire un pipeline de migration **non destructif** (`pg_dump` → base neuve → `pg_restore` → vérifs). |
+| **C5** | **[RÉSOLU 2026-10-05]** | 18 Mo de photos base64 → dépassement de la limite 10 Mo du driver HTTP Neon ; un `SELECT` de `parking_vehicles` peut être tronqué. | Constat corrigé : les 18 Mo sont dans le **jsonb `parking_vehicles.photos`** (40/54 lignes, max 912 Ko/ligne), **0 photo en colonne texte**. Le projet utilise `postgres-js` en **TCP/TLS**, pas le driver HTTP → limite 10 Mo non applicable. Import `pg_restore` OK. Externalisation objet reste souhaitable (C16). |
+| **C6** | **[CONTournÉ 2026-10-05]** | Baseline Drizzle = 91/226 tables → base Neon neuve incomplète. | Non pertinent : la migration ne passe **pas** par Drizzle. `pg_dump`/`pg_restore` a reproduit l'état réel (226 tables + 1 `drizzle.__drizzle_migrations`), sans `db:push`. |
+| **C7** | **[RESPECTÉ 2026-10-05]** | `deploy.mjs` + `reset-schema.ts` détruisent la base. | Pipeline non destructif suivi : `pg_dump -Fc` local → base ICU neuve → `pg_restore` (§18). Aucun script destructif exécuté, base locale intacte. |
 | C8 | **[ATTENTION]** | Audit automatique limité à 24 tables/226 ; 202 tables sans piste (dont finance/RH). | Étendre le bloc d'audit ou acter que le périmètre d'audit est restreint. |
 | C9 | **[ATTENTION]** | RLS multi-tenant : **0 policy** en base → isolation tenant **non garantie au niveau DB**. | Activer RLS (avec C2 corrigé) ou accepter et documenter le filtrage applicatif comme unique barrière. |
 | C10 | **[ATTENTION]** | `SECURITY DEFINER` sans `SET search_path` (`archive_row`, `restore_row`, `log_audit_event`). | Ajouter `SET search_path = public, pg_temp`. |
@@ -568,10 +568,10 @@ Variante : **Storage → Create → Neon** depuis Vercel branche le projet Neon 
 **Plan de migration Neon recommandé** :
 
 1. **Geler la source** : sauvegarde `pg_dump` fraîche hors machine (les 5 dumps locaux ont 7 semaines).
-2. **Résoudre la collation à la racine** : `neondb` existe déjà en `C.UTF-8` builtin (§15 ter). Valider `CREATE DATABASE ... LOCALE_PROVIDER icu ICU_LOCALE 'fr-x-icu' TEMPLATE template0` sur une base d'essai du même endpoint, sinon recréer l'endpoint/branche avec ICU. **Ne pas migrer tant que ce point n'est pas tranché** : la collation n'est pas modifiable après création (résout C1).
-3. **Reconstruire un schéma reproductible complet** : baseline Drizzle complète + `schema-extras.sql` **dans un état arbitré** + vue `parking_spots_v` + colonnes soft-delete selon décision C3/C4 (résout C3, C4, C6).
-4. **Corriger le tenant scoping** : GUC transactionnels (`set_config(..., true)`) ou paramètre tenant explicite (résout C2).
-5. **Migrer les données** : `pg_dump` → base neuve → `pg_restore`, **sans** toucher au pipeline `deploy.mjs` (résout C7).
+2. **~~Résoudre la collation à la racine~~ — FAIT (2026-10-05)** : `neondb` confirmée en `C.UTF-8` builtin (tri binaire : `Boutique > Eté > Zebra > abc`). `CREATE DATABASE ... LOCALE_PROVIDER icu ICU_LOCALE 'fr-FR' TEMPLATE template0` **validé** sur une base d'essai (tri et égalité **strictement identiques** à `French_France.1252`). Base cible : **`atelierone_erp`** (ICU). Résout C1.
+3. **Reconstruire un schéma reproductible complet** : baseline Drizzle complète + `schema-extras.sql` **dans un état arbitré** + vue `parking_spots_v` + colonnes soft-delete selon décision C3/C4 (résout C3, C4, C6). *Contourné par `pg_restore` (étape 5) : l'état réel de la source a été reproduit à l'identique, arbitrage RLS/soft-delete reporté.*
+4. **Corriger le tenant scoping** : GUC transactionnels (`set_config(..., true)`) ou paramètre tenant explicite (résout C2). *Toujours ouvert.*
+5. **~~Migrer les données~~ — FAIT (2026-10-05)** : `pg_dump -Fc` (15,08 Mo) → base neuve `atelierone_erp` → `pg_restore -j 1` sur l'**hôte direct** Neon, **exit 0 sans erreur**, sans toucher à `deploy.mjs` (résout C7). Vérifs : 227 tables / 24 822 lignes / **0 écart** (§18).
 6. **Externaliser les médias** : photos base64 et `/uploads` vers stockage objet (résout C5, C16).
 7. **Consolider le client DB** sur un seul pool, budget Neon respecté (résout C12).
 8. **Remplacer l'état en mémoire** : rate limiting, exports, cron (résout C13, C14, C15).
@@ -582,23 +582,24 @@ Variante : **Storage → Create → Neon** depuis Vercel branche le projet Neon 
 
 ### 17. Plan de validation, rollback, checklist et estimation
 
-**Checklist de validation (staging Neon)** :
+**Checklist de validation (staging Neon)** — état au 2026-10-05 (§18) :
 
-- [ ] Collation ICU `fr-x-icu` active ; `ILIKE` accentué correct (ex. `ILIKE '%état%'` matche `État`)
-- [ ] 226 tables + `parking_spots_v` créées ; 0 table du code manquante
-- [ ] 9 fonctions présentes ; `archive_row`/`restore_row` fonctionnelles ou retirées
-- [ ] Choix RLS assumé et vérifié : soit 0 policy (comme la source), soit RLS actif **avec** tenant scoping corrigé
-- [ ] Tenant scoping correct sur ≥2 agences (test inter-tenant : une requête agence A ne doit jamais renvoyer de lignes agence B)
-- [ ] 76 triggers présents (72 audit + 1 append-only + helpers)
-- [ ] Séquences alignées (`setval` post-restore) ; aucun conflit d'ID
-- [ ] Volumétrie restaurée : 24 821 lignes, 138 tables non vides, `audit_logs` = 11 973
-- [ ] `produits` (319), `clients` (151), `employes` (38), `utilisateurs` (10), `categories` (461) conformes
+- [x] Collation ICU `fr-FR` active ; comportement `ILIKE`/`lower()`/tri **identique à la source** (test `Eté`/`eclair`/`zebra` : source et cible donnent `ILIKE accentué = faux`, `ILIKE 'et%' = vrai`, `lower = vrai`)
+- [x] 226 tables + `parking_spots_v` créées ; 0 table du code manquante (1 vue restaurée)
+- [x] 9 fonctions présentes ; `archive_row`/`restore_row` **telles qu'en source** (état non arbitré : voir C4)
+- [x] Choix RLS assumé et vérifié : **0 policy, comme la source** (arbitrage C3 non tranché — `schema-extras.sql` non appliqué)
+- [ ] Tenant scoping correct sur ≥2 agences (test inter-tenant : une requête agence A ne doit jamais renvoyer de lignes agence B) — **C2 toujours ouvert**
+- [x] **73** triggers présents (72 audit = 24×insert/update/delete + 1 append-only `mouvements_stock`) — *le chiffre 76 de l'audit était une anticipation*
+- [x] Séquences alignées (`clients`, `produits`, `parking_vehicles` : `last_value ≥ max(id)`) ; aucun conflit d'ID constaté
+- [x] Volumétrie restaurée : **24 822 lignes**, 227 tables, **0 écart par table**, `audit_logs` = 11 973
+- [x] `produits` (319), `clients` (151), `categories` (461), `parking_vehicles` (54) conformes ; index 301/286, contraintes 1 811, FK 519 — **identiques à la source**
 - [ ] Upload → stockage objet ; aucune référence `/uploads/...` orpheline
 - [ ] Export PDF/Excel fonctionne en multi-instance
 - [ ] Rate limiting login effectif en multi-instance
 - [ ] Cron de synchronisation planifié et fiable
 - [ ] `pnpm build` **sans** `ignoreBuildErrors` ; `pnpm typecheck` vert
 - [ ] Login, POS, stock, RH, finance OK sur staging
+- [ ] **Vercel** : `DATABASE_URL` + `DATABASE_URL_UNPOOLED` pointant sur `/atelierone_erp` (action utilisateur, §18)
 
 **Rollback** :
 
@@ -608,16 +609,72 @@ Variante : **Storage → Create → Neon** depuis Vercel branche le projet Neon 
 
 **Estimation** :
 
-| Lot | Charge |
+| Lot | Charge | État |
+| --- | --- | --- |
+| Baseline complète + arbitrage RLS/soft-delete (C3, C4, C6) | 2–3 j | **C6 contourné** par `pg_restore` ; arbitrage C3/C4 à trancher |
+| Tenant scoping transactionnel (C2) + tests inter-tenant | 1–2 j | ouvert |
+| Collation ICU + validation recherche FR (C1) | 0,5–1 j | **FAIT (§18)** |
+| Externalisation médias (C5, C16) | 1–2 j | C5 **invalide** ; C16 ouvert |
+| Consolidation client DB / pool Neon (C12) | 0,5–1 j | ouvert |
+| Rate limiting / exports / cron distribués (C13, C14, C15) | 1–2 j | ouvert |
+| Migration données + vérifs (C7) | 1 j | **FAIT (§18)** — 0 écart |
+| Reste | ~5–8 j | hors infrastructure |
+
+---
+
+### 18. Migration exécutée : local → Neon (2026-10-05)
+
+**Décision : base neuve ICU. `neondb` abandonnée.**
+
+| Point | Relevé |
 | --- | --- |
-| Baseline complète + arbitrage RLS/soft-delete (C3, C4, C6) | 2–3 j |
-| Tenant scoping transactionnel (C2) + tests inter-tenant | 1–2 j |
-| Collation ICU + validation recherche FR (C1) | 0,5–1 j |
-| Externalisation médias (C5, C16) | 1–2 j |
-| Consolidation client DB / pool Neon (C12) | 0,5–1 j |
-| Rate limiting / exports / cron distribués (C13, C14, C15) | 1–2 j |
-| Migration données + vérifs + bascule | 1 j |
-| **Total** | **~8–12 j** hors infrastructure |
+| Cible | **`atelierone_erp`** — endpoint `ep-small-dust-b2dmk7r4` (eu-central-1), PostgreSQL 18.6 aarch64, rôle `neondb_owner` (non-super, `CREATEDB`) |
+| Création | `CREATE DATABASE atelierone_erp TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'fr-FR'` → provider **`i`** |
+| Abandon | **`neondb`** (`C.UTF-8`, provider `b`) : tri binaire dégradé (cf. tableau ci-dessous) |
+| Source | PostgreSQL 17.6 natif (service `postgresql-x64-17`), collation `French_France.1252`, 55 Mo |
+| Export | `pg_dump 17.6 -Fc --no-owner --no-privileges --no-acl` → **15,08 Mo** |
+| Import | `pg_restore -j 1` sur l'**hôte direct** (`-pooler` retiré), `PGSSLMODE=require` → **exit 0, 0 erreur** |
+| Scripts destructifs | **Aucun** : `deploy.mjs`, `reset:schema`, `db:push` non exécutés (C7) |
+
+**Validation de la collation (test de tri, 6 valeurs) :**
+
+| Source `French_France.1252` | Cible ICU `fr-FR` | `neondb` `C.UTF-8` |
+| --- | --- | --- |
+| `abc >> Boutique >> eclair >> Eté >> zebra >> Zebra` | **identique** | `Boutique >> Eté >> Zebra >> abc >> eclair >> zebra` |
+| `'a' < 'B'` = vrai | **identique** | faux |
+| `'Eté' = 'ete'` = faux, `'Zebra' = 'zebra'` = faux | **identique** | faux |
+
+**Vérifs post-restore (source → cible) :**
+
+| Contrôle | Source | Cible |
+| --- | --- | --- |
+| Tables (`public` + `drizzle`) | 227 | 227 |
+| Lignes totales | 24 822 | 24 822 |
+| Écart **par table** | — | **0** |
+| Vues / fonctions / séquences | 1 / 9 / 199 | 1 / 9 / 199 |
+| Triggers (hors internes) | 73 | 73 |
+| Index (totaux / uniques) | 301 / 286 | 301 / 286 |
+| Contraintes / FK | 1 811 / 519 | 1 811 / 519 |
+| Extensions | `plpgsql` | `plpgsql` |
+| `drizzle.__drizzle_migrations` | 1 | 1 |
+| Échantillons | parking 54 · audit 11 973 · produits 319 · clients 151 | identiques |
+| Poids | 55 Mo | **50 Mo** |
+
+**Test applicatif réel** (`packages/db/src/client.ts` → `db.execute`, postgres-js + Proxy lazy, script jetable supprimé) :
+
+- `current_database() = atelierone_erp`, `current_user = neondb_owner`, `PostgreSQL 18.6`
+- 226 tables / 1 vue / 9 fonctions lus **par le code applicatif**
+- Tri français restitué : `abc >> Boutique >> eclair >> Eté >> zebra >> Zebra`
+- `client.end()` via Proxy → `SMOKE_OK`
+
+**Configuration mise à jour** (3 fichiers, ignorés par git) : `.env`, `apps/nextjs/.env.local`, `packages/db/.env` → chemin `/atelierone_erp`. `pnpm db:current` confirme NEON sur les 3. La bascule `local ⇄ neon` (`scripts/db-switch.mjs`) reste valide.
+
+**États restants** :
+
+- [ ] **Vercel** : `DATABASE_URL` **et** `DATABASE_URL_UNPOOLED` doivent passer de `/neondb` (vide) à `/atelierone_erp` ; `AUTH_SECRET` à confirmer (§15 ter). Action **utilisateur**, aucune CLI locale.
+- [ ] Bases résiduelles sur l'endpoint : `neondb` (8 Mo, **vide**) et `postgres` (8 Mo, vide) — suppression à valider.
+- [ ] **C2** tenant scoping (GUC vs pooler), **C3/C4** RLS + soft-delete, **C12** consolidation pool : toujours ouverts (§16).
+- [ ] Sauvegarde hors machine du dump (artefact local `%TEMP%`, non versionné).
 
 ---
 
