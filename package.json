@@ -21,6 +21,7 @@
     "db:seed-rayons": "pnpm -F @atelierone/db seed:rayons",
     "db:studio": "pnpm -F @atelierone/db studio",
     "db:use-local": "node scripts/db-switch.mjs local",
+    "db:use-neon": "node scripts/db-switch.mjs neon",
     "db:use-supabase": "node scripts/db-switch.mjs supabase",
     "db:current": "node scripts/db-switch.mjs current",
     "db:backup": "node scripts/deploy.mjs backup",

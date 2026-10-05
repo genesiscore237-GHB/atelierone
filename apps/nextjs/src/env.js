@@ -7,7 +7,12 @@ let parsed;
  * Validation paresseuse : ce module est importé par /api/trpc/[trpc], donc lu
  * pendant le build Next (`collecting page data`). Les variables ne sont
  * validées qu'au premier accès réel, côté requête — jamais au build, où
- * DATABASE_URL et les variables Supabase ne sont pas présentes.
+ * DATABASE_URL n'est pas présente.
+ *
+ * Seules les variables encore lues par le code sont déclarées. Les variables
+ * Supabase héritées ont été retirées : aucun consommateur, mais t3-oss
+ * validait quand même chacune d'elles à la première lecture et faisait échouer
+ * /api/trpc sur Vercel.
  */
 function getEnv() {
   if (!parsed) {
@@ -15,22 +20,11 @@ function getEnv() {
       server: {
         NODE_ENV: z.enum(["development", "test", "production"]),
         DATABASE_URL: z.string().url(),
-        SUPABASE_SERVICE_ROLE_KEY: z.string(),
       },
-
-      client: {
-        NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string(),
-      },
-
       runtimeEnv: {
         NODE_ENV: process.env.NODE_ENV,
         DATABASE_URL: process.env.DATABASE_URL,
-        SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-        NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
       },
-
       skipValidation: !!process.env.SKIP_ENV_VALIDATION,
       emptyStringAsUndefined: true,
     });
