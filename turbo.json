@@ -2,6 +2,13 @@
   "$schema": "https://turbo.build/schema.json",
   "ui": "tui",
   "globalDependencies": ["**/.env.*local"],
+  "globalPassThroughEnv": [
+    "DATABASE_URL_UNPOOLED",
+    "POSTGRES_URL",
+    "POSTGRES_URL_NON_POOLING",
+    "POSTGRES_PRISMA_URL",
+    "POSTGRES_URL_NO_SSL"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
