@@ -11,13 +11,14 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf .next",
-    "test": "vitest",
+    "test": "vitest run",
     "test:e2e": "playwright test",
     "sim:start": "node scripts/sim/start.cjs",
     "sim:copy-admin": "node scripts/sim/copy-admin.cjs",
     "sim:licence": "node scripts/test-saas-licence.cjs",
     "sim:sync": "node scripts/test-saas-sync.cjs",
-    "sim:central": "node scripts/test-saas-central.cjs"
+    "sim:central": "node scripts/test-saas-central.cjs",
+    "test:reel": "vitest run --config vitest.reel.config.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

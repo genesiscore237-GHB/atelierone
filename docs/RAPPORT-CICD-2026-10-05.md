@@ -230,3 +230,35 @@ pnpm db:backup        (pg_dump horodaté, avant toute migration prod)
 | Intégrité prod | requêtes `COUNT(*)` avant/après | 24 822 lignes, 226 tables — inchangé |
 
 **Artefacts nettoyés** : bases `atelierone_probe` (locale et Neon) supprimées, fichiers temporaires retirés, dépôt Git propre (`git status` vide).
+
+---
+
+## 6. Addendum — 5 correctifs P0 appliqués (2026-10-06)
+
+| # | Correctif | Fichiers | Preuve |
+| --- | --- | --- | --- |
+| **P0-1** | CI réparée : `pnpm/action-setup@v4` sans `with: version` (conflit avec `packageManager: pnpm@10.19.0` = cause des 8 échecs en 12 s), Node 24, lint + tests **bloquants**, service `postgres:17`, step `pnpm db:test-setup`, typecheck gardé non bloquant **et commenté** (dette de 390 erreurs) | `.github/workflows/ci.yml` | YAML validé ; étapes : install → lint → base de test → tests → typecheck (dette) → build |
+| **P0-2** | Tests isolés de la production : `vitest.config.ts` **impose** `DATABASE_URL` vers `atelierone_erp_test` (l'ancien `??=` ne remplaçait jamais une valeur déjà définie) ; `src/test/setup.ts` refuse par `beforeAll` tout hôte non local ; Playwright (`*.spec.ts`) exclu ; `testTimeout` 5 s → 20 s (flaky en parallèle) | `apps/nextjs/vitest.config.ts`, `apps/nextjs/src/test/setup.ts` | `pnpm test` → **exit 0**, 44 fichiers / 826 tests |
+| **P0-3** | Verrous sur les opérations destructrices : `drizzle-kit push/migrate/studio` passent par `scripts/drizzle-guard.mjs` (refus de toute base distante, `FORCE=1` pour consentir) | `packages/db/scripts/drizzle-guard.mjs`, `packages/db/scripts/dburl.mjs`, `packages/db/package.json` | sur Neon → **REFUS exit 1** ; `FORCE=1` → exit 0 ; locale → exit 0 |
+| **P0-4** | Tests verts : socle de test créé (`pnpm db:test-setup` = reset + `drizzle-kit migrate` + `schema-extras.sql` + rôles/permissions + 2 agences + employé témoin) ; 6 suites « base REELLE » (lecture seule, IDs figés) sorties du chemin CI vers `pnpm test:reel` ; 2 tests unitaires obsolètes corrigés (`stock-engine` : compteur 22 figé → 26 réels ; `licence-service` : date d'exécution → horloge figée) | `packages/db/scripts/test-db.mjs`, `apps/nextjs/vitest.reel.config.ts`, `apps/nextjs/package.json`, `*.test.ts` | CI locale : **43/43 fichiers, 792/792 tests** + `geo` 34/34 |
+| **P0-5** | Historique de migrations créé : `packages/db/drizzle/` (0000 = 225 tables + snapshot + journal) ; `pnpm db:baseline` marque la 0000 comme appliquée **sans l'exécuter** (drizzle compare `created_at` au `when` du journal) sur une base pré-existante ; `pnpm db:generate` pour tout futur changement de schéma | `packages/db/drizzle/*`, `packages/db/scripts/baseline.mjs` | baseline sur prod locale : 226 tables / 56 ventes **inchangées** ; `migrate` après baseline → rien à exécuter ; DB de test → **225 tables** |
+
+### Ce que la CI vérifie désormais
+
+```
+pnpm install --frozen-lockfile   ← lockfile synchronisé (vérifié localement)
+pnpm -F @atelierone/nextjs lint  ← exit 0 (warnings uniquement)
+pnpm db:test-setup --quiet       ← schéma complet + extras + socle, sur postgres:17 éphémère
+pnpm test                        ← turbo : nextjs (792) + geo (34)
+pnpm -F ... typecheck            ← continue-on-error (dette documentée)
+pnpm build                       ← exit 0
+```
+
+### Suites hors CI (au choix)
+
+- `pnpm test:reel` — 6 suites conçues pour lire la base **réelle** (employé 9, périodes d'août 2026, journal alimenté par RPT-01). Cible : base **locale** uniquement (`DATABASE_URL_REEL` ou la ligne localhost de `packages/db/.env`) ; elles ne visent jamais Neon. Mesure du 06/10 : **91/93 tests verts**, 2 échecs liés à l'état des données locales (comptage 392/496, 2 timeouts).
+
+### Suites détectées comme « base REELLE »
+
+`rh-history.integration`, `rh-situation.integration`, `rh-situation.terrain`, `rpt02-verite-temporelle.integration`, `rpt03-sensibilisation.integration`, `rpt04-journal.integration` — déclarées dans `TESTS_BASE_REELLE` (`apps/nextjs/vitest.config.ts`). Tout test ajouté qui lit des identifiants figés doit y être ajouté.
+

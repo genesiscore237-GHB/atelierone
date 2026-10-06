@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   signerLicence,
   verifierLicence,
@@ -72,11 +72,19 @@ describe("licence-service", () => {
     expect(r.statut).toBe("BLOQUE");
   });
 
-  it("etendrePeriode : +1 mois depuis l'échéance si dépassée", () => {
-    const p = { ...base, dateFin: "2026-09-15" };
-    const r = etendrePeriode(p, 1);
-    expect(r.dateFin).toBe("2026-10-15");
-    expect(r.mode).toBe("ABONNEMENT");
+  it("etendrePeriode : +1 mois depuis aujourd'hui si échéance dépassée", () => {
+    // Date figée : sans elle, ce test dépend du jour d'exécution (l'échéance
+    // « 2026-09-15 » n'est dépassée que depuis le 15/09/2026).
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-06T12:00:00.000Z"));
+    try {
+      const p = { ...base, dateFin: "2026-09-15" };
+      const r = etendrePeriode(p, 1);
+      expect(r.dateFin).toBe("2026-11-06");
+      expect(r.mode).toBe("ABONNEMENT");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("joursAvantEcheance positif", () => {

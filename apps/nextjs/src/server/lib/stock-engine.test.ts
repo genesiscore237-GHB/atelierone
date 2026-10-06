@@ -32,9 +32,13 @@ describe("stock-engine constants", () => {
 
   it("all movement types are accounted for", () => {
     const values = Object.values(TYPES_MOUVEMENT);
-    expect(values).toHaveLength(22);
-    const unique = new Set(values);
-    expect(unique.size).toBe(22);
+    // Le compteur exact n'est pas figé : les specs ajoutent des types
+    // (SORTIE_OUTIL, APPROVISIONNEMENT_BUREAU_*, RESERVATION…). On garantit
+    // l'essentiel : couverture non vide, aucun doublon, clé === valeur.
+    expect(values.length).toBeGreaterThanOrEqual(22);
+    expect(new Set(values).size).toBe(values.length);
+    expect(Object.entries(TYPES_MOUVEMENT).every(([cle, valeur]) => cle === valeur)).toBe(true);
+    expect(values.every((v) => typeof v === "string" && v.length > 0)).toBe(true);
   });
 
   it("MOTIF_OBLIGATOIRE_TYPES couvre perte/vol/casse/ajustements", () => {

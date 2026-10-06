@@ -7,19 +7,47 @@ on:
 
 jobs:
   quality:
-    name: Lint · Typecheck · Unitaires · Build
+    name: Lint · Tests · Build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
+    # Base PostgreSQL éphémère pour les tests d'intégration. La base de test
+    # est construite par `pnpm db:test-setup` (schéma drizzle + schema-extras
+    # + socle), jamais par db:push.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      AUTH_SECRET: ci-secret
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      # Requis par apps/nextjs/vitest.config.ts : toute autre valeur serait
+      # refusée (les tests ne visent que des bases localhost).
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/atelierone_erp_test
+
     steps:
       - uses: actions/checkout@v4
 
+      # PAS de `with: version` : l'action lit `packageManager`
+      # (pnpm@10.19.0) du package.json. Un `version: 10` en dur entre en
+      # conflit avec ce champ et faisait échouer ce step en ~12 s
+      # (8 runs rouges consécutifs — voir docs/RAPPORT-CICD-2026-10-05.md).
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Installer les dépendances
@@ -27,20 +55,22 @@ jobs:
 
       - name: Lint
         run: pnpm -F @atelierone/nextjs lint
+
+      - name: Base de test
+        run: pnpm db:test-setup --quiet
+
+      - name: Tests
+        run: pnpm test
+
+      # DETTE CONNUE — non bloquant tant que la dette n'est pas purgée :
+      # ~390 erreurs TypeScript préexistantes, tolérées par
+      # `typescript.ignoreBuildErrors` dans apps/nextjs/next.config.js.
+      # Ne pas ajouter d'étape bloquante ici sans la corriger au préalable.
+      - name: Typecheck (dette connue)
         continue-on-error: true
-
-      - name: Typecheck (packages)
         run: |
-          pnpm -F @atelierone/auth typecheck || true
-          pnpm -F @atelierone/db typecheck || true
-
-      - name: Tests unitaires
-        run: |
-          pnpm -F @atelierone/nextjs exec vitest run || true
-          pnpm -F @atelierone/auth exec vitest run || true
+          pnpm -F @atelierone/auth typecheck
+          pnpm -F @atelierone/db typecheck
 
       - name: Build
         run: pnpm build
-        env:
-          AUTH_SECRET: ci-secret
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ci
