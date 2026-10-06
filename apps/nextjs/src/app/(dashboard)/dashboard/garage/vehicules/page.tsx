@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Plus, Search, MapPin, Pencil, LogOut, ArrowRight, ArrowDownToLine, Loader2, Car } from "lucide-react";
+import { Plus, Search, MapPin, Pencil, LogOut, ArrowRight, Loader2, Car, FilterX, ZoomIn, Download, Printer } from "lucide-react";
 import { api } from "~/trpc/react";
 import { Card } from "~/components/ui/card";
 import { EmptyState } from "~/components/ui/empty-state";
@@ -23,9 +23,16 @@ import {
   formatDate,
 } from "../_components/statuts";
 import { VehiculeFormDialog, type VehiculeFormModel } from "../_components/VehiculeFormDialog";
+import { PhotoLightbox } from "../_components/PhotoLightbox";
 import { ExportVehiculesDialog } from "../_components/ExportVehiculesDialog";
+import { vehiculeVersFormModel } from "../_components/vehicule-form-model";
+import {
+  lireFiltres,
+  ecrireFiltres,
+  compterFiltres,
+  type FiltresVehicules,
+} from "../_components/filtres";
 import { PrintVehiculesList } from "@/lib/PrintVehiculesList";
-import { Printer } from "lucide-react";
 
 export default function GarageVehiculesPage() {
   const searchParams = useSearchParams();
@@ -33,61 +40,70 @@ export default function GarageVehiculesPage() {
   const { hasPermission } = usePermissions();
   const utils = api.useUtils();
 
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => {
+  const [search, setSearch] = useState(() => lireFiltres(searchParams).q);
+const [debouncedSearch, setDebouncedSearch] = useState(() => lireFiltres(searchParams).q);
+const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+useEffect(() => {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     searchDebounceRef.current = setTimeout(() => setDebouncedSearch(search), 300);
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     };
   }, [search]);
-  const [statut, setStatut] = useState("");
-  const [siteId, setSiteId] = useState("");
-  const [nonPositionnes, setNonPositionnes] = useState(false);
-  const [formOpen, setFormOpen] = useState(searchParams.get("nouveau") === "1");
+  const [statut, setStatut] = useState(() => lireFiltres(searchParams).statut);
+  const [siteId, setSiteId] = useState(() => lireFiltres(searchParams).site);
+  const [nonPositionnes, setNonPositionnes] = useState(() => lireFiltres(searchParams).nonPositionnes);
+  const nouveauDemande = searchParams.get("nouveau") === "1";
+  const [formOpen, setFormOpen] = useState(nouveauDemande);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [aSortir, setASortir] = useState<{ id: number; numRegistre: number } | null>(null);
-  const [exportOpen, setExportOpen] = useState(false);
-  const [printOpen, setPrintOpen] = useState(false);
+  // Visionneuse ouverte depuis la liste : on charge le jeu complet de photos du
+  // vehicule au moment du clic, pas pour toute la liste.
+  const [visionneuse, setVisionneuse] = useState<number | null>(null);
+  const [photoOuverte, setPhotoOuverte] = useState(0);
+  const [exportOuvert, setExportOuvert] = useState(false);
+  const [printOuvert, setPrintOuvert] = useState(false);
+  const { data: photosVisionneuse, isFetching: chargementPhotos } = api.garage.vehiculePhotos.useQuery(
+    { id: visionneuse ?? 0 },
+    { enabled: visionneuse != null, staleTime: 60_000 },
+  );
+
+  const ouvrirVisionneuse = useCallback((id: number) => {
+    setVisionneuse(id);
+    setPhotoOuverte(0);
+  }, []);
+
+  // Les filtres sont persistes dans l'URL : la liste est partageable et survit au
+  // rechargement, et le retour depuis une fiche peut les restaurer.
+  const filtres = useMemo<FiltresVehicules>(
+    () => ({ q: debouncedSearch, statut, site: siteId, nonPositionnes }),
+    [debouncedSearch, statut, siteId, nonPositionnes],
+  );
+  const filtresQs = useMemo(() => ecrireFiltres(filtres), [filtres]);
+
+  useEffect(() => {
+    const qs = filtresQs ? `${filtresQs}${nouveauDemande ? "&nouveau=1" : ""}` : nouveauDemande ? "nouveau=1" : "";
+    router.replace(qs ? `/dashboard/garage/vehicules?${qs}` : "/dashboard/garage/vehicules", { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtresQs]);
+
+  // Vers une fiche, en memorisant les filtres pour pouvoir revenir dessus.
+  const hrefVehicule = useCallback(
+    (id: number) =>
+      filtresQs
+        ? `/dashboard/garage/vehicules/${id}?retour=${encodeURIComponent(filtresQs)}`
+        : `/dashboard/garage/vehicules/${id}`,
+    [filtresQs],
+  );
 
   const { data: editDetail } = api.garage.vehicule.useQuery(
     { id: editingId as number },
     { enabled: editingId !== null },
   );
 
-  const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
   const editModel = useMemo<VehiculeFormModel | null>(() => {
     if (!editDetail?.vehicule) return null;
-    const v = editDetail.vehicule;
-    return {
-      id: v.id,
-      numRegistre: v.numRegistre,
-      marque: v.marque ?? null,
-      modele: v.modele ?? null,
-      version: v.version ?? null,
-      couleur: v.couleur ?? null,
-      immatriculation: v.immatriculation ?? null,
-      vin: v.vin ?? null,
-      clientNom: v.clientNom ?? null,
-      clientTelephone: v.clientTelephone ?? null,
-      statut: v.statut ?? "EN_PARKING",
-      motif: v.motif ?? null,
-      longueur: v.longueur ?? null,
-      largeur: v.largeur ?? null,
-      hauteur: v.hauteur ?? null,
-      poids: v.poids ?? null,
-      dimensionsEstimees: v.dimensionsEstimees ?? false,
-      provenance: v.provenance ?? null,
-      notes: v.notes ?? null,
-      photos: v.photos ?? [],
-      dateEntree: iso(v.dateEntree),
-      dateDevis: iso(v.dateDevis),
-      dateCommande: iso(v.dateCommande),
-      dateFinTravaux: iso(v.dateFinTravaux),
-      dateDerniereRelance: iso(v.dateDerniereRelance),
-    };
+    return vehiculeVersFormModel(editDetail.vehicule);
   }, [editDetail]);
 
   const { data: sites } = api.garage.sites.useQuery();
@@ -101,6 +117,7 @@ export default function GarageVehiculesPage() {
 
   const canCreer = hasPermission("parking.vehicule.creer");
   const canModifier = hasPermission("parking.vehicule.modifier");
+  const canExporter = hasPermission("parking.vehicule.exporter");
 
   const sortie = api.garage.sortie.useMutation({
     onSuccess: () => {
@@ -124,40 +141,49 @@ export default function GarageVehiculesPage() {
     return totals;
   }, [data]);
 
+  const nbFiltres = compterFiltres(filtres);
+  const aFiltres = nbFiltres > 0;
+
+  const reinitialiserFiltres = () => {
+    setSearch("");
+    setDebouncedSearch("");
+    setStatut("");
+    setSiteId("");
+    setNonPositionnes(false);
+  };
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-foreground">Registre des véhicules</h2>
           <p className="text-sm text-muted-foreground">
-            {data?.total ?? 0} véhicule(s) affiché(s){statut ? ` · filtre ${STATUTS_VEHICULE_LABELS[statut] ?? statut}` : ""}
+            {data?.total ?? 0} véhicule(s) affiché(s)
+            {aFiltres ? ` · ${nbFiltres} filtre(s) actif(s)` : ""}
           </p>
         </div>
-        {canCreer && (
-          <Button onClick={() => setFormOpen(true)}>
-            <Plus size={16} className="mr-1.5" /> Enregistrer un véhicule
-          </Button>
-        )}
-        {hasPermission("parking.vehicule.exporter") && (
-          <Button
-            onClick={() => setExportOpen(true)}
-            variant="outline"
-            size="sm"
-            className="ml-2"
-          >
-            <ArrowDownToLine size={16} className="mr-1" /> Exporter
-          </Button>
-        )}
-        {hasPermission("parking.vehicule.exporter") && (
-          <Button
-            onClick={() => setPrintOpen(true)}
-            variant="outline"
-            size="sm"
-            className="ml-2"
-          >
-            <Printer size={16} className="mr-1" /> Imprimer
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {aFiltres && (
+            <Button type="button" variant="ghost" size="sm" onClick={reinitialiserFiltres}>
+              <FilterX size={15} className="mr-1.5" /> Réinitialiser les filtres
+            </Button>
+          )}
+          {canCreer && (
+            <Button onClick={() => setFormOpen(true)}>
+              <Plus size={16} className="mr-1.5" /> Enregistrer un véhicule
+            </Button>
+          )}
+          {canExporter && vehicules.length > 0 && (
+            <Button type="button" variant="outline" onClick={() => setExportOuvert(true)}>
+              <Download size={16} className="mr-1.5" /> Exporter
+            </Button>
+          )}
+          {canExporter && vehicules.length > 0 && (
+            <Button type="button" variant="outline" onClick={() => setPrintOuvert(true)}>
+              <Printer size={16} className="mr-1.5" /> Imprimer
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-3 rounded-xl border border-border bg-background p-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -244,6 +270,7 @@ export default function GarageVehiculesPage() {
                   <th className="px-4 py-3 font-semibold">Client</th>
                   <th className="px-4 py-3 font-semibold">Statut</th>
                   <th className="px-4 py-3 font-semibold">Position</th>
+                  <th className="px-4 py-3 font-semibold">Emplacement</th>
                   <th className="px-4 py-3 font-semibold">Alertes</th>
                   <th className="px-4 py-3 font-semibold">Entrée</th>
                   <th className="px-4 py-3 font-semibold text-right">Actions</th>
@@ -258,19 +285,32 @@ export default function GarageVehiculesPage() {
                     <td className="px-4 py-3 font-mono font-semibold text-foreground">{v.numRegistre}</td>
                     <td className="px-4 py-3">
                       {v.photo ? (
-                        <Link href={`/dashboard/garage/vehicules/${v.id}`} title="Voir en détail">
-                          <img
-                            src={v.photo.url}
-                            alt="Véhicule"
-                            className="aspect-[4/3] w-16 rounded-md border border-border object-cover"
-                          />
-                        </Link>
+                        <div className="flex flex-col items-start gap-1">
+                          <button
+                            type="button"
+                            onClick={() => ouvrirVisionneuse(v.id)}
+                            title="Agrandir les photos"
+                            className="group relative block overflow-hidden rounded-md border border-border transition-transform hover:scale-[1.04]"
+                          >
+                            <img
+                              src={v.photo.url}
+                              alt="Véhicule"
+                              className="aspect-[4/3] w-16 object-cover"
+                            />
+                            <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100">
+                              <ZoomIn className="size-4" />
+                            </span>
+                          </button>
+                          <Link href={hrefVehicule(v.id)} className="text-[11px] text-muted-foreground hover:text-primary hover:underline">
+                            Fiche
+                          </Link>
+                        </div>
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <Link href={`/dashboard/garage/vehicules/${v.id}`} className="font-medium text-foreground hover:text-primary hover:underline">
+                      <Link href={hrefVehicule(v.id)} className="font-medium text-foreground hover:text-primary hover:underline">
                         {v.marque ? v.marque : "—"} {v.modele ?? ""}
                       </Link>
                       {v.version && <span className="ml-1 text-xs text-muted-foreground">{v.version}</span>}
@@ -304,6 +344,29 @@ export default function GarageVehiculesPage() {
                         </span>
                       ) : (
                         <span className="text-xs text-amber-600 dark:text-amber-400">À placer</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {v.spot ? (
+                        <span className="inline-flex items-center gap-1 text-xs">
+                          <MapPin size={11} className="text-emerald-500" />
+                          <span className="text-emerald-600 dark:text-emerald-400 font-medium">{v.spot}</span>
+                          {v.zone && <span className="text-muted-foreground"> / {v.zone}</span>}
+                          {v.site && <span className="text-muted-foreground"> / {v.site}</span>}
+                        </span>
+                      ) : v.zone ? (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <MapPin size={11} className="text-amber-500" />
+                          <span>{v.zone}</span>
+                          {v.site && <span className="text-muted-foreground"> / {v.site}</span>}
+                        </span>
+                      ) : v.site ? (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <MapPin size={11} className="text-blue-500" />
+                          <span>{v.site}</span>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-amber-600 dark:text-amber-400">Non défini</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -356,7 +419,7 @@ export default function GarageVehiculesPage() {
                           <MapPin size={15} />
                         </Button>
                         <Button type="button" variant="ghost" size="sm" asChild title="Fiche">
-                          <Link href={`/dashboard/garage/vehicules/${v.id}`}>
+                          <Link href={hrefVehicule(v.id)}>
                             <ArrowRight size={15} />
                           </Link>
                         </Button>
@@ -391,29 +454,43 @@ export default function GarageVehiculesPage() {
         variant="destructive"
         requiresReason
       />
+
+      {/* Visionneuse ouverte depuis la vignette de la liste : le tableau complet
+          de photos est charge a la demande pour la seule ligne concernee. */}
+      {visionneuse !== null && (
+        <div className="sr-only" aria-live="polite">
+          {chargementPhotos ? "Chargement des photos…" : `${photosVisionneuse?.photos.length ?? 0} photo(s)`}
+        </div>
+      )}
+      <PhotoLightbox
+        photos={photosVisionneuse?.photos ?? []}
+        index={visionneuse !== null ? photoOuverte : null}
+        onIndexChange={setPhotoOuverte}
+        onClose={() => setVisionneuse(null)}
+        nomFichierBase={
+          data?.vehicules.find((x) => x.id === visionneuse)?.numRegistre != null
+            ? `vehicule-${data.vehicules.find((x) => x.id === visionneuse)!.numRegistre}`
+            : "vehicule"
+        }
+      />
       <ExportVehiculesDialog
-        open={exportOpen}
-        onClose={() => setExportOpen(false)}
-        filtres={{
-          q: debouncedSearch.trim(),
-          statut,
-          site: siteId,
-          nonPositionnes,
-        }}
+        open={exportOuvert}
+        onClose={() => setExportOuvert(false)}
+        filtres={filtres}
         lignesVisibles={data?.total ?? 0}
       />
       <PrintVehiculesList
-        vehicules={vehicules as any}
+        vehicules={vehicules as never}
         filtres={{
           search: debouncedSearch.trim() || undefined,
           statut: statut || undefined,
           siteId: siteId ? Number(siteId) : undefined,
-          nonPositionnes: nonPositionnes ? true : undefined,
+          nonPositionnes: nonPositionnes || undefined,
         }}
         garageNom="Garage"
         utilisateur="Utilisateur"
-        isOpen={printOpen}
-        onClose={() => setPrintOpen(false)}
+        isOpen={printOuvert}
+        onClose={() => setPrintOuvert(false)}
       />
     </motion.div>
   );

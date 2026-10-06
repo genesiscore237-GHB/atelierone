@@ -150,14 +150,23 @@ export const ZONE_TYPE_LABELS: Record<string, string> = {
 const dateFmt = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
 const dateHeureFmt = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
-export function formatDate(d: string | Date | null | undefined): string {
-  if (!d) return "—";
-  return dateFmt.format(typeof d === "string" ? new Date(d) : d);
+/**
+ * tRPC renvoie les colonnes timestamp comme des `Date` (superjson), tandis que
+ * les champs saisis dans les formulaires sont des chaines ISO. On accepte les
+ * deux formes plutot que de forcer un cast a chaque appel.
+ */
+export type DateOuChaine = Date | string | null | undefined;
+
+export function formatDate(d: DateOuChaine): string {
+  if (d == null || d === "") return "—";
+  const date = d instanceof Date ? d : new Date(d);
+  return Number.isNaN(date.getTime()) ? "—" : dateFmt.format(date);
 }
 
-export function formatDateHeure(d: string | Date | null | undefined): string {
-  if (!d) return "—";
-  return dateHeureFmt.format(typeof d === "string" ? new Date(d) : d);
+export function formatDateHeure(d: DateOuChaine): string {
+  if (d == null || d === "") return "—";
+  const date = d instanceof Date ? d : new Date(d);
+  return Number.isNaN(date.getTime()) ? "—" : dateHeureFmt.format(date);
 }
 
 export function formatNumber(n: number | null | undefined): string {

@@ -728,7 +728,7 @@ spots: spots.map((s) => {
             if (v.photos && v.photos.length > 0) photosParId.set(v.id, v.photos);
           }
         }
-        console.info("[LIBRACORE_EXPORT_PHOTOS_SERVER]", {
+        console.info("[ATELIERONE_EXPORT_PHOTOS_SERVER]", {
           requested: rows.length,
           withPhotosLoaded: photosParId.size,
           totalPhotos: Array.from(photosParId.values()).reduce((a, b) => a + b.length, 0),

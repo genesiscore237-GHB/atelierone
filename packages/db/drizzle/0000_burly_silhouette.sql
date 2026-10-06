@@ -3950,3 +3950,5 @@ CREATE INDEX "rh_absence_justification_decisions_agence_created_idx" ON "rh_abse
 CREATE UNIQUE INDEX "rh_absence_justifications_employe_date_uidx" ON "rh_absence_justifications" USING btree ("employee_id","date");--> statement-breakpoint
 CREATE INDEX "rh_absence_justifications_agence_date_idx" ON "rh_absence_justifications" USING btree ("agence_id","date");--> statement-breakpoint
 CREATE UNIQUE INDEX "unq_unites_conversions_domaine_unite" ON "unites_conversions" USING btree ("domaine_id","unite_id");
+--> statement-breakpoint
+CREATE VIEW "parking_spots_v" AS SELECT s.id, s.agence_id, s.site_id, s.zone_id, s.code, s.geometrie, s.longueur, s.largeur, s.rotation, s.ordre, s.is_active, s.bloque, s.reserve_pour, s.created_at, s.updated_at, v.id AS vehicule_id, CASE WHEN s.bloque THEN 'BLOQUE' WHEN v.id IS NOT NULL THEN 'OCCUPE' WHEN s.reserve_pour IS NOT NULL THEN 'RESERVE' ELSE 'LIBRE' END AS statut FROM parking_spots s LEFT JOIN parking_vehicles v ON v.spot_id = s.id AND v.statut <> 'SORTI';

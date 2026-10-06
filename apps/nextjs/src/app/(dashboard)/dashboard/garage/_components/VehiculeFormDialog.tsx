@@ -6,6 +6,8 @@ import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { Dialog, DialogTitle } from "~/components/ui/dialog";
+import { ConfirmationDialog } from "~/components/ui/confirmation-dialog";
 import { toast } from "sonner";
 import { CameraCapture } from "./CameraCapture";
 import {
@@ -115,6 +117,8 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [faceChoisie, setFaceChoisie] = useState<string>(PHOTO_CATEGORIES[0]);
   const [cameraOuverte, setCameraOuverte] = useState(false);
+  const [confirmerAbandon, setConfirmerAbandon] = useState(false);
+  const snapshotRef = useRef<string>("");
   const saisieNativeRef = useRef<HTMLInputElement | null>(null);
   const utils = api.useUtils();
 
@@ -143,7 +147,7 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
   useEffect(() => {
     if (!open) return;
     if (isEdit && vehicule) {
-      setForm({
+      const initial: FormState = {
         numRegistre: String(vehicule.numRegistre),
         marque: vehicule.marque ?? "",
         modele: vehicule.modele ?? "",
@@ -168,15 +172,30 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
         dateCommande: toDateInput(vehicule.dateCommande),
         dateFinTravaux: toDateInput(vehicule.dateFinTravaux),
         dateDerniereRelance: toDateInput(vehicule.dateDerniereRelance),
-      });
+      };
+      setForm(initial);
+      // Reference pour detecter une saisie non enregistree avant fermeture.
+      snapshotRef.current = JSON.stringify(initial);
     } else {
       setForm(emptyForm);
+      snapshotRef.current = JSON.stringify(emptyForm);
     }
+    setConfirmerAbandon(false);
   }, [open, isEdit, vehicule]);
 
-  if (!open) return null;
-
   const isPending = create.isPending || update.isPending;
+
+  const modifie = JSON.stringify(form) !== snapshotRef.current;
+
+  // Clic exterieur / Echap / Annuler : on demande confirmation si saisie en cours.
+  function demanderFermeture() {
+    if (isPending) return;
+    if (modifie) {
+      setConfirmerAbandon(true);
+      return;
+    }
+    onClose();
+  }
 
   const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
 
@@ -339,11 +358,11 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
   const textareaCls = `${inputCls} min-h-[70px] resize-y`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4 backdrop-blur-sm">
-      <div className="w-full max-w-2xl rounded-xl border border-border bg-background p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
-        <h2 className="text-lg font-semibold text-foreground mb-5">
+<Dialog open={open} onOpenChange={(o) => { if (!o) demanderFermeture(); }} className="max-w-2xl">
+      <div className="p-6">
+        <DialogTitle className="mb-5">
           {isEdit ? `Modifier le véhicule n°${vehicule?.numRegistre ?? ""}` : "Nouveau véhicule (registre GPJ)"}
-        </h2>
+        </DialogTitle>
 
         <form onSubmit={submit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
@@ -563,7 +582,7 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
           )}
 
           <div className="flex justify-end gap-3 pt-2">
-            <Button type="button" variant="outline" onClick={onClose}>Annuler</Button>
+            <Button type="button" variant="outline" onClick={demanderFermeture}>Annuler</Button>
             <Button type="submit" disabled={isPending}>
               {isPending ? (
                 <span className="flex items-center gap-2">
@@ -577,6 +596,7 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
           </div>
         </form>
       </div>
+
       <CameraCapture
         open={cameraOuverte}
         onClose={() => setCameraOuverte(false)}
@@ -584,6 +604,20 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
         onCapture={(file) => enregistrerPhoto(faceChoisie, file)}
         onFallback={() => saisieNativeRef.current?.click()}
       />
-    </div>
+
+      <ConfirmationDialog
+        isOpen={confirmerAbandon}
+        onClose={() => setConfirmerAbandon(false)}
+        onConfirm={() => {
+          setConfirmerAbandon(false);
+          onClose();
+        }}
+        title="Abandonner les modifications ?"
+        description="Les informations saisies dans ce formulaire n'ont pas été enregistrées. Elles seront perdues si vous fermez."
+        confirmText="Abandonner"
+        cancelText="Continuer la saisie"
+        variant="destructive"
+      />
+    </Dialog>
   );
 }
