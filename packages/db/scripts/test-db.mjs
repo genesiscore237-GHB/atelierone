@@ -163,6 +163,31 @@ try {
     log(`socle métier : ${agences[0].n} agences, employé témoin présent.`);
   }
 
+  // 4b. Seed parking : véhicules de démo pour tests (export, liste, fiche, carte)
+  if (!noSocle) {
+    const tsx = findBin("tsx");
+    if (!tsx) {
+      console.error("[test-db] ÉCHEC — binaire tsx introuvable (seed-garage).");
+      process.exit(1);
+    }
+    const rGarage = spawnSync(
+      process.execPath,
+      [tsx, resolve(PKG_ROOT, "src", "seed-garage.ts"), "--vehicules"],
+      {
+        cwd: PKG_ROOT,
+        encoding: "utf8",
+        env: { ...process.env, DATABASE_URL: TEST_URL, FORCE: undefined },
+        stdio: quiet ? "pipe" : "inherit",
+      },
+    );
+    if (rGarage.status !== 0) {
+      console.error("[test-db] ÉCHEC — seed-garage :");
+      console.error(`${rGarage.stdout ?? ""}\n${rGarage.stderr ?? ""}`);
+      process.exit(rGarage.status ?? 1);
+    }
+    log("parking : véhicules démo insérés (mode --vehicules).");
+  }
+
   // 5. vérification
   const t = postgres(TEST_URL, { max: 1 });
   const n = await t`select count(*)::int as n from information_schema.tables
