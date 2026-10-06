@@ -36,7 +36,6 @@ import {
   type OptionsGenerationExport,
   type ResultatExport,
   type LigneExportVehicule,
-  type ChampsExportVehicule,
   genererEtTelechargerExport,
   estimerPoidsExport,
 } from "@/lib/parking-export";
@@ -160,7 +159,7 @@ export function ExportVehiculesDialog({ vehicules, isOpen, onExport, onClose }: 
 
   const handleGenerer = async () => {
     if (champsActifs.length === 0) {
-      toast({ title: "Erreur", description: "Selectionnez au moins un champ.", variant: "destructive" });
+      toast.error("Selectionnez au moins un champ.");
       return;
     }
 
@@ -175,14 +174,12 @@ export function ExportVehiculesDialog({ vehicules, isOpen, onExport, onClose }: 
       const resultat = await genererEtTelechargerExport(vehicules, options, "registre-vehicules", () => {});
       onExport(resultat);
       onClose();
-      toast({
-        title: "Export termine",
+      toast.success("Export termine", {
         description: `${resultat.lignes} vehicule${resultat.lignes > 1 ? "s" : ""} exporte${resultat.lignes > 1 ? "s" : ""}.`,
-        variant: "success",
       });
     } catch (err) {
       console.error(err);
-      toast({ title: "Erreur d'export", description: "Impossible de generer le fichier.", variant: "destructive" });
+      toast.error("Impossible de generer le fichier.");
     }
   };
 
@@ -292,12 +289,12 @@ export function ExportVehiculesDialog({ vehicules, isOpen, onExport, onClose }: 
             {selection.photosParVehicule > 0 && ` (${poidsEstime > 0 ? `${Math.round(poidsEstime / 1024)} Ko estime` : ""})`}
           </label>
           <div className="space-y-1 mt-1">
-            {[
+            {([
               { valeur: 0, label: "Aucune" },
               { valeur: 1, label: "Couverture seulement" },
               { valeur: 2, label: "3 photos max" },
               { valeur: 3, label: "Toutes" },
-            ].map((opt) => (
+            ] as const).map((opt) => (
               <label key={opt.valeur} className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"

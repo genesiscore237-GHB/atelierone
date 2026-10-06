@@ -10,6 +10,8 @@
  * SQL ecrite en dur.
  */
 
+import type { LigneExportVehicule } from "@/lib/parking-export";
+
 export type TypeChampExport = "texte" | "nombre" | "mesure" | "date" | "booleen" | "photos";
 
 export interface ChampExportVehicule {
@@ -230,6 +232,9 @@ export const MAX_CHAMPS_EXPORT = 30;
 /** Garde-fou : un registre entier ne doit pas faire exploser la memoire du navigateur. */
 export const MAX_LIGNES_EXPORT = 500;
 
+/** Limite quand photos incluses : eviter OOM / payload trop lourd. */
+export const MAX_LIGNES_EXPORT_AVEC_PHOTOS = 50;
+
 export const FORMATS_EXPORT = ["xlsx", "csv", "pdf"] as const;
 export type FormatExport = (typeof FORMATS_EXPORT)[number];
 
@@ -240,63 +245,343 @@ export const LIBELLES_FORMAT_EXPORT: Record<FormatExport, string> = {
 };
 
 /**
- * Resolution d'une data URI d'image vers un Blob, sans passer par un canevas :
- * plus rapide et fidele a l'original (toDataURL a deja encode le JPEG).
+ * Type de retour d'audit pour une Data URI image décodée.
  */
-export async function dataUriVersBlob(dataUri: string): Promise<Blob | null> {
-  const match = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(dataUri);
-  if (!match) return null;
-  const [, mime = "image/jpeg,base64", , data = ""] = match;
-  const type = mime.replace(/;base64$/, "");
-  const isBase64 = /;base64/.test(mime) || !match[2];
+export interface ImageDataAudit {
+  blob: Blob;
+  mimeTypeDeclared: string;
+  base64LengthBefore: number;
+  base64LengthAfter: number;
+  byteLength: number;
+  firstBytesHex: string;
+  signature: "jpeg" | "png" | "webp" | "gif" | "unknown";
+  isDoubleEncoded: boolean;
+}
+
+/**
+ * Audit et décodage robuste d'une Data URI image vers un Blob.
+ * Retourne le Blob + métadonnées de diagnostic.
+ * Lance une erreur si la Data URI est invalide ou non décodable.
+ */
+export function dataUriVersBlobAudite(dataUri: string): ImageDataAudit {
+  if (typeof dataUri !== "string" || dataUri.trim().length === 0) {
+    throw new Error("Data URI vide ou invalide");
+  }
+
+  const trimmed = dataUri.trim();
+  const match = trimmed.match(/^data:(image\/(?:jpeg|jpg|png|webp|gif));base64,([\s\S]+)$/i);
+
+  if (!match) {
+    throw new Error("Format Data URI image Base64 non reconnu");
+  }
+
+  let mimeTypeDeclared = match[1].toLowerCase();
+
+  if (mimeTypeDeclared === "image/jpg") {
+    mimeTypeDeclared = "image/jpeg";
+  }
+
+  let base64 = match[2]
+    .replace(/[\r\n\t\s]/g, "")
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+
+  const base64LengthBefore = match[2].length;
+  const base64LengthAfter = base64.length;
+
+  const remainder = base64.length % 4;
+
+  if (remainder === 2) {
+    base64 += "==";
+  } else if (remainder === 3) {
+    base64 += "=";
+  } else if (remainder === 1) {
+    throw new Error("Base64 invalide : longueur modulo 4 égale à 1");
+  }
+
+  let binary: string;
+
   try {
-    if (!isBase64) {
-      return new Blob([decodeURIComponent(data)], { type });
-    }
-    const binaire = atob(data);
-    const octets = new Uint8Array(binaire.length);
-    for (let i = 0; i < binaire.length; i++) octets[i] = binaire.charCodeAt(i);
-    return new Blob([octets], { type });
+    binary = atob(base64);
   } catch {
-    return null;
+    throw new Error("Base64 invalide : échec de décodage atob");
+  }
+
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  const firstBytes = Array.from(bytes.slice(0, 32));
+
+  const firstBytesHex = firstBytes
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join(" ");
+
+  const isJpeg =
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff;
+
+  const isPng =
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a;
+
+  const isWebp =
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50;
+
+  const isGif =
+    bytes[0] === 0x47 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x38 &&
+    (bytes[4] === 0x37 || bytes[4] === 0x39) &&
+    bytes[5] === 0x61;
+
+  const signature =
+    isJpeg ? "jpeg" :
+    isPng ? "png" :
+    isWebp ? "webp" :
+    isGif ? "gif" :
+    "unknown";
+
+  const decodedTextPrefix = new TextDecoder()
+    .decode(bytes.slice(0, 32))
+    .toLowerCase();
+
+  const isDoubleEncoded =
+    decodedTextPrefix.startsWith("data:image/") ||
+    decodedTextPrefix.startsWith("/9j/") ||
+    decodedTextPrefix.startsWith("ivbor");
+
+  return {
+    blob: new Blob([bytes], {
+      type: mimeTypeDeclared,
+    }),
+    mimeTypeDeclared,
+    base64LengthBefore: match[2].length,
+    base64LengthAfter: base64.length,
+    byteLength: bytes.length,
+    firstBytesHex: Array.from(bytes.slice(0, 32))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join(" "),
+    signature,
+    isDoubleEncoded,
+  };
+}
+
+import { jpegAUnMarqueurFinal } from "@/lib/jpeg-utils";
+
+/**
+ * Charge une image depuis un Blob avec fallback : createImageBitmap puis HTMLImageElement.
+ */
+export type SourceImageChargee =
+  | { kind: "bitmap"; value: ImageBitmap }
+  | { kind: "html-image"; value: HTMLImageElement };
+
+async function chargerImageAvecFallback(blob: Blob): Promise<SourceImageChargee> {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    return { kind: "bitmap", value: bitmap };
+  } catch (bitmapError) {
+    const objectUrl = URL.createObjectURL(blob);
+
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image();
+
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error("HTMLImageElement n'a pas pu décoder l'image"));
+        element.src = URL.createObjectURL(blob);
+      });
+
+      return { kind: "html-image", value: image };
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
   }
 }
 
 /**
  * Reduit une photo a une vignette pour l'integration dans un tableur ou un PDF.
- * La data URI d'origine peut faire plusieurs Mo : on refuse de l'integrer telle
- * quelle au fichier, ce qui ferait exploser le poids de celui-ci.
+ * Version robuste avec audit, fallback HTMLImageElement, et signature.
  */
+export interface VignetteExportResult {
+  bytes: ArrayBuffer;
+  largeur: number;
+  hauteur: number;
+  type: string;
+  sourceSignature: string;
+  sourceMimeType: string;
+  usedFallback: boolean;
+}
+
 export async function reduirePhoto(
   dataUri: string,
-  largeurMax = 320,
+  largeurMax = 200,
   qualite = 0.72,
-): Promise<{ bytes: ArrayBuffer; largeur: number; hauteur: number; type: string } | null> {
-  const blob = await dataUriVersBlob(dataUri);
-  if (!blob) return null;
-  if (blob.type !== "image/jpeg" && blob.type !== "image/png" && blob.type !== "image/webp") return null;
+): Promise<VignetteExportResult | null> {
+  let audit: ImageDataAudit;
 
-  const bitmap = await createImageBitmap(blob);
   try {
-    const ratio = Math.min(1, largeurMax / bitmap.width);
-    const largeur = Math.max(1, Math.round(bitmap.width * ratio));
-    const hauteur = Math.max(1, Math.round(bitmap.height * ratio));
-    const canevas = document.createElement("canvas");
-    canevas.width = largeur;
-    canevas.height = hauteur;
-    const ctx = canevas.getContext("2d");
-    if (!ctx) return null;
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(bitmap, 0, 0, largeur, hauteur);
-    const sortie = await new Promise<Blob | null>((resolve) => {
-      canevas.toBlob((b) => resolve(b), "image/jpeg", qualite);
-    });
-    if (!sortie) return null;
-    const buffer = await sortie.arrayBuffer();
-    return { bytes: buffer, largeur, hauteur, type: sortie.type || "image/jpeg" };
-  } finally {
-    bitmap.close?.();
+    audit = dataUriVersBlobAudite(dataUri);
+  } catch (e) {
+    console.warn("[LIBRACORE_PHOTO_REDUCE] Data URI invalide", { error: e instanceof Error ? e.message : e, prefix: dataUri.slice(0, 60) });
+    return null;
   }
+
+  const jpegHasEndMarker = audit.signature === "jpeg" ? await jpegAUnMarqueurFinal(audit.blob) : false;
+
+  console.info("[LIBRACORE_PHOTO_BINARY_AUDIT]", {
+    dataUriPrefix: dataUri.slice(0, 60),
+    dataUriLength: dataUri.length,
+    mimeTypeDeclared: audit.mimeTypeDeclared,
+    blobType: audit.blob.type,
+    blobSize: audit.blob.size,
+    base64LengthBefore: audit.base64LengthBefore,
+    base64LengthAfter: audit.base64LengthAfter,
+    firstBytesHex: audit.firstBytesHex,
+    detectedSignature: audit.signature,
+    isDoubleEncoded: audit.isDoubleEncoded,
+    jpegHasEndMarker: audit.signature === "jpeg" ? jpegHasEndMarker : undefined,
+  });
+
+  if (audit.signature === "unknown" || audit.isDoubleEncoded) {
+    console.warn("[LIBRACORE_PHOTO_REDUCE] signature inconnue ou double encodage", { signature: audit.signature, isDoubleEncoded: audit.isDoubleEncoded });
+    return null;
+  }
+
+  let imageSource: SourceImageChargee;
+  let usedFallback = false;
+
+  try {
+    const loaded = await chargerImageAvecFallback(audit.blob);
+    imageSource = loaded;
+    usedFallback = loaded.kind === "html-image";
+  } catch (e) {
+    console.warn("[LIBRACORE_PHOTO_REDUCE] Échec chargement image (bitmap + HTMLImageElement)", { error: e instanceof Error ? e.message : e });
+    return null;
+  }
+
+  try {
+    let largeur: number;
+    let hauteur: number;
+
+    if (imageSource.kind === "bitmap") {
+      largeur = imageSource.value.width;
+      hauteur = imageSource.value.height;
+    } else {
+      largeur = imageSource.value.naturalWidth;
+      hauteur = imageSource.value.naturalHeight;
+    }
+
+    const ratio = Math.min(1, 200 / largeur);
+    const largeurFinale = Math.max(1, Math.round(largeur * ratio));
+    const hauteurFinale = Math.max(1, Math.round(hauteur * ratio));
+
+    const canevas = document.createElement("canvas");
+    canevas.width = largeurFinale;
+    canevas.height = hauteurFinale;
+    const ctx = canevas.getContext("2d");
+    if (!ctx) {
+      console.warn("[LIBRACORE_PHOTO_REDUCE] canvas getContext('2d') failed");
+      return null;
+    }
+    ctx.imageSmoothingQuality = "high";
+
+    if (imageSource.kind === "bitmap") {
+      ctx.drawImage(imageSource.value, 0, 0, largeurFinale, hauteurFinale);
+      imageSource.value.close?.();
+    } else {
+      ctx.drawImage(imageSource.value, 0, 0, largeurFinale, hauteurFinale);
+    }
+
+    const sortie = await new Promise<Blob | null>((resolve) => {
+      canevas.toBlob((b) => resolve(b), "image/jpeg", 0.72);
+    });
+
+    if (!sortie) {
+      console.warn("[LIBRACORE_PHOTO_REDUCE] canvas.toBlob returned null", { largeur: largeurFinale, hauteur: hauteurFinale });
+      return null;
+    }
+    if (sortie.size === 0) {
+      console.warn("[LIBRACORE_PHOTO_REDUCE] canvas.toBlob produced empty blob");
+      return null;
+    }
+
+    const buffer = await sortie.arrayBuffer();
+    if (buffer.byteLength === 0) {
+      console.warn("[LIBRACORE_PHOTO_REDUCE] blob.arrayBuffer() empty");
+      return null;
+    }
+
+    console.info("[LIBRACORE_PHOTO_REDUCE_OK]", {
+      originalType: "image/jpeg",
+      outputType: sortie.type,
+      originalSize: audit.blob.size,
+      outputSize: sortie.size,
+      largeur: largeurFinale,
+      hauteur: hauteurFinale,
+      sourceSignature: audit.signature,
+      sourceMimeType: audit.mimeTypeDeclared,
+      usedFallback,
+    });
+
+    return {
+      bytes: buffer,
+      largeur: largeurFinale,
+      hauteur: hauteurFinale,
+      type: "image/jpeg",
+      sourceSignature: audit.signature,
+      sourceMimeType: audit.mimeTypeDeclared,
+      usedFallback,
+    };
+  } finally {
+    // Nothing to close for HTMLImageElement
+  }
+}
+
+/**
+ * Trouve une photo exploitable pour l'export selon l'ordre de priorité :
+ * 1. Photo principale (isPrimary) dans vehicule.photos
+ * 2. Première photo valide dans vehicule.photos
+ * 3. Vignette de liste (photo) si disponible
+ * 4. null si aucune photo exploitable
+ */
+export function trouverPhotoExportable(
+  vehicule: LigneExportVehicule,
+  listePhoto?: { url: string } | null
+): string | null {
+  // 1. Essayer la photo principale (isPrimary) dans photos
+  if (vehicule.photos && vehicule.photos.length > 0) {
+    const principale = vehicule.photos.find(p => (p as any).isPrimary);
+    if (principale?.url) return principale.url;
+    
+    // 2. Première photo valide dans photos
+    for (const photo of vehicule.photos) {
+      if (photo?.url) return photo.url;
+    }
+  }
+
+  // 3. Vignette de liste (photo) si disponible
+  if (listePhoto?.url) return listePhoto.url;
+
+  // 4. Aucune photo exploitable
+  return null;
 }
 
 /** Nom de fichier normalise, sans accents ni caracteres indesirables. */

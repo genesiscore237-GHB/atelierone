@@ -19,8 +19,16 @@ export interface VehicleFootprintInput {
   id?: number;
   longueur: number | null;
   largeur: number | null;
+  /**
+   * Position du véhicule. Deux noms coexistent :
+   * - `positionX`/`positionY` : libellé historique (libellés de vue, tests existants).
+   * - `centreX`/`centreY` : colonnes réelles de `parking_vehicles` depuis la refonte
+   *   centre-géométrique. Ce sont celles-ci qui doivent être renseignées par l'appelant.
+   */
   positionX?: number | null;
   positionY?: number | null;
+  centreX?: number | null;
+  centreY?: number | null;
   rotation?: number | null;
   dimensionsEstimees?: boolean;
 }
@@ -62,13 +70,13 @@ export function cornersOf(rect: { x: number; y: number; w: number; h: number }, 
   const a = (rotationDeg * Math.PI) / 180;
   const cos = Math.cos(a);
   const sin = Math.sin(a);
-  const half = [
+  const half: Array<[number, number]> = [
     [-rect.w / 2, -rect.h / 2],
     [rect.w / 2, -rect.h / 2],
     [rect.w / 2, rect.h / 2],
     [-rect.w / 2, rect.h / 2],
   ];
-  return half.map(([dx, dy]) => [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos] as Vec2);
+  return half.map(([dx, dy]) => [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos]);
 }
 
 function projectOnAxis(axis: Vec2, corners: Vec2[]): { min: number; max: number } {
@@ -87,8 +95,11 @@ export function satIntersects(cornersA: Vec2[], cornersB: Vec2[]): boolean {
   const axes: Vec2[] = [];
   for (const corners of [cornersA, cornersB]) {
     for (let i = 0; i < corners.length; i++) {
-      const [x1, y1] = corners[i];
-      const [x2, y2] = corners[(i + 1) % corners.length];
+      const c1 = corners[i];
+      const c2 = corners[(i + 1) % corners.length];
+      if (!c1 || !c2) continue;
+      const [x1, y1] = c1;
+      const [x2, y2] = c2;
       const [dx, dy] = [x2 - x1, y2 - y1];
       axes.push([-dy, dx]);
     }
@@ -115,9 +126,15 @@ export function rectsOverlap(
 
 // ─── Empreinte véhicule ───────────────────────────────────────────────────────
 
+/** true si le véhicule porte une position exploitable (centre prioritaire, repli position*). */
+export function estPositionne(v: VehicleFootprintInput): boolean {
+  return (v.centreX ?? v.positionX) != null && (v.centreY ?? v.positionY) != null;
+}
+
 export function vehicleFootprint(v: VehicleFootprintInput): FootprintRect {
-  const x = v.positionX ?? 0;
-  const y = v.positionY ?? 0;
+  // centreX/centreY (colonnes réelles) prioritaires, positionX/positionY en repli.
+  const x = v.centreX ?? v.positionX ?? 0;
+  const y = v.centreY ?? v.positionY ?? 0;
   const rotation = v.rotation ?? 0;
   const hasDims = v.longueur != null && v.largeur != null;
   const w = hasDims ? v.largeur! : DEFAULT_VEHICULE.largeur;
@@ -192,7 +209,7 @@ export interface ZoneOccupation {
 }
 
 export function computeZoneOccupation(zone: ZoneSpatial, vehicles: VehicleFootprintInput[]): ZoneOccupation {
-  const places = vehicles.filter((v) => v.positionX != null && v.positionY != null);
+  const places = vehicles.filter(estPositionne);
   let nbrSurface = 0;
   let nombre = 0;
   for (const v of places) {
@@ -216,14 +233,17 @@ export function computeZoneOccupation(zone: ZoneSpatial, vehicles: VehicleFootpr
 
 /** Liste des véhicules en collision mutuelle dans une zone (pour surlignage carte). */
 export function collisionsDansZone(zone: ZoneSpatial, vehicles: VehicleFootprintInput[], margin = zone.margeSecurite ?? 0): { a: number; b: number }[] {
-  const places = vehicles.filter((v) => v.positionX != null && v.positionY != null && v.id != null);
+  const places = vehicles.filter((v) => estPositionne(v) && v.id != null);
   const found: { a: number; b: number }[] = [];
   for (let i = 0; i < places.length; i++) {
     for (let j = i + 1; j < places.length; j++) {
-      const fa = vehicleFootprint(places[i]);
-      const fb = vehicleFootprint(places[j]);
+      const va = places[i];
+      const vb = places[j];
+      if (!va || !vb) continue;
+      const fa = vehicleFootprint(va);
+      const fb = vehicleFootprint(vb);
       if (rectsOverlap({ x: fa.x, y: fa.y, w: fa.w, h: fa.h }, fa.rotation, { x: fb.x, y: fb.y, w: fb.w, h: fb.h }, fb.rotation, margin)) {
-        found.push({ a: places[i].id!, b: places[j].id! });
+        found.push({ a: va.id!, b: vb.id! });
       }
     }
   }
@@ -263,11 +283,11 @@ export function tryPlace(p: TryPlaceParams): TryPlaceResult {
     return { ok: false, reason: "ORIENTATION_NON_AUTORISEE" };
   }
 
-  const fp = vehicleFootprint({ ...p.vehicle, positionX: p.x, positionY: p.y, rotation });
+  const fp = vehicleFootprint({ ...p.vehicle, centreX: p.x, centreY: p.y, rotation });
   const rect = { x: fp.x, y: fp.y, w: fp.w, h: fp.h };
   if (!rectWithinZone(rect, rotation, p.zone.geometrie, margin)) return { ok: false, reason: "HORS_ZONE" };
 
-  const autres = (p.autresVehicules ?? []).filter((v) => v.id !== p.vehicle.id && v.positionX != null && v.positionY != null);
+  const autres = (p.autresVehicules ?? []).filter((v) => v.id !== p.vehicle.id && estPositionne(v));
   const collisions: number[] = [];
   for (const o of autres) {
     const fo = vehicleFootprint(o);
@@ -307,8 +327,8 @@ export function findNearestFreeSpot(args: {
 }): NearestSpotResult | null {
   const { vehicle, zone, spots, autresVehicules = [], margin } = args;
   const usedMargin = margin ?? zone.margeSecurite ?? 0;
-  const fromX = args.fromX ?? vehicle.positionX ?? 0;
-  const fromY = args.fromY ?? vehicle.positionY ?? 0;
+  const fromX = args.fromX ?? vehicle.centreX ?? vehicle.positionX ?? 0;
+  const fromY = args.fromY ?? vehicle.centreY ?? vehicle.positionY ?? 0;
   const candidates = spots
     .filter((s) => !s.statut || s.statut === "LIBRE")
     .map((s) => {

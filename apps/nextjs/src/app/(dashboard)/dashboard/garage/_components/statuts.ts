@@ -150,14 +150,14 @@ export const ZONE_TYPE_LABELS: Record<string, string> = {
 const dateFmt = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
 const dateHeureFmt = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
-export function formatDate(d: string | null | undefined): string {
+export function formatDate(d: string | Date | null | undefined): string {
   if (!d) return "—";
-  return dateFmt.format(new Date(d));
+  return dateFmt.format(typeof d === "string" ? new Date(d) : d);
 }
 
-export function formatDateHeure(d: string | null | undefined): string {
+export function formatDateHeure(d: string | Date | null | undefined): string {
   if (!d) return "—";
-  return dateHeureFmt.format(new Date(d));
+  return dateHeureFmt.format(typeof d === "string" ? new Date(d) : d);
 }
 
 export function formatNumber(n: number | null | undefined): string {

@@ -17,6 +17,7 @@ import {
   parkingAlerts,
   parkingTasks,
   parkingConfigs,
+  auditLogs,
   type ParkingGeometry,
 } from "@atelierone/db";
 import {
@@ -28,6 +29,11 @@ import {
   type SpotSpatial,
   type RectGeom,
 } from "~/server/lib/parking-spatial";
+  import {
+  MAX_CHAMPS_EXPORT,
+  MAX_LIGNES_EXPORT,
+  normaliserChampsExport,
+} from "~/app/(dashboard)/dashboard/garage/_components/export-champs";
 import {
   validerPlacement,
   empreinteVehicule,
@@ -48,13 +54,6 @@ import {
   type ParkingRuleConfig,
   type VehiculeAlertable,
 } from "~/server/lib/parking-alerts";
-import {
-  genererEtTelechargerExport,
-  type LigneExportVehicule,
-  type OptionsGenerationExport,
-  type ChampExportVehicule,
-  type FormatExport,
-} from "~/lib/parking-export";
 
 export const STATUTS_VEHICULE = [
   "EN_PARKING",
@@ -162,11 +161,32 @@ function rectSiPossible(g: ParkingGeometry): RectGeom | null {
   return g.type === "polygon" ? null : g;
 }
 
+/** Convertit une ParkingGeometry en polygone convexe (Vec2[]) pour @atelierone/geo. */
+function zoneAPolygone(g: ParkingGeometry): Polygone {
+  if (g.type === "rectangle") {
+    return {
+      points: [
+        [g.x, g.y],
+        [g.x + g.w, g.y],
+        [g.x + g.w, g.y + g.h],
+        [g.x, g.y + g.h],
+      ],
+    };
+  }
+  // Polygone stocké : `points` au format {x, y} ou [x, y].
+  const points = (g.points as unknown[]).map((p) => {
+    if (Array.isArray(p)) return [p[0] as number, p[1] as number] as [number, number];
+    const o = p as { x: number; y: number };
+    return [o.x, o.y] as [number, number];
+  });
+  return { points };
+}
+
 async function libererSpot(tx: Tx, spotId: number | null | undefined): Promise<void> {
   if (spotId == null) return;
   await tx
     .update(parkingSpots)
-    .set({ bloque: false, reservePour: null, updatedAt: new Date() })
+    .set({ bloque: false, reservePour: null, updatedAt: new Date() } as any)
     .where(eq(parkingSpots.id, spotId));
 }
 
@@ -175,8 +195,9 @@ export const garageRouter = createTRPCRouter({
   overview: requirePermissionProcedure("parking.consulter").query(async ({ ctx }) => {
     const agenceId = ctx.user.agenceId;
 
-    const [parStatut, nonPositionnes, alertes, sites, spots, vehParSite, zonesParSite, spotsParSite] = await Promise.all([
-db
+const [parStatut, nonPositionnes, alertes, sites, spots, vehParSite, zonesParSite, spotsParSite] = await Promise.all([
+      // `statut` doit être dans le SELECT : la page tableau de bord groupe l'affichage par ce champ.
+      db
         .select({ statut: parkingVehicles.statut, c: sql<number>`count(*)::int` })
         .from(parkingVehicles)
         .where(and(eq(parkingVehicles.agenceId, agenceId), sql`${parkingVehicles.statut} <> 'SORTI'`))
@@ -190,8 +211,12 @@ db
         .from(parkingAlerts)
         .where(and(eq(parkingAlerts.agenceId, agenceId), eq(parkingAlerts.statut, "OUVERTE"))),
       db.select().from(parkingSites).where(and(eq(parkingSites.agenceId, agenceId), eq(parkingSites.isActive, true))),
-      // spotsParStatut - now using parking_spots_v view (statut is derived)
-      db.execute(sql`SELECT statut, count(*)::int as c FROM parking_spots_v WHERE agence_id = ${agenceId} GROUP BY statut`),
+      // spotsParStatut : via la vue parking_spots_v (statut dérivé côté vue ;
+      // la colonne parking_spots.statut du plan seedé n'est pas toujours fiable).
+      (await db.execute(sql`
+        SELECT statut, count(*)::int AS c FROM parking_spots_v
+        WHERE agence_id = ${agenceId} GROUP BY statut
+      `)) as unknown as { statut: string; c: number }[],
       db
         .select({ siteId: parkingVehicles.siteId, c: sql<number>`count(*)::int` })
         .from(parkingVehicles)
@@ -238,7 +263,7 @@ db
 
     const totalVehicules = parStatut.reduce((a, r) => a + r.c, 0);
     const spotsParStatut: Record<string, number> = {};
-    for (const s of spots) spotsParStatut[s.statut] = s.c;
+    for (const s of spots) spotsParStatut[s.statut] = (spotsParStatut[s.statut] ?? 0) + s.c;
 
     return {
       totalVehicules,
@@ -287,7 +312,7 @@ db
           .where(and(eq(parkingZones.siteId, input.id), eq(parkingZones.isActive, true)))
           .orderBy(asc(parkingZones.ordre)),
         db.select().from(parkingSpots).where(eq(parkingSpots.siteId, input.id)).orderBy(asc(parkingSpots.ordre)),
-        // Colonnes ciblées : le plan n'affiche jamais `photos` (jsonb base64).
+        // Colonnes ciblees : le plan n'affiche jamais `photos` (jsonb base64).
         db
           .select({
             id: parkingVehicles.id,
@@ -459,10 +484,10 @@ spots: spots.map((s) => {
         );
       }
 
-      // Ne jamais charger la colonne `photos` (jsonb base64, jusqu'à ~11 Mo au
+      // Ne jamais charger la colonne `photos` (jsonb base64, jusqu'a ~11 Mo au
       // total) ici : la liste n'affiche qu'une vignette servie par
-      // /api/parking/photo. Les métadonnées sont dénormalisées dans des colonnes
-      // (photo_presente/photo_categorie/photo_date) pour éviter tout detoast jsonb.
+      // /api/parking/photo. Les metadonnees sont denormalisees dans des colonnes
+      // (photo_presente/photo_categorie/photo_date) pour eviter tout detoast jsonb.
       const rows = await db
         .select({
           id: parkingVehicles.id,
@@ -591,6 +616,171 @@ spots: spots.map((s) => {
       };
     }),
 
+  /**
+   * Photos d'un seul vehicule, sans le reste de la fiche (alertes, mouvements,
+   * taches). La liste n'embarque qu'une vignette par vehicule : on ne charge le
+   * tableau complet qu'a l'ouverture de la visionneuse, et seulement pour la
+   * ligne demandee.
+   */
+  /**
+   * Donnees d'export du registre vehicules.
+   *
+   * Volontairement distincte de `vehicles` : ici on ne joint QUE les champs
+   * reellement demandes (projection ecrite en dur, jamais un nom de colonne venu
+   * du client), et les photos sont traitees a part pour ne pas peser sur le
+   * transfert quand l'utilisateur n'en veut pas.
+   */
+  exportVehicules: requirePermissionProcedure("parking.vehicule.exporter")
+    .input(
+      z.object({
+        champs: z.array(z.string()).max(MAX_CHAMPS_EXPORT).default([]),
+        search: z.string().max(100).optional(),
+        statut: z.string().optional(),
+        siteId: z.number().optional(),
+        nonPositionnes: z.boolean().optional(),
+        includeSortis: z.boolean().default(false),
+        withPhotos: z.boolean().default(false),
+        limit: z.number().min(1).max(MAX_LIGNES_EXPORT).default(MAX_LIGNES_EXPORT),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const agenceId = ctx.user.agenceId;
+      const champs = normaliserChampsExport(input.champs);
+      if (champs.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Aucune colonne valide sélectionnée." });
+      }
+
+      const conditions = [eq(parkingVehicles.agenceId, agenceId)];
+      if (input.statut && STATUTS_VEHICULE.includes(input.statut as (typeof STATUTS_VEHICULE)[number])) {
+        conditions.push(eq(parkingVehicles.statut, input.statut));
+      } else if (!input.includeSortis) {
+        conditions.push(sql`${parkingVehicles.statut} <> 'SORTI'`);
+      }
+      if (input.siteId) conditions.push(eq(parkingVehicles.siteId, input.siteId));
+      if (input.nonPositionnes) conditions.push(isNull(parkingVehicles.centreX));
+      if (input.search && input.search.trim().length > 0) {
+        const q = `%${input.search.trim().toLowerCase()}%`;
+        conditions.push(
+          sql`(lower(${parkingVehicles.marque}) like ${q} or lower(${parkingVehicles.modele}) like ${q}
+            or lower(${parkingVehicles.immatriculation}) like ${q} or lower(${parkingVehicles.clientNom}) like ${q}
+            or ${parkingVehicles.numRegistre}::text like ${q} or ${parkingVehicles.numRegistre}::text = ${input.search.trim()})`,
+        );
+      }
+
+      // Les noms de site / zone / emplacement sont resolus par jointure : le
+      // fichier doit etre lisible, pas un tableau d'identifiants.
+      const rows = await db
+        .select({
+          id: parkingVehicles.id,
+          numRegistre: parkingVehicles.numRegistre,
+          immatriculation: parkingVehicles.immatriculation,
+          marque: parkingVehicles.marque,
+          modele: parkingVehicles.modele,
+          version: parkingVehicles.version,
+          couleur: parkingVehicles.couleur,
+          vin: parkingVehicles.vin,
+          clientNom: parkingVehicles.clientNom,
+          clientTelephone: parkingVehicles.clientTelephone,
+          statut: parkingVehicles.statut,
+          motif: parkingVehicles.motif,
+          provenance: parkingVehicles.provenance,
+          centreX: parkingVehicles.centreX,
+          centreY: parkingVehicles.centreY,
+          rotation: parkingVehicles.rotation,
+          longueur: parkingVehicles.longueur,
+          largeur: parkingVehicles.largeur,
+          hauteur: parkingVehicles.hauteur,
+          poids: parkingVehicles.poids,
+          dimensionsEstimees: parkingVehicles.dimensionsEstimees,
+          dateEntree: parkingVehicles.dateEntree,
+          dateDerniereAction: parkingVehicles.dateDerniereAction,
+          dateDevis: parkingVehicles.dateDevis,
+          dateCommande: parkingVehicles.dateCommande,
+          dateFinTravaux: parkingVehicles.dateFinTravaux,
+          dateDerniereRelance: parkingVehicles.dateDerniereRelance,
+          notes: parkingVehicles.notes,
+          nbPhotos: sql<number>`COALESCE(jsonb_array_length(${parkingVehicles.photos}), 0)::int`,
+          site: parkingSites.nom,
+          zone: parkingZones.nom,
+          spot: parkingSpots.code,
+        })
+        .from(parkingVehicles)
+        .leftJoin(parkingSites, eq(parkingSites.id, parkingVehicles.siteId))
+        .leftJoin(parkingZones, eq(parkingZones.id, parkingVehicles.zoneId))
+        .leftJoin(parkingSpots, eq(parkingSpots.id, parkingVehicles.spotId))
+        .where(and(...conditions))
+        .orderBy(asc(parkingVehicles.numRegistre))
+        .limit(input.limit);
+
+      // Photos : chargees seulement si demandees, et seulement pour les lignes
+      // effectivement renvoyees.
+      let photosParId = new Map<number, { url: string; categorie: string; date?: string; auteur?: string }[]>();
+      if (input.withPhotos && rows.length > 0) {
+        const ids = rows.map((r) => r.id);
+        const lot = 100;
+        for (let i = 0; i < ids.length; i += lot) {
+          const tranche = ids.slice(i, i + lot);
+          const avecPhotos = await db
+            .select({ id: parkingVehicles.id, photos: parkingVehicles.photos })
+            .from(parkingVehicles)
+            .where(and(eq(parkingVehicles.agenceId, agenceId), inArray(parkingVehicles.id, tranche)));
+          for (const v of avecPhotos) {
+            if (v.photos && v.photos.length > 0) photosParId.set(v.id, v.photos);
+          }
+        }
+        console.info("[LIBRACORE_EXPORT_PHOTOS_SERVER]", {
+          requested: rows.length,
+          withPhotosLoaded: photosParId.size,
+          totalPhotos: Array.from(photosParId.values()).reduce((a, b) => a + b.length, 0),
+          sampleVehicleIds: Array.from(photosParId.keys()).slice(0, 5),
+        });
+      }
+
+      // Un export de donnees personnelles est trace dans le journal d'audit.
+      // Volontairement non bloquant : l'utilisateur a deja la permission requise,
+      // un journal indisponible ne doit pas le priver de son export.
+      try {
+        await db.insert(auditLogs).values({
+          // `ExtendedUser.id` est un string alors que `audit_logs.user_id` est un
+      // entier : on convertit plutot que de laisser Postgres deviner.
+          userId: ctx.user?.id != null ? Number(ctx.user.id) : null,
+          action: "parking.vehicules.export",
+          entityType: "parking_vehicule",
+          details: JSON.stringify({
+            champs,
+            lignes: rows.length,
+            filtres: { statut: input.statut ?? null, siteId: input.siteId ?? null, recherche: input.search ?? null },
+            includeSortis: input.includeSortis,
+            withPhotos: input.withPhotos,
+          }),
+        } as any);
+      } catch {
+        // Journal indisponible : on n'annule pas l'export pour autant.
+      }
+
+      return {
+        champs,
+        tronque: rows.length >= input.limit,
+        total: rows.length,
+        vehicules: rows.map((r) => ({
+          ...r,
+          photos: input.withPhotos ? (photosParId.get(r.id) ?? []) : [],
+        })),
+      };
+    }),
+
+  vehiculePhotos: requirePermissionProcedure("parking.consulter")
+    .input(idSchema)
+    .query(async ({ ctx, input }) => {
+      const [v] = await db
+        .select({ photos: parkingVehicles.photos })
+        .from(parkingVehicles)
+        .where(and(eq(parkingVehicles.id, input.id), eq(parkingVehicles.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!v) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
+      return { photos: v.photos ?? [] };
+    }),
+
   create: requirePermissionProcedure("parking.vehicule.creer")
     .input(
       z.object({
@@ -662,7 +852,7 @@ spots: spots.map((s) => {
           notes: input.notes ?? null,
           photos,
           ...photoMeta(photos),
-        })
+        } as any)
         .returning();
 
       if (!created) {
@@ -678,8 +868,8 @@ spots: spots.map((s) => {
         userId: Number(ctx.user.id),
         type: "ENTREE",
         motif: input.motif ?? input.provenance ?? null,
-        commentaire: "Entrée au registre des véhicules immobilisés",
-      });
+          commentaire: "Entrée au registre des véhicules immobilisés",
+        } as any);
 
       return { id: created.id, numRegistre: created.numRegistre };
     }),
@@ -757,7 +947,7 @@ spots: spots.map((s) => {
           photos,
           ...photoMeta(photos),
           updatedAt: new Date(),
-        })
+        } as any)
         .where(eq(parkingVehicles.id, input.id))
         .returning();
 
@@ -929,7 +1119,7 @@ spots: spots.map((s) => {
         voisins,
       });
 
-      if (!validation.ok) {
+      if (validation.ok === false) {
         const messages: Record<string, string> = {
           ZONE_NON_STATIONNABLE: "Cette zone n'est pas stationnable.",
           ORIENTATION_NON_AUTORISEE: "Orientation non autorisée dans cette zone.",
@@ -960,19 +1150,19 @@ spots: spots.map((s) => {
             rotation: newRotation,
             updatedAt: new Date(),
             dateDerniereAction: new Date(),
-          })
+          } as any)
           .where(eq(parkingVehicles.id, vehicle.id));
 
         if (spotSpatial) {
           await tx
             .update(parkingSpots)
-            .set({ reservePour: vehicle.id, updatedAt: new Date() })
+            .set({ reservePour: vehicle.id, updatedAt: new Date() } as any)
             .where(eq(parkingSpots.id, spotSpatial.id));
         }
         if (ancienSpotId && ancienSpotId !== spotSpatial?.id) {
           await tx
             .update(parkingSpots)
-            .set({ reservePour: null, bloque: false, updatedAt: new Date() })
+            .set({ reservePour: null, bloque: false, updatedAt: new Date() } as any)
             .where(eq(parkingSpots.id, ancienSpotId));
         }
 
@@ -992,7 +1182,7 @@ spots: spots.map((s) => {
           rotation,
           motif: input.motif ?? null,
           commentaire: spotSpatial ? `Emplacement ${spotSpatial.id}` : `Position libre (${x.toFixed(2)}, ${y.toFixed(2)})`,
-        });
+        } as any);
       });
 
       return { id: vehicle.id, x, y, rotation, spotId: spotSpatial?.id ?? null, ok: true };
@@ -1018,34 +1208,18 @@ spots: spots.map((s) => {
 
       const spots = await db.select().from(parkingSpots).where(eq(parkingSpots.zoneId, zone.id));
 
-      const zonePolygone = zone.geometrie.type === "rectangle"
-        ? { points: [
-            [zone.geometrie.x, zone.geometrie.y],
-            [zone.geometrie.x + zone.geometrie.w, zone.geometrie.y],
-            [zone.geometrie.x + zone.geometrie.w, zone.geometrie.y + zone.geometrie.h],
-            [zone.geometrie.x, zone.geometrie.y + zone.geometrie.h],
-          ]}
-        : zone.geometrie;
-
       const zoneSpatial: ZonePlacement = {
-        polygone: zonePolygone,
+        polygone: zoneAPolygone(zone.geometrie),
         stationnable: zone.stationnable ?? true,
         orientationAutorisee: zone.orientationAutorisee,
         marge: zone.margeSecurite ?? 0.3,
       };
 
       const spotsDisponibles = spots.filter(s => !s.statut || s.statut === "LIBRE");
-      const emplacementOptionnel = spotsDisponibles.length > 0 ? {
-        polygone: spotsDisponibles[0].geometrie.type === "rectangle"
-          ? { points: [
-              [spotsDisponibles[0].geometrie.x, spotsDisponibles[0].geometrie.y],
-              [spotsDisponibles[0].geometrie.x + spotsDisponibles[0].geometrie.w, spotsDisponibles[0].geometrie.y],
-              [spotsDisponibles[0].geometrie.x + spotsDisponibles[0].geometrie.w, spotsDisponibles[0].geometrie.y + spotsDisponibles[0].geometrie.h],
-              [spotsDisponibles[0].geometrie.x, spotsDisponibles[0].geometrie.y + spotsDisponibles[0].geometrie.h],
-            ]}
-          : spotsDisponibles[0].geometrie,
-        rotation: spotsDisponibles[0].rotation ?? 0,
-      } : null;
+      const premierSpot = spotsDisponibles[0];
+      const emplacementOptionnel: EmplacementOptionnel | null = premierSpot
+        ? { polygone: zoneAPolygone(premierSpot.geometrie), rotation: premierSpot.rotation ?? 0 }
+        : null;
 
       const result = suggererPlacement({
         vehicule: { id: vehicle.id, longueur: vehicle.longueur, largeur: vehicle.largeur, statut: vehicle.statut },
@@ -1118,7 +1292,7 @@ spots: spots.map((s) => {
       for (const o of vehiculesZone) {
         if (o.id === vehicle.id) continue;
         voisins.push({
-          id: o.id,
+          id: o.id!,
           empreinte: empreinteVehicule({
             centreX: (o.centreX ?? 0) + (o.largeur ?? 0) / 2,
             centreY: (o.centreY ?? 0) + (o.longueur ?? 0) / 2,
@@ -1204,7 +1378,7 @@ spots: spots.map((s) => {
             rotation: 0,
             updatedAt: new Date(),
             dateDerniereAction: new Date(),
-          })
+          } as any)
           .where(eq(parkingVehicles.id, vehicle.id));
         if (restaitPosition) {
           await tx.insert(parkingMovements).values({
@@ -1218,7 +1392,7 @@ spots: spots.map((s) => {
             positionOrigineY: vehicle.centreY,
             motif: input.motif ?? null,
             commentaire: "Retiré de la carte (à replacer)",
-          });
+          } as any);
         }
       });
       return { id: vehicle.id, ok: true };
@@ -1252,7 +1426,7 @@ spots: spots.map((s) => {
             rotation: 0,
             updatedAt: new Date(),
             dateDerniereAction: new Date(),
-          })
+          } as any)
           .where(eq(parkingVehicles.id, vehicle.id));
         await tx.insert(parkingMovements).values({
           agenceId,
@@ -1265,7 +1439,7 @@ spots: spots.map((s) => {
           positionOrigineY: vehicle.centreY,
           motif: input.motif ?? null,
           commentaire: "Sortie du parking",
-        });
+        } as any);
       });
       return { id: vehicle.id, ok: true };
     }),
@@ -1379,6 +1553,7 @@ spots: spots.map((s) => {
 
       const conditions = [eq(parkingVehicles.agenceId, agenceId)];
       if (input.vehicleId) conditions.push(eq(parkingVehicles.id, input.vehicleId));
+      // Colonnes ciblees : computeParkingAlerts ne lit que VehiculeAlertableRow.
       const vehicules = await db
         .select({
           id: parkingVehicles.id,
@@ -1431,7 +1606,7 @@ spots: spots.map((s) => {
             criteres: draft.criteres,
             statut: "OUVERTE",
             declencheeLe: now,
-          });
+          } as any);
           crees++;
         }
         activesParVehicle.set(v.id, actifs);
@@ -1444,7 +1619,7 @@ spots: spots.map((s) => {
         if (actifs.has(a.code)) continue;
         await db
           .update(parkingAlerts)
-          .set({ statut: "CLOTUREE", clotureeLe: now, clotureePar: Number(ctx.user.id) })
+          .set({ statut: "CLOTUREE", clotureeLe: now, clotureePar: Number(ctx.user.id) } as any)
           .where(eq(parkingAlerts.id, a.id));
         cloturees++;
       }
@@ -1464,7 +1639,7 @@ spots: spots.map((s) => {
       if (alerte.statut === "CLOTUREE") return { id: alerte.id, ok: true };
       await db
         .update(parkingAlerts)
-        .set({ statut: "CLOTUREE", clotureeLe: new Date(), clotureePar: Number(ctx.user.id) })
+        .set({ statut: "CLOTUREE", clotureeLe: new Date(), clotureePar: Number(ctx.user.id) } as any)
         .where(eq(parkingAlerts.id, alerte.id));
       return { id: alerte.id, ok: true };
     }),
@@ -1602,34 +1777,40 @@ spots: spots.map((s) => {
           : zone.geometrie,
       };
 
-      const [vehicleCible] = await db
+      const vehicleCible = await db
         .select()
         .from(parkingVehicles)
         .where(and(eq(parkingVehicles.id, input.vehicleId), eq(parkingVehicles.agenceId, agenceId)))
         .limit(1);
       if (!vehicleCible) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
+      const cible = vehicleCible[0];
+      if (!cible) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
 
       const result = calculerCheminSortie({
         vehicule: {
-          id: vehicleCible.id,
-          numRegistre: vehicleCible.numRegistre,
-          longueur: vehicleCible.longueur,
-          largeur: vehicleCible.largeur,
-          rotation: vehicleCible.rotation,
-          centreX: vehicleCible.centreX,
-          centreY: vehicleCible.centreY,
-          statut: vehicleCible.statut,
+          id: cible.id,
+          numRegistre: cible.numRegistre,
+          longueur: cible.longueur,
+          largeur: cible.largeur,
+          rotation: cible.rotation,
+          centreX: cible.centreX,
+          centreY: cible.centreY,
+          statut: cible.statut,
         },
         zone: {
-          polygone: zone.geometrie.type === "rectangle"
-            ? { points: [
-                [zone.geometrie.x, zone.geometrie.y],
-                [zone.geometrie.x + zone.geometrie.w, zone.geometrie.y],
-                [zone.geometrie.x + zone.geometrie.w, zone.geometrie.y + zone.geometrie.h],
-                [zone.geometrie.x, zone.geometrie.y + zone.geometrie.h],
-              ]}
-            : zone.geometrie,
-          zones: [{ ...zone, estSortie: zone.type === "VOIE" || zone.type === "CIRCULATION" }],
+          polygone: zoneAPolygone(zone.geometrie),
+          marge: zone.margeSecurite ?? 0,
+          stationnable: zone.stationnable ?? true,
+          orientationAutorisee: zone.orientationAutorisee,
+          zones: [
+            {
+              polygone: zoneAPolygone(zone.geometrie),
+              marge: zone.margeSecurite ?? 0,
+              stationnable: zone.stationnable ?? true,
+              orientationAutorisee: zone.orientationAutorisee,
+              estSortie: zone.type === "VOIE" || zone.type === "CIRCULATION",
+            },
+          ],
         },
         voisins: vehiculesVoisins,
       });
@@ -1640,102 +1821,4 @@ spots: spots.map((s) => {
         coutEstimeMinutes: result.coutEstimeMinutes,
       };
     }),
-
-  // ── Export vehicules ───────────────────────────────────────────────────────
-  exportVehicules: requirePermissionProcedure("parking.vehicule.exporter")
-    .input(
-      z.object({
-        format: z.enum(["xlsx", "pdf", "csv"]).default("xlsx"),
-        photosParVehicule: z.number().int().min(0).max(3).default(1),
-        contexte: z.string().optional(),
-        champs: z.array(z.string()).default([]),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const agenceId = ctx.user.agenceId;
-      // Récupère TOUS les vehicules de l'agence (meme ceux avec statut SORTI
-      // si l'utilisateur a la permission d'exporter) ; on filtre ensuite côté client.
-      const rows = await db
-        .select({
-          id: parkingVehicles.id,
-          numRegistre: parkingVehicles.numRegistre,
-          immatriculation: parkingVehicles.immatriculation,
-          marque: parkingVehicles.marque,
-          modele: parkingVehicles.modele,
-          version: parkingVehicles.version,
-          couleur: parkingVehicles.couleur,
-          vin: parkingVehicles.vin,
-          clientNom: parkingVehicles.clientNom,
-          clientTelephone: parkingVehicles.clientTelephone,
-          statut: parkingVehicles.statut,
-          motif: parkingVehicles.motif,
-          provenance: parkingVehicles.provenance,
-          centreX: parkingVehicles.centreX,
-          centreY: parkingVehicles.centreY,
-          rotation: parkingVehicles.rotation,
-          longueur: parkingVehicles.longueur,
-          largeur: parkingVehicles.largeur,
-          hauteur: parkingVehicles.hauteur,
-          poids: parkingVehicles.poids,
-          dimensionsEstimees: parkingVehicles.dimensionsEstimees,
-          dateEntree: parkingVehicles.dateEntree,
-          dateDerniereAction: parkingVehicles.dateDerniereAction,
-          dateDevis: parkingVehicles.dateDevis,
-          dateCommande: parkingVehicles.dateCommande,
-          dateFinTravaux: parkingVehicles.dateFinTravaux,
-          dateDerniereRelance: parkingVehicles.dateDerniereRelance,
-          notes: parkingVehicles.notes,
-          nbPhotos: parkingVehicles.nbPhotos,
-          site: parkingVehicles.site,
-          zone: parkingVehicles.zone,
-          spot: parkingVehicles.spot,
-          photos: parkingVehicles.photos,
-        })
-        .from(parkingVehicles)
-        .where(eq(parkingVehicles.agenceId, agenceId));
-
-      const vehicules: LigneExportVehicule[] = rows.map((r) => ({
-        id: r.id,
-        numRegistre: r.numRegistre,
-        immatriculation: r.immatriculation,
-        marque: r.marque,
-        modele: r.modele,
-        version: r.version,
-        couleur: r.couleur,
-        vin: r.vin,
-        clientNom: r.clientNom,
-        clientTelephone: r.clientTelephone,
-        statut: r.statut,
-        motif: r.motif,
-        provenance: r.provenance,
-        centreX: r.centreX,
-        centreY: r.centreY,
-        rotation: r.rotation,
-        longueur: r.longueur,
-        largeur: r.largeur,
-        hauteur: r.hauteur,
-        poids: r.poids,
-        dimensionsEstimees: r.dimensionsEstimees,
-        dateEntree: r.dateEntree,
-        dateDerniereAction: r.dateDerniereAction,
-        dateDevis: r.dateDevis,
-        dateCommande: r.dateCommande,
-        dateFinTravaux: r.dateFinTravaux,
-        dateDerniereRelance: r.dateDerniereRelance,
-        notes: r.notes,
-        nbPhotos: r.nbPhotos,
-        site: r.site,
-        zone: r.zone,
-        spot: r.spot,
-        photos: r.photos ?? [],
-      }));
-
-      const options: OptionsGenerationExport = {
-        format: input.format,
-        champs: input.champs.length > 0 ? input.champs : ["numRegistre", "immatriculation", "marque", "modele", "version", "couleur", "vin", "clientNom", "clientTelephone", "statut", "motif", "provenance", "centreX", "centreY", "rotation", "longueur", "largeur", "hauteur", "poids", "dimensionsEstimees", "dateEntree", "dateDerniereAction", "dateDevis", "dateCommande", "dateFinTravaux", "dateDerniereRelance", "nbPhotos", "notes", "site", "zone", "spot", "photos"],
-      };
-
-      return genererEtTelechargerExport(vehicules, options, "registre-vehicules", () => {});
-    }),
-
 });

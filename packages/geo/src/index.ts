@@ -482,23 +482,23 @@ export function suggererPlacement(args: {
         if (collision) continue;
 
         // Calcul du score multi-critères
-        const score = calculerScore({
+        const evaluation = calculerScore({
           empreinte,
           zone: zonePolygone,
           voisins,
           fromX,
           fromY,
-          horizonJours: horizonSortieJours("EN_PARKING"), // TODO: passer le vrai statut
+          horizonJours: horizonSortieJours(vehicule.statut),
           poids,
         });
 
-        if (score > 0) {
+        if (evaluation.score > 0) {
           candidats.push({
             cx: x,
             cy: y,
             rotation: rot,
-            score,
-            detail: scoreDetail, // À calculer dans calculerScore
+            score: evaluation.score,
+            detail: evaluation.detail,
           });
         }
       }
@@ -599,8 +599,8 @@ function distanceAuPlusProcheBord(empreinte: Empreinte, zone: Polygone): number 
   let minDist = Infinity;
   for (const [x, y] of c) {
     for (let i = 0; i < zone.points.length; i++) {
-      const [ax, ay] = zone.points[i];
-      const [bx, by] = zone.points[(i + 1) % zone.points.length];
+      const [ax, ay] = zone.points[i] as Vec2;
+      const [bx, by] = zone.points[(i + 1) % zone.points.length] as Vec2;
       const dx = bx - ax;
       const dy = by - ay;
       const len = Math.hypot(dx, dy);
@@ -776,21 +776,28 @@ function construireCouloir(empreinte: Empreinte, zonePolygone: Polygone, directi
 }
 
 function polygonsIntersect(poly1: Polygone, poly2: Polygone): boolean {
-  // Test simple AABB d'abord
+  // Rejet rapide sur les boîtes englobantes.
   const box1 = boundingBox(poly1);
   const box2 = boundingBox(poly2);
   if (box1[0] > box2[2] || box1[2] < box2[0] || box1[1] > box2[3] || box1[3] < box2[1]) {
     return false;
   }
-  // Pour simplifier : on fait un test SAT complet
-  // Pour l'instant : AABB seulement
-  return true;
+  // Test exact : les deux polygones sont convexes (empreintes orientées et couloirs
+  // rectangulaires), donc l'aire d'intersection clippee est zéro s'ils sont disjoints.
+  return aireIntersectionPolygonaux(poly1, poly2) > EPS;
+}
+
+/** Aire d'intersection entre deux polygones convexes (clipping de Sutherland-Hodgman). */
+function aireIntersectionPolygonaux(a: Polygone, b: Polygone): number {
+  return airePolygone(clipperSujetContreCoupe(a.points, b.points));
 }
 
 function trouverBloqueursDansCouloir(couloir: Polygone, voisins: Voisin[]): Voisin[] {
   const bloqueurs: Voisin[] = [];
   for (const v of voisins) {
-    if (polygonsIntersect(empreinteVehicule({ centreX: v.empreinte.cx, centreY: v.empreinte.cy, rotation: v.empreinte.rotation, w: v.empreinte.w, h: v.empreinte.h }), couloir)) {
+    // L'empreinte est une OBB : on la convertit en polygone (coins orientés) avant
+    // le test d'intersection, sinon polygonsIntersect recevrait un objet sans `points`.
+    if (polygonsIntersect({ points: coins(v.empreinte) }, couloir)) {
       bloqueurs.push(v);
     }
   }

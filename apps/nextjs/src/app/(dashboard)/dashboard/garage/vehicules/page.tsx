@@ -23,7 +23,7 @@ import {
   formatDate,
 } from "../_components/statuts";
 import { VehiculeFormDialog, type VehiculeFormModel } from "../_components/VehiculeFormDialog";
-import { ExportVehiculesDialog } from "@/lib/ExportVehiculesDialog";
+import { ExportVehiculesDialog } from "../_components/ExportVehiculesDialog";
 import { PrintVehiculesList } from "@/lib/PrintVehiculesList";
 import { Printer } from "lucide-react";
 
@@ -392,18 +392,18 @@ export default function GarageVehiculesPage() {
         requiresReason
       />
       <ExportVehiculesDialog
-        isOpen={exportOpen}
-        vehicules={vehicules}
-        onExport={(resultat) => {
-          toast.success(
-            `Export terminé : ${resultat.lignes} véhicule${resultat.lignes > 1 ? "s" : ""} • ${resultat.nomFichier}`
-          );
-          setExportOpen(false);
-        }}
+        open={exportOpen}
         onClose={() => setExportOpen(false)}
+        filtres={{
+          q: debouncedSearch.trim(),
+          statut,
+          site: siteId,
+          nonPositionnes,
+        }}
+        lignesVisibles={data?.total ?? 0}
       />
       <PrintVehiculesList
-        vehicules={vehicules}
+        vehicules={vehicules as any}
         filtres={{
           search: debouncedSearch.trim() || undefined,
           statut: statut || undefined,

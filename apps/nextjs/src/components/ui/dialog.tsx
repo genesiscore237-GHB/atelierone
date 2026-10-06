@@ -1,21 +1,47 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { cn } from "~/lib/utils";
 
 interface DialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   children: ReactNode;
   className?: string;
+  containerClassName?: string;
+  overlayClassName?: string;
+  ariaLabel?: string;
 }
 
-export function Dialog({ open, onOpenChange, children, className = "" }: DialogProps) {
+export function Dialog({
+  open,
+  onOpenChange,
+  children,
+  className = "",
+  containerClassName = "",
+  overlayClassName = "",
+  ariaLabel,
+}: DialogProps) {
   if (!open) return null;
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm" onClick={() => onOpenChange(false)} aria-hidden="true" />
-      <div className={`relative rounded-xl border border-border bg-background text-foreground shadow-[var(--shadow-modal)] w-full max-w-lg mx-auto max-h-[90vh] overflow-y-auto ${className}`}>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={ariaLabel}
+      className={cn("fixed inset-0 z-50 flex items-center justify-center", containerClassName)}
+    >
+      <div
+        className={cn("fixed inset-0 bg-[var(--overlay)] backdrop-blur-sm", overlayClassName)}
+        onClick={() => onOpenChange(false)}
+        aria-hidden="true"
+      />
+      <div
+        className={cn(
+          "relative rounded-xl border border-border bg-background text-foreground shadow-[var(--shadow-modal)] w-full max-w-lg mx-auto max-h-[90vh] overflow-y-auto",
+          className,
+        )}
+      >
         {children}
       </div>
     </div>

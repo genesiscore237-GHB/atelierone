@@ -468,7 +468,7 @@ export default function GarageVehiculeFichePage() {
         requiresReason
       />
       <ExportVehiculesDialog
-        vehicules={[v]}
+        vehicules={[v as any]}
         isOpen={exportFicheOpen}
         onExport={(resultat) => {
           toast.success(
@@ -479,7 +479,7 @@ export default function GarageVehiculeFichePage() {
         onClose={() => setExportFicheOpen(false)}
       />
       <PrintVehiculeFiche
-        vehicule={v}
+        vehicule={v as any}
         garageNom="Garage"
         utilisateur="Utilisateur"
         isOpen={printFicheOpen}

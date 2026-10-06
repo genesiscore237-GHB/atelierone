@@ -21,8 +21,6 @@ import {
   type FormatExport,
 } from "~/app/(dashboard)/dashboard/garage/_components/export-champs";
 
-export { CHAMPS_EXPORT_VEHICULE } from "~/app/(dashboard)/dashboard/garage/_components/export-champs";
-
 /** Forme d'une ligne retournee par `garage.exportVehicules`. */
 export interface LigneExportVehicule {
   id: number;
@@ -53,14 +51,15 @@ export interface LigneExportVehicule {
   dateFinTravaux: Date | string | null;
   dateDerniereRelance: Date | string | null;
   notes: string | null;
-  nbPhotos: number;
-  site: string | null;
-  zone: string | null;
-  spot: string | null;
+  nbPhotos?: number;
+  site?: string | null;
+  zone?: string | null;
+  spot?: string | null;
   photos: { url: string; categorie: string; date?: string; auteur?: string }[];
 }
 
-/** Donnees de vignette (image reduite) pour le PDF/XLSX. */
+export { CHAMPS_EXPORT_VEHICULE };
+
 export interface VignetteExport {
   bytes: ArrayBuffer;
   largeur: number;
@@ -68,7 +67,6 @@ export interface VignetteExport {
   type: string;
 }
 
-/** Options transmises du client au serveur (via mutation TRPC). */
 export interface OptionsGenerationExport {
   format: FormatExport;
   /** Cles de champs, deja normalisees par le serveur. */
@@ -79,16 +77,15 @@ export interface OptionsGenerationExport {
   contexte?: string;
 }
 
-/** Resultat de l'export (pour le toast de confirmation). */
 export interface ResultatExport {
   nomFichier: string;
   octets: number;
   lignes: number;
   photosIntegrees: number;
+  photosInvalides: number;
   dureeMs: number;
 }
 
-/** Format de date fr utilis en entete de PDF. */
 const FORMAT_DATE = new Intl.DateTimeFormat("fr-FR", {
   day: "2-digit",
   month: "2-digit",
@@ -97,21 +94,19 @@ const FORMAT_DATE = new Intl.DateTimeFormat("fr-FR", {
 
 const VIDE = "";
 
-/** Date -> fr-FR, gestion des dates invalides. */
 function dateOuVide(v: Date | string | null): string {
   if (v == null || v === "") return VIDE;
   const d = v instanceof Date ? v : new Date(v);
   return Number.isNaN(d.getTime()) ? VIDE : FORMAT_DATE.format(d);
 }
 
-/** Convertit un nombre en texte, les entiers restent entiers. */
 function nombreOuVide(v: number | null, decimales = 2): string | number {
   if (v == null || !Number.isFinite(v)) return VIDE;
   // Un entier reste un entier : evite "1500,00" dans un tableur.
   return Number.isInteger(v) ? v : Number(v.toFixed(decimales));
 }
 
-/** ArrayBuffer -> data URI base64 complete, par morceaux pour ne pas deborder la pile. */
+/** ArrayBuffer -> data URI base64 complète, par morceaux pour ne pas deborder la pile. */
 function arrayBufferEnDataUri(buffer: ArrayBuffer, type = "image/jpeg"): string {
   const octets = new Uint8Array(buffer);
   let binaire = "";
@@ -122,18 +117,22 @@ function arrayBufferEnDataUri(buffer: ArrayBuffer, type = "image/jpeg"): string 
   return `data:${type};base64,${btoa(binaire)}`;
 }
 
-/** ArrayBuffer -> base64 pur (sans prefixe data URI), pour jsPDF.addImage(format). */
+/** ArrayBuffer -> base64 pur (sans préfixe data URI), pour ExcelJS.addImage / jsPDF.addImage. */
 function arrayBufferEnBase64(buffer: ArrayBuffer): string {
   const octets = new Uint8Array(buffer);
+  // Construction par petits morceaux pour éviter "Maximum call stack size exceeded"
+  // et garantir un binaire valide pour btoa (chaque char = 0-255).
+  const CHUNK = 0x4000; // 16 KiB
   let binaire = "";
-  const PAS = 0x8000;
-  for (let i = 0; i < octets.length; i += PAS) {
-    binaire += String.fromCharCode(...octets.subarray(i, i + PAS));
+  for (let i = 0; i < octets.length; i += CHUNK) {
+    const chunk = octets.subarray(i, i + CHUNK);
+    // apply évite le spread sur gros tableaux
+    binaire += String.fromCharCode.apply(null, chunk as unknown as number[]);
   }
   return btoa(binaire);
 }
 
-/** Valeur texte d'un champ, pour CSV et PDF. */
+/** Valeur « texte » d'un champ, pour CSV et PDF. */
 export function valeurTexte(v: LigneExportVehicule, champ: ChampExportVehicule): string {
   switch (champ.cle) {
     case "numRegistre":
@@ -203,7 +202,7 @@ export function valeurTexte(v: LigneExportVehicule, champ: ChampExportVehicule):
   }
 }
 
-/** Valeur 'native' d'un champ, pour un tableur (types preserves). */
+/** Valeur « native » d'un champ, pour un tableur (types preserves). */
 export function valeurCellule(
   v: LigneExportVehicule,
   champ: ChampExportVehicule,
@@ -244,7 +243,7 @@ export function valeurCellule(
     case "booleen":
       return champ.cle === "positionne" ? v.centreX != null : v.dimensionsEstimees === true;
     case "photos":
-      // Le contenu du fichier image est gere par le redaacteur : on met le nombre.
+      // Le contenu du fichier image est gere par le redacteur : on met le nombre.
       return photos && photos.length > 0 ? photos.length : null;
     case "texte":
     default:
@@ -275,10 +274,17 @@ export async function construireVignettes(
   const PAR_LOT = 4;
   for (let i = 0; i < cibles.length; i += PAR_LOT) {
     const lot = cibles.slice(i, i + PAR_LOT);
-    const vignettes = await Promise.all(lot.map((c) => reduirePhoto(c.url, 320, 0.72)));
+    const vignettes = await Promise.all(lot.map((c) => reduirePhoto(c.url, 200, 0.72)));
     lot.forEach((c, idx) => {
-      const vg = vignettes[idx];
-      if (vg) {
+      const result = vignettes[idx];
+      if (result) {
+        // Convert new VignetteExportResult to old VignetteExport format
+        const vg: VignetteExport = {
+          bytes: result.bytes,
+          largeur: result.largeur,
+          hauteur: result.hauteur,
+          type: result.type,
+        };
         const liste = resultat.get(c.id) ?? [];
         liste.push(vg);
         resultat.set(c.id, liste);
@@ -290,33 +296,105 @@ export async function construireVignettes(
   return resultat;
 }
 
-/** Entete du document PDF/XLSX. */
+/** Version avec logs de diagnostic pour la première photo. */
+async function construireVignettesAvecLogs(
+  vehicules: LigneExportVehicule[],
+  photosParVehicule: number,
+  onProgression?: (fait: number, total: number) => void,
+  selectedColumns?: string[],
+): Promise<Map<number, VignetteExport[]>> {
+  const resultat = new Map<number, VignetteExport[]>();
+  if (photosParVehicule <= 0) return resultat;
+
+  const cibles: { id: number; url: string; photoIndex: number }[] = [];
+  for (const v of vehicules) {
+    const photosToUse = v.photos.slice(0, photosParVehicule);
+    for (let photoIndex = 0; photoIndex < photosToUse.length; photoIndex++) {
+      cibles.push({ id: v.id, url: photosToUse[photoIndex].url, photoIndex });
+    }
+  }
+  if (cibles.length === 0) return resultat;
+
+  if (cibles.length > 0) {
+    const first = cibles[0];
+    const firstVehicle = vehicules.find(v => v.id === first.id);
+    console.info("[LIBRACORE_XLSX_PHOTO_INPUT]", {
+      vehicleId: firstVehicle?.id,
+      immatriculation: firstVehicle?.immatriculation,
+      photosIsArray: Array.isArray(firstVehicle?.photos),
+      photosCount: Array.isArray(firstVehicle?.photos) ? firstVehicle.photos.length : null,
+      firstPhotoType: typeof firstVehicle?.photos?.[0]?.url,
+      firstPhotoPrefix: firstVehicle?.photos?.[0]?.url?.slice(0, 60),
+      firstPhotoLength: firstVehicle?.photos?.[0]?.url?.length ?? 0,
+      selectedColumns: selectedColumns ?? [],
+    });
+  }
+
+  let fait = 0;
+  const PAR_LOT = 4;
+  let auditCount = 0;
+
+  for (let i = 0; i < cibles.length; i += PAR_LOT) {
+    const lot = cibles.slice(i, i + PAR_LOT);
+    const vignettes = await Promise.all(lot.map(async (c) => {
+      const result = await reduirePhoto(c.url, 200, 0.72);
+      
+      // Audit logging for first 10 photos
+      if (auditCount < 10) {
+        auditCount++;
+        // The audit is already logged inside reduirePhoto
+      }
+      return { cible: c, result };
+    }));
+    
+    lot.forEach((c, idx) => {
+      const { result } = vignettes[idx];
+      if (result) {
+        // Convert new VignetteExportResult to old VignetteExport format
+        const vg: VignetteExport = {
+          bytes: result.bytes,
+          largeur: result.largeur,
+          hauteur: result.hauteur,
+          type: result.type,
+        };
+        const liste = resultat.get(c.id) ?? [];
+        liste.push(vg);
+        resultat.set(c.id, liste);
+      }
+      fait += 1;
+      onProgression?.(fait, cibles.length);
+    });
+  }
+  return resultat;
+}
+
 function enTeteDocument(contexte: string | undefined, lignes: number): { titre: string; sousTitres: string[] } {
   const sousTitres: string[] = [];
   if (contexte && contexte.trim().length > 0) sousTitres.push(contexte.trim());
   sousTitres.push(
-    `${lignes} vehicule${lignes > 1 ? "s" : ""} — export du ${new Intl.DateTimeFormat("fr-FR", {
+    `${lignes} véhicule${lignes > 1 ? "s" : ""} — export du ${new Intl.DateTimeFormat("fr-FR", {
       dateStyle: "long",
       timeStyle: "short",
     }).format(new Date())}`,
   );
-  return { titre: "Registre des vehicules", sousTitres };
+  return { titre: "Registre des véhicules", sousTitres };
 }
 
-/** Feuille Excel : en-tetes figes, filtre automatique, largeurs ajustees, types
- *  natives (les nombres restent des nombres, les dates des dates).
+/**
+ * Feuille Excel : en-tetes figes, filtre automatique, largeurs ajustees, types
+ * natifs (les nombres restent des nombres, les dates des dates).
  */
 async function genererXlsx(
   vehicules: LigneExportVehicule[],
   champs: ChampExportVehicule[],
   vignettes: Map<number, VignetteExport[]>,
   contexte: string | undefined,
-): Promise<Blob> {
+): Promise<{ blob: Blob; photosInvalides: number; photosInserees: number }> {
   const ExcelJS = await import("exceljs");
   const classeur = new ExcelJS.Workbook();
   classeur.creator = "Lipatrad ERP";
   classeur.created = new Date();
-  const feuille = classeur.addWorksheet("Vehicules", {
+  const feuille = classeur.addWorksheet("Véhicules", {
     views: [{ state: "frozen", ySplit: 4 }],
   });
 
@@ -346,6 +424,9 @@ async function genererXlsx(
   const avecPhotos = champs.some((c) => c.type === "photos");
   const hauteurLigne = avecPhotos ? 70 : 18;
   const dateStyle = "dd/mm/yyyy";
+
+  let photosInvalides = 0;
+  let photosInserees = 0;
 
   vehicules.forEach((v, indexLigne) => {
     const rangee = feuille.getRow(LIGNE_ENTETE + 1 + indexLigne);
@@ -379,26 +460,76 @@ async function genererXlsx(
       }
     });
 
-    // Photo de couverture, ancree dans la colonne 'photos'.
+    // Photo de couverture, ancree dans la colonne « photos ».
     // L'image s'enregistre sur le classeur (renvoie un id), puis on l'ancre sur
     // la feuille avec ce meme id.
-    const couverture = avecPhotos ? photosLigne[0] : undefined;
+    // Selection photo principale : isPrimary sinon premiere valide
+    let couverture: VignetteExport | undefined;
+    if (avecPhotos && photosLigne.length > 0) {
+      couverture = photosLigne.find(p => (p as any).isPrimary) ?? photosLigne[0];
+    }
     if (couverture) {
       const indexColonne = champs.findIndex((c) => c.type === "photos");
       if (indexColonne >= 0) {
-        const identifiant = classeur.addImage({
-          base64: arrayBufferEnDataUri(couverture.bytes, couverture.type),
-          extension: "jpeg",
-        });
-        const hauteurImage = Math.min(
-          hauteurLigne - 6,
-          Math.max(20, (96 * couverture.hauteur) / couverture.largeur),
-        );
-        feuille.addImage(identifiant, {
-          tl: { col: indexColonne + 0.1, row: LIGNE_ENTETE + indexLigne + 0.15 },
-          ext: { width: 96, height: hauteurImage },
-          editAs: "oneCell",
-        });
+        try {
+          // LOG DIAGNOSTIC - avant ajout image
+          console.info("[LIBRACORE_XLSX_IMAGE_PARSED]", {
+            vehicleId: v.id,
+            immatriculation: v.immatriculation,
+            detectedMimeType: couverture.type,
+            detectedExtension: couverture.type === "image/png" ? "png" : "jpeg",
+            base64Length: couverture.bytes.byteLength,
+            isValidDataUri: true,
+          });
+
+          // ExcelJS attend du base64 PUR (sans préfixe data URI)
+          const base64Pur = arrayBufferEnBase64(couverture.bytes);
+          const extension = couverture.type === "image/png" ? "png" : "jpeg";
+
+          const identifiant = classeur.addImage({
+            base64: base64Pur,
+            extension,
+          });
+          const hauteurImage = Math.min(
+            hauteurLigne - 6,
+            Math.max(20, (96 * couverture.hauteur) / couverture.largeur),
+          );
+          // Utiliser le vrai numéro de ligne Excel (rangee.number est 1-based)
+          const excelRowNumber = rangee.number;
+          feuille.addImage(identifiant, {
+            tl: { col: indexColonne, row: excelRowNumber - 1 }, // zero-based pour tl
+            ext: { width: 96, height: Math.max(1, Math.round(hauteurImage)) },
+            editAs: "oneCell",
+          });
+
+          // LOG DIAGNOSTIC - après ajout image
+          console.info("[LIBRACORE_XLSX_IMAGE_ADDED]", {
+            vehicleId: v.id,
+            immatriculation: v.immatriculation,
+            imageId: identifiant,
+            photoColumnIndex: indexColonne,
+            excelRowNumber,
+            anchor: { col: indexColonne, row: excelRowNumber - 1 },
+            width: 96,
+            height: Math.max(1, Math.round(hauteurImage)),
+          });
+
+          photosInserees += 1;
+        } catch (e) {
+          // Image invalide : placeholder dans la cellule + compteur
+          photosInvalides += 1;
+          const indexColonne = champs.findIndex((c) => c.type === "photos");
+          if (indexColonne >= 0) {
+            const c = rangee.getCell(indexColonne + 1);
+            c.value = "Photo invalide";
+            c.font = { color: { argb: "FFB4B4B4" }, italic: true };
+          }
+          console.warn("[LIBRACORE_XLSX_IMAGE_ERROR]", {
+            vehicleId: v.id,
+            immatriculation: v.immatriculation,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
     }
   });
@@ -409,13 +540,18 @@ async function genererXlsx(
   };
 
   const tampon = await classeur.xlsx.writeBuffer();
-  return new Blob([tampon], {
-    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
+  return {
+    blob: new Blob([tampon], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+    photosInvalides,
+    photosInserees,
+  };
 }
 
-/** CSV : separateur point-virgule + BOM, convention attendue par un Excel
- *  francophone. Les guillemets et separateurs internes sont echappes.
+/**
+ * CSV : separateur point-virgule + BOM, convention attendue par un Excel
+ * francophone. Les guillemets et separateurs internes sont echappes.
  */
 function genererCsv(vehicules: LigneExportVehicule[], champs: ChampExportVehicule[]): Blob {
   const echapper = (s: string) => `"${s.replace(/"/g, '""')}"`;
@@ -435,15 +571,16 @@ function genererCsv(vehicules: LigneExportVehicule[], champs: ChampExportVehicul
   });
 }
 
-/** PDF paysage dessine a la main : un PDF de 25 colonnes serait illisible, on
- *  borne la largeur et on pagine verticalement.
+/**
+ * PDF paysage dessine a la main : un PDF de 25 colonnes serait illisible, on
+ * borne donc la largeur et on pagine verticalement.
  */
 async function genererPdf(
   vehicules: LigneExportVehicule[],
   champs: ChampExportVehicule[],
   vignettes: Map<number, VignetteExport[]>,
   contexte: string | undefined,
-): Promise<Blob> {
+): Promise<{ blob: Blob; photosInvalides: number }> {
   const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const pageL = 297;
@@ -452,6 +589,7 @@ async function genererPdf(
   const { titre, sousTitres } = enTeteDocument(contexte, vehicules.length);
 
   let y = marge;
+  let photosInvalides = 0;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(15);
   doc.text(titre, marge, y);
@@ -536,8 +674,20 @@ async function genererPdf(
             4.2,
           );
         } catch {
-          // Vignette illisible : on garde simplement la cellule vide.
+          // Vignette illisible : placeholder + compteur
+          photosInvalides += 1;
+          doc.setFontSize(5);
+          doc.setTextColor(180, 180, 180);
+          doc.text("Aucune photo", pageL - marge - 22, y + 0.5);
+          doc.setTextColor(0, 0, 0);
         }
+      } else {
+        // Pas de photo : placeholder
+        photosInvalides += 1;
+        doc.setFontSize(5);
+        doc.setTextColor(180, 180, 180);
+        doc.text("Aucune photo", pageL - marge - 22, y + 0.5);
+        doc.setTextColor(0, 0, 0);
       }
     }
     y += hauteurLigne;
@@ -552,7 +702,7 @@ async function genererPdf(
     });
   }
 
-  return doc.output("blob");
+  return { blob: doc.output("blob"), photosInvalides };
 }
 
 /** Point d'entree unique : produit le fichier et le telecharge. */
@@ -567,30 +717,59 @@ export async function genererEtTelechargerExport(
     .map((cle) => getChampExport(cle))
     .filter((c): c is ChampExportVehicule => Boolean(c));
   if (champs.length === 0) {
-    throw new Error("Aucune colonne valide selectionnee.");
+    throw new Error("Aucune colonne valide sélectionnée.");
   }
 
+  // LOG DIAGNOSTIC - entrée export
+  console.info("[LIBRACORE_EXPORT_START]", {
+    vehicleCount: vehicules.length,
+    format: options.format,
+    photosParVehicule: options.photosParVehicule,
+    hasPhotosField: vehicules[0]?.photos !== undefined,
+    firstVehiclePhotos: vehicules[0]?.photos?.length ?? 0,
+    firstVehiclePhotoField: (vehicules[0] as { photo?: string } | undefined)?.photo ?? null,
+    selectedColumns: options.champs,
+  });
+
+  // FALLBACK : si photos array vide mais photo (vignette liste) dispo, on l'utilise
+  const vehiculesAvecFallback = vehicules.map(v => {
+    const photo = (v as { photo?: string }).photo;
+    if ((!v.photos || v.photos.length === 0) && photo) {
+      return { ...v, photos: [{ url: photo, categorie: "VIGNETTE", date: new Date().toISOString(), auteur: "Système" }] };
+    }
+    return v;
+  });
+
   const avecPhotos = champs.some((c) => c.type === "photos") && options.photosParVehicule > 0;
+  
+  // Injecter les colonnes sélectionnées pour les logs de diagnostic
   const vignettes = avecPhotos
-    ? await construireVignettes(vehicules, options.photosParVehicule, onProgression)
+    ? await construireVignettesAvecLogs(vehiculesAvecFallback, options.photosParVehicule, onProgression, champs.map(c => c.cle))
     : new Map<number, VignetteExport[]>();
   let photosIntegrees = 0;
   for (const liste of vignettes.values()) photosIntegrees += liste.length;
 
+  let photosInvalides = 0;
   let blob: Blob;
   let extension: string;
   switch (options.format) {
-    case "xlsx":
-      blob = await genererXlsx(vehicules, champs, vignettes, options.contexte);
+    case "xlsx": {
+      const xlsxResult = await genererXlsx(vehiculesAvecFallback, champs, vignettes, options.contexte);
+      blob = xlsxResult.blob;
+      photosInvalides = xlsxResult.photosInvalides;
+      photosIntegrees = xlsxResult.photosInserees;
       extension = "xlsx";
       break;
+    }
     case "pdf":
-      blob = await genererPdf(vehicules, champs, vignettes, options.contexte);
+      const pdfResult = await genererPdf(vehiculesAvecFallback, champs, vignettes, options.contexte);
+      blob = pdfResult.blob;
+      photosInvalides = pdfResult.photosInvalides;
       extension = "pdf";
       break;
     case "csv":
     default:
-      blob = genererCsv(vehicules, champs);
+      blob = genererCsv(vehiculesAvecFallback, champs);
       extension = "csv";
       break;
   }
@@ -598,11 +777,25 @@ export async function genererEtTelechargerExport(
   const nomFichier = nomFichierExport(prefixe, extension);
   telechargerBlob(blob, nomFichier);
 
+  // LOG DIAGNOSTIC - résumé final
+  console.info("[LIBRACORE_XLSX_EXPORT_SUMMARY]", {
+    vehicleCount: vehiculesAvecFallback.length,
+    vehicleCountWithPhotos: Array.from(vignettes.values()).filter(l => l.length > 0).length,
+    imagesAttempted: photosIntegrees + photosInvalides,
+    imagesInserted: photosIntegrees,
+    imagesSkipped: photosInvalides,
+    invalidImages: photosInvalides,
+    missingImages: vehiculesAvecFallback.length - Array.from(vignettes.values()).filter(l => l.length > 0).length,
+    outputSizeBytes: blob.size,
+    generationDurationMs: Date.now() - debut,
+  });
+
   return {
     nomFichier,
     octets: blob.size,
-    lignes: vehicules.length,
+    lignes: vehiculesAvecFallback.length,
     photosIntegrees,
+    photosInvalides,
     dureeMs: Date.now() - debut,
   };
 }
@@ -617,144 +810,6 @@ export function estimerPoidsExport(
   const photos = vehicules.length * photosParVehicule * 35_000;
   const texte = vehicules.length * champs.length * 24;
   return photos + texte;
-}
-
-/** Mesure reelle du volume d'export (instrumentation diagnostique E4). */
-export interface DiagnostiqueExport {
-  nombreVehicules: number;
-  nombrePhotosTotal: number;
-  tailleJsonPhotosOctets: number;
-  tailleMoyennePhotoOctets: number;
-  tailleMaxPhotoOctets: number;
-  dureeGenerationCsvMs: number;
-  dureeGenerationXlsxMs: number;
-  dureeGenerationPdfMs: number;
-  tailleBlobCsvOctets: number;
-  tailleBlobXlsxOctets: number;
-  tailleBlobPdfOctets: number;
-  memoireNavigateurMo?: number;
-  avertissements: string[];
-}
-
-/** Mesure complete du volume et performance d'un export. */
-export async function diagnostiquerExport(
-  vehicules: LigneExportVehicule[],
-  options: OptionsGenerationExport,
-): Promise<DiagnostiqueExport> {
-  const debutGlobal = Date.now();
-  const avertissements: string[] = [];
-
-  // 1. Mesure photos
-  let nombrePhotosTotal = 0;
-  let tailleJsonPhotosOctets = 0;
-  let tailleMaxPhotoOctets = 0;
-  for (const v of vehicules) {
-    for (const p of v.photos) {
-      const taille = new TextEncoder().encode(p.url).length;
-      tailleJsonPhotosOctets += taille;
-      if (taille > tailleMaxPhotoOctets) tailleMaxPhotoOctets = taille;
-      nombrePhotosTotal++;
-    }
-  }
-  const tailleMoyennePhotoOctets = nombrePhotosTotal > 0 ? Math.round(tailleJsonPhotosOctets / nombrePhotosTotal) : 0;
-
-  if (tailleJsonPhotosOctets > 50_000_000) {
-    avertissements.push(`Payload photos > 50 Mo (${Math.round(tailleJsonPhotosOctets / 1_000_000)} Mo) : risque timeout tRPC / OOM navigateur`);
-  }
-  if (tailleMaxPhotoOctets > 6_000_000) {
-    avertissements.push(`Photo unique > 6 Mo : depasse limite validation`);
-  }
-
-  // 2. Test generation CSV
-  const debutCsv = Date.now();
-  const champsCsv = options.champs.map((cle) => getChampExport(cle)).filter((c): c is ChampExportVehicule => Boolean(c));
-  const blobCsv = genererCsv(vehicules, champsCsv);
-  const dureeGenerationCsvMs = Date.now() - debutCsv;
-
-  // 3. Test generation XLSX
-  const debutXlsx = Date.now();
-  const vignettesXlsx = await construireVignettes(vehicules, options.photosParVehicule);
-  const blobXlsx = await genererXlsx(vehicules, champsCsv, vignettesXlsx, options.contexte);
-  const dureeGenerationXlsxMs = Date.now() - debutXlsx;
-
-  // 4. Test generation PDF
-  const debutPdf = Date.now();
-  const vignettesPdf = await construireVignettes(vehicules, options.photosParVehicule);
-  const blobPdf = await genererPdf(vehicules, champsCsv, vignettesPdf, options.contexte);
-  const dureeGenerationPdfMs = Date.now() - debutPdf;
-
-  // 5. Memoire navigateur (approximatif)
-  let memoireNavigateurMo: number | undefined;
-  if (typeof performance !== "undefined" && "memory" in performance) {
-    const mem = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
-    if (mem) memoireNavigateurMo = Math.round(mem.usedJSHeapSize / 1_048_576);
-  }
-
-  const dureeTotaleMs = Date.now() - debutGlobal;
-
-  return {
-    nombreVehicules: vehicules.length,
-    nombrePhotosTotal,
-    tailleJsonPhotosOctets,
-    tailleMoyennePhotoOctets,
-    tailleMaxPhotoOctets,
-    dureeGenerationCsvMs,
-    dureeGenerationXlsxMs,
-    dureeGenerationPdfMs,
-    tailleBlobCsvOctets: blobCsv.size,
-    tailleBlobXlsxOctets: blobXlsx.size,
-    tailleBlobPdfOctets: blobPdf.size,
-    memoireNavigateurMo,
-    avertissements,
-  };
-}
-
-/** Seuils recommandes pour generation frontend vs backend asynchrone. */
-export const SEUILS_EXPORT = {
-  /** Au-dela : generation frontend acceptable sans photos. */
-  frontendSansPhotosMaxVehicules: 5000,
-  /** Au-dela : generation frontend avec miniatures risque OOM/timeout. */
-  frontendAvecMiniaturesMaxVehicules: 200,
-  /** Au-dela : generation frontend avec photos completes tres risque. */
-  frontendAvecPhotosMaxVehicules: 50,
-  /** Au-dela payload JSON photos : generation backend asynchrone recommandee. */
-  payloadJsonPhotosMaxOctets: 20_000_000,
-  /** Au-dela duree generation : UX degradee, backend async recommande. */
-  dureeGenerationMaxMs: 30_000,
-  /** Au-dela memoire navigateur : risque crash onglet. */
-  memoireNavigateurMaxMo: 1500,
-} as const;
-
-/** Evalue si la generation frontend est recommandee. */
-export function evaluerModeGeneration(
-  vehicules: LigneExportVehicule[],
-  options: OptionsGenerationExport,
-): { recommandation: "frontend" | "backend-async"; raisons: string[] } {
-  const raisons: string[] = [];
-  const avecPhotos = options.champs.some((c) => c === "photos") && options.photosParVehicule > 0;
-
-  if (avecPhotos) {
-    if (vehicules.length > SEUILS_EXPORT.frontendAvecPhotosMaxVehicules) {
-      raisons.push(`Vehicules (${vehicules.length}) > seuil photos frontend (${SEUILS_EXPORT.frontendAvecPhotosMaxVehicules})`);
-    }
-    if (vehicules.length > SEUILS_EXPORT.frontendAvecMiniaturesMaxVehicules && options.photosParVehicule > 0) {
-      raisons.push(`Vehicules (${vehicules.length}) > seuil miniatures frontend (${SEUILS_EXPORT.frontendAvecMiniaturesMaxVehicules})`);
-    }
-  } else {
-    if (vehicules.length > SEUILS_EXPORT.frontendSansPhotosMaxVehicules) {
-      raisons.push(`Vehicules (${vehicules.length}) > seuil sans photos (${SEUILS_EXPORT.frontendSansPhotosMaxVehicules})`);
-    }
-  }
-
-  const estimationPhotos = vehicules.length * options.photosParVehicule * 35_000;
-  if (estimationPhotos > SEUILS_EXPORT.payloadJsonPhotosMaxOctets) {
-    raisons.push(`Estimation payload photos (${Math.round(estimationPhotos / 1_000_000)} Mo) > seuil backend (${SEUILS_EXPORT.payloadJsonPhotosMaxOctets / 1_000_000} Mo)`);
-  }
-
-  if (raisons.length > 0) {
-    return { recommandation: "backend-async", raisons };
-  }
-  return { recommandation: "frontend", raisons: [] };
 }
 
 /** Liste des champs disponibles, regroupes pour la modale de selection. */

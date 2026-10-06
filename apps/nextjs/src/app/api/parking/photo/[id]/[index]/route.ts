@@ -54,7 +54,7 @@ export async function GET(
   }
 
   const width = Number(new URL(req.url).searchParams.get("w"));
-  let body: Uint8Array = new Uint8Array(parsed.buffer);
+  let body = new Uint8Array(parsed.buffer);
   let mime = parsed.mime;
 
   if (Number.isFinite(width) && width > 0) {
