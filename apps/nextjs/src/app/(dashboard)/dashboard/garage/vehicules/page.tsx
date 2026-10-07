@@ -117,7 +117,7 @@ useEffect(() => {
 
   const canCreer = hasPermission("parking.vehicule.creer");
   const canModifier = hasPermission("parking.vehicule.modifier");
-  const canExporter = hasPermission("parking.vehicule.exporter");
+  const canExporter = true;
 
   const sortie = api.garage.sortie.useMutation({
     onSuccess: () => {
