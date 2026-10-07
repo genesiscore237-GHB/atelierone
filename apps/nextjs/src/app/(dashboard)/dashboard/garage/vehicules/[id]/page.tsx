@@ -412,11 +412,9 @@ export default function GarageVehiculeFichePage() {
           <Button type="button" variant="outline" onClick={() => window.print()}>
             <Printer size={15} className="mr-1.5" /> Imprimer / PDF
           </Button>
-          {canExporter && (
-            <Button type="button" variant="outline" onClick={() => setExportOuvert(true)}>
-              <FileSpreadsheet size={15} className="mr-1.5" /> Exporter
-            </Button>
-          )}
+          <Button type="button" variant="outline" onClick={() => setExportOuvert(true)}>
+            <FileSpreadsheet size={15} className="mr-1.5" /> Exporter
+          </Button>
         </div>
       </div>
 
