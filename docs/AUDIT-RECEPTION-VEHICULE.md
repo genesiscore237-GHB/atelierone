@@ -97,9 +97,9 @@
 | **R4** | Transparence entités existantes | réception (UI) | ✅ |
 | **R5** | Dédoublonnage client | clients, réception | ✅ |
 | **U0a** | Service unique de règles véhicule (3 endpoints alignés) | db, véhicules, garage | ✅ |
-| **U0b** | `FormulaireVehicule` partagé + suppression écran doublon | réception, véhicules | ⬜ |
+| **U0b** | `FormulaireVehicule` partagé + suppression écran doublon | réception, véhicules | ✅ |
 | **U0c** | Photos d'état des lieux versionnées par visite + caméra | db, réception, restitution | ✅ |
-| **U0d** | Dimensions physiques + provenance véhicule | db, réception, garage | ⬜ |
+| **U0d** | Dimensions physiques + provenance véhicule | db, réception, garage | ✅ |
 | **U1** | Type véhicule combobox | réception (UI) | ✅ |
 | **U2** | Km regroupé + invariant | réception (UI+API) | ⬜ |
 | **U3** | Check-list reformée | réception (UI) | ⬜ |
@@ -137,6 +137,12 @@ mouvements) : ce n'est pas un doublon du parc, c'est un métier distinct.
 - La création directe au garage reste possible **uniquement** si la plaque est inconnue
   à la réception, et doit alors créer un **vrai client**, pas un texte.
 - Les règles vivent dans **un service**, pas recopiées par écran (cause racine des bugs).
+
+> **RÉVISION 2026-10-14 (U0b)** — l'écran `/dashboard/vehicules` **n'est pas supprimé** :
+> l'inventaire a montré que `atelier/parc` affiche les **dossiers en cours** (`or.getDashboard`),
+> pas le parc. `/dashboard/vehicules` est donc la **seule liste du parc** — le supprimer aurait
+> retiré une vue utile. Le doublon supprimé n'est pas l'écran mais son **formulaire** :
+> la fiche véhicule est désormais un **composant unique** partagé avec la réception.
 
 ### Éléments repris du formulaire parking vers l'atelier (validés)
 
@@ -212,4 +218,6 @@ mouvements) : ce n'est pas un doublon du parc, c'est un métier distinct.
 
 | 2026-10-14 | **U0a — règle véhicule unique partagée par les 3 écrans** | Livré. **Service `server/lib/vehicule-regles.ts`** (nouvelle source de vérité) : `resoudreOuCreerVehicule` (normalisation RD1 + recherche avec repli `immat_norm IS NULL` + réutilisation/création), `completerVehiculeSansEcrasement` (seuls les champs **VIDES** sont remplis — R4, l'historique fait foi) et `marquerDoublonClientTelephone` (R5, désormais partagé). **Les 3 points d'écriture y pointent** : `or.receptionner`, `vehicules.create` et `garage.create`/`garage.update` (ce dernier utilisait encore `trouverOuCreerCanonique`, porte abolished — la règle ne vit plus qu'à un endroit). **Comportements corrigés** : (a) `vehicules.create` **réconcilie au lieu de refuser** une plaque connue et renvoie `vehiculeReconcilie` (R4 : plus aucune information ne disparaît en erreur silencieuse) ; (b) `typeVehicule` **ouvert** (`z.string().max(30)` au lieu de `z.enum(TYPES_VEHICULE)`) — ferme la faille ouverte par U1 où un type « benne » accepté à la réception était refusé ici ; (c) champ `version` ajouté à `vehicules.create` (parité de fiche) ; (d) réassignation de propriétaire conservée via un canal explicite `forcer: ['clientId']`, car la règle « ne pas écraser » rendait sinon la case RD4 inopérante. **Piège rencontré** : le premier jet écrivait des **clés TS** (`typeVehicule`) dans du SQL brut au lieu des **noms de colonnes** (`type_vehicule`) → « column typeVehicule does not exist » (42703) ; d'où la table `COLONNES_VEHICULE` qui lève une **erreur explicite** sur une clé inconnue au lieu de produire un SQL invalide. **Tests** : `vehicules-u0a-regle-unique.integration.test.ts` (5 tests) — parité des 3 endpoints vers le même véhicule, non-écrasement + transparence, le garage ne fabrique ni client ni propriétaire, type hors nomenclature accepté partout, adoption d'un véhicule sans propriétaire. 3 tests ont d'abord échoué sur des **prémisses de test fausses** (`"u0a parc 777"` ≠ `"U0A-PARC-777"` : RD1 conserve la ponctuation) et sur la confusion clés TS / noms de colonnes — corrigées côté test, pas en affaiblissant l'implémentation. Vérifs : **5/5** verts, **901/901** sur la suite complète (54 fichiers), TSC 0 erreur dans les fichiers du lot, lint 0 erreur. |
 
-Lots **R1**–**R5**, **U1**, **S1**, **U0c** et **U0a** livrés. Prochains lots : **U0b** (composant `FormulaireVehicule` partagé + suppression de l'écran doublon `/vehicules`), **U0d** (dimensions + provenance dans l'UI de réception), puis U2–U5, S2, A1, A2.
+| 2026-10-14 | **U0b + U0d — fiche véhicule partagée + dimensions** | Livré. **Composant unique `src/components/vehicule/FormulaireVehicule.tsx`** (contrôlé : reçoit la fiche, ne détient aucun état) utilisé par la **réception** et par l'**écran parc** — une seule définition des champs, donc plus de divergence possible entre les deux points de saisie (c'est ainsi qu'un type est devenu libre d'un côté et resté fermé de l'autre). **Révision du cadrage** : `/dashboard/vehicules` n'est **pas** supprimé — `atelier/parc` montre les dossiers en cours, pas le parc ; c'est la seule liste du parc. Le doublon supprimé est le **formulaire**, pas l'écran. **R4 dans l'UI parc** : le toast distingue désormais « véhicule déjà connu — fiche complétée, rien n'a été écrasé » d'une création. **U0d** : bloc « Empreinte physique » (longueur / largeur / hauteur / poids + case « Dimensions estimées ») présent sur les deux écrans, câblé de bout en bout (schéma `vehicules` ← migration `0006` → `vehicules-regles.colonnesSup` → `or.receptionner` / `vehicules.create`). Le drapeau `dimensions_estimees` garde visible la **qualité de la donnée** : une estimation n'est jamais confondue avec une mesure. **Nav** : `/dashboard/clients/doublons` ajouté au menu « Clients & Contrats » — la page de dédoublonnage (R5) était livrée mais **atteignable seulement par URL**, donc invisible pour un agent ; une fonctionnalité livrée mais introuvable n'est pas livrée. Vérifs : **6/6** verts sur la suite U0a (nouveau test U0d), **902/902** sur la suite complète (54 fichiers), TSC 0 erreur dans les fichiers du lot, lint 0 erreur. |
+
+Lots **R1**–**R5**, **U1**, **S1**, **U0a**, **U0b**, **U0c** et **U0d** livrés. Bloc U0 terminé. Prochains lots : **U2** (km regroupés + invariant `sortie ≥ entrée`, RD5), U3 (check-list), U4 (validation visible), U5 (DOM/caches), S2, A1, A2.

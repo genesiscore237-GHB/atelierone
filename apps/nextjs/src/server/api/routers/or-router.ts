@@ -718,6 +718,14 @@ export const orRouter = createTRPCRouter({
         couleur: z.string().optional(),
         carburant: z.string().optional(),
         kilometrage: z.number().int().optional(),
+        // LOT U0d — empreinte physique (registre parking). `dimensionsEstimees`
+        // distingue une mesure d'une estimation : la qualité de la donnée doit
+        // rester visible au lieu d'être écrasée dans la même colonne.
+        longueur: z.number().positive().optional(),
+        largeur: z.number().positive().optional(),
+        hauteur: z.number().positive().optional(),
+        poids: z.number().positive().optional(),
+        dimensionsEstimees: z.boolean().optional(),
       }),
       // RD4 — transparence : par défaut, un véhicule existant conserve son
       // propriétaire historique. Le changement de client n'a lieu que si
@@ -830,6 +838,11 @@ export const orRouter = createTRPCRouter({
               couleur: input.vehicule.couleur?.trim() || null,
               carburant: input.vehicule.carburant || null,
               kilometrage: input.vehicule.kilometrage ?? null,
+              longueur: input.vehicule.longueur ?? null,
+              largeur: input.vehicule.largeur ?? null,
+              hauteur: input.vehicule.hauteur ?? null,
+              poids: input.vehicule.poids ?? null,
+              dimensionsEstimees: !!input.vehicule.dimensionsEstimees,
               chauffeurNom: input.chauffeur?.nom?.trim() || null,
               chauffeurTelephone: input.chauffeur?.telephone?.trim() || null,
             },

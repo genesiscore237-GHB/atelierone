@@ -466,6 +466,12 @@ export const vehiculesRouter = createTRPCRouter({
         // un `z.enum` ici faisait refus���r par cet endpoint un type « benne »
         // pourtant accepté à la réception. Même règle partout.
         typeVehicule: z.string().trim().min(1).max(30).optional(),
+        // LOT U0d — empreinte physique (registre parking).
+        longueur: z.number().positive().optional(),
+        largeur: z.number().positive().optional(),
+        hauteur: z.number().positive().optional(),
+        poids: z.number().positive().optional(),
+        dimensionsEstimees: z.boolean().optional(),
         notes: z.string().optional(),
       })
     )
@@ -508,6 +514,12 @@ export const vehiculesRouter = createTRPCRouter({
           chauffeurNom: input.chauffeurNom ?? null,
           chauffeurTelephone: input.chauffeurTelephone ?? null,
           isActive: true,
+          // LOT U0d — empreinte physique.
+          longueur: input.longueur ?? null,
+          largeur: input.largeur ?? null,
+          hauteur: input.hauteur ?? null,
+          poids: input.poids ?? null,
+          dimensionsEstimees: !!input.dimensionsEstimees,
         },
       });
 

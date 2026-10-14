@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Search, Plus, Loader2, CheckCircle2, X } from "lucide-react";
 import { api } from "~/trpc/react";
 import { toast } from "sonner";
@@ -8,8 +8,7 @@ import Link from "next/link";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
-import { SelectSearch } from "~/components/ui/select-search";
-import { TYPES_VEHICULE, libelleTypeVehicule } from "~/server/lib/vehicule-service";
+import { FormulaireVehicule } from "~/components/vehicule/FormulaireVehicule";
 import { PhotosEtatDesLieux, type PhotoUI } from "./PhotosEtatDesLieux";
 
 /**
@@ -24,8 +23,14 @@ const OUTILLAGE_ITEMS = [
   "BÂCHE DU VÉHICULE", "BOÎTE À PHARMACIE", "AUTRES",
 ];
 
-const CARBURANTS = ["essence", "diesel", "electrique", "hybride", "gpl"];
 const NIVEAUX_CARBURANT = ["vide", "1/4", "1/2", "3/4", "plein"];
+
+/** Nombre ou undefined (jamais 0 ni NaN dans l'payload). */
+const numOuUndef = (v: unknown): number | undefined => {
+  if (v == null || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
 
 function Field({ label, required, error, hint, children }: { label: string; required?: boolean; error?: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -87,7 +92,7 @@ export function ReceptionVehicule() {
 
   const chargerVehicule = (v: any) => {
     setF({
-      vehicule: { id: v.id, immatriculation: v.immatriculation, numeroChassis: v.numeroChassis ?? "", typeVehicule: v.typeVehicule ?? "voiture", marque: v.marque ?? "", modele: v.modele ?? "", version: v.version ?? "", annee: v.annee ?? "", couleur: v.couleur ?? "", carburant: v.carburant ?? "", kilometrage: v.kilometrage ?? "" },
+      vehicule: { id: v.id, immatriculation: v.immatriculation, numeroChassis: v.numeroChassis ?? "", typeVehicule: v.typeVehicule ?? "voiture", marque: v.marque ?? "", modele: v.modele ?? "", version: v.version ?? "", annee: v.annee ?? "", couleur: v.couleur ?? "", carburant: v.carburant ?? "", kilometrage: v.kilometrage ?? "", longueur: v.longueur ?? "", largeur: v.largeur ?? "", hauteur: v.hauteur ?? "", poids: v.poids ?? "", dimensionsEstimees: !!v.dimensionsEstimees },
       client: { id: v.clientId ?? undefined, nom: v.clientNom ?? "", prenom: v.clientPrenom ?? "", telephone: v.clientTelephone ?? "" },
       chauffeur: { nom: v.chauffeurNom ?? "", telephone: v.chauffeurTelephone ?? "" },
       reception: { typeIntervention: "ATELIER", motEntree: "PANNE", priorite: "P3", niveauCarburantEntree: "", outillage: {}, photos: [], validationVerbale: false },
@@ -122,19 +127,9 @@ export function ReceptionVehicule() {
       ? doublonPotentiel.data.client
       : null;
 
-  // LOT U1 (E7) — combobox « Type de véhicule » : la liste fermée n'est plus
-  // l'unique source. On propose la liste de référence (libellés humanisés) PLUS
-  // les types réellement rencontrés par l'agence, et la saisie reste libre.
-  const typesUtilises = api.vehicules.typesUtilises.useQuery();
-  const optionsTypeVehicule = useMemo(() => {
-    const vues = new Set<string>(TYPES_VEHICULE as readonly string[]);
-    for (const o of typesUtilises.data?.options ?? []) vues.add(o.valeur);
-    // Le véhicule chargé peut porter un type hors des deux listes : on l'ajoute
-    // pour que le champ affiche bien la valeur existante.
-    const courant = (f.vehicule.typeVehicule ?? "").trim();
-    if (courant) vues.add(courant);
-    return [...vues].map((v) => ({ value: v, label: libelleTypeVehicule(v) }));
-  }, [typesUtilises.data?.options, f.vehicule.typeVehicule]);
+  // LOT U0b — la liste des types de véhicule est désormais gérée par le
+  // composant partagé `FormulaireVehicule` (U1 : liste de référence + types
+  // rencontrés par l'agence + saisie libre).
 
   // LOT U0c — état des lieux photographique versionné par visite.
   // Remplace l'ancienne liste plate (`reception.photos: string[]`) qui :
@@ -200,7 +195,7 @@ export function ReceptionVehicule() {
       // RD4 — réassignation du propriétaire : uniquement si l'opérateur a
       // coché la case de confirmation (jamais d'écrasement silencieux).
       reassignerClient: ownerChangeDemande && !!f.reception.reassignerClient,
-      vehicule: { ...f.vehicule, immatriculation: f.vehicule.immatriculation.trim(), marque: f.vehicule.marque?.trim() || undefined, modele: f.vehicule.modele?.trim() || undefined, annee: f.vehicule.annee != null && f.vehicule.annee !== "" ? Number(f.vehicule.annee) : undefined, kilometrage: f.vehicule.kilometrage != null && f.vehicule.kilometrage !== "" ? Number(f.vehicule.kilometrage) : undefined },
+      vehicule: { ...f.vehicule, immatriculation: f.vehicule.immatriculation.trim(), marque: f.vehicule.marque?.trim() || undefined, modele: f.vehicule.modele?.trim() || undefined, annee: f.vehicule.annee != null && f.vehicule.annee !== "" ? Number(f.vehicule.annee) : undefined, kilometrage: f.vehicule.kilometrage != null && f.vehicule.kilometrage !== "" ? Number(f.vehicule.kilometrage) : undefined, longueur: numOuUndef(f.vehicule.longueur), largeur: numOuUndef(f.vehicule.largeur), hauteur: numOuUndef(f.vehicule.hauteur), poids: numOuUndef(f.vehicule.poids), dimensionsEstimees: !!f.vehicule.dimensionsEstimees },
       chauffeur: { nom: f.chauffeur.nom?.trim() || undefined, telephone: f.chauffeur.telephone?.trim() || undefined },
       reception: {
         ...f.reception,
@@ -274,49 +269,15 @@ export function ReceptionVehicule() {
         <div className="space-y-5 xl:col-span-3">
           {/* 1 — Véhicule */}
           <Section title="1 · Véhicule">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="Immatriculation" required error={errors.immatriculation}>
-                <Input value={f.vehicule.immatriculation ?? ""} onChange={(e) => set("vehicule", "immatriculation", e.target.value.toUpperCase())} placeholder="AA-123-BB" className="font-mono uppercase" />
-              </Field>
-              <Field label="N° de châssis">
-                <Input value={f.vehicule.numeroChassis ?? ""} onChange={(e) => set("vehicule", "numeroChassis", e.target.value.toUpperCase())} className="font-mono uppercase" />
-              </Field>
-              <Field label="Type de véhicule" required hint="Liste de l'agence + saisie libre (ex. « benne »)">
-                <SelectSearch
-                  allowCustom
-                  customMaxLength={30}
-                  value={f.vehicule.typeVehicule ?? "voiture"}
-                  onChange={(v) => set("vehicule", "typeVehicule", v)}
-                  options={optionsTypeVehicule}
-                  placeholder="Sélectionner ou saisir un type…"
-                  searchPlaceholder="Rechercher ou saisir un type…"
-                />
-              </Field>
-              <Field label="Marque" required>
-                <Input value={f.vehicule.marque ?? ""} onChange={(e) => set("vehicule", "marque", e.target.value)} placeholder="Peugeot, Toyota…" />
-              </Field>
-              <Field label="Modèle">
-                <Input value={f.vehicule.modele ?? ""} onChange={(e) => set("vehicule", "modele", e.target.value)} placeholder="308, Corolla…" />
-              </Field>
-              <Field label="Version / Finition">
-                <Input value={f.vehicule.version ?? ""} onChange={(e) => set("vehicule", "version", e.target.value)} placeholder="Allure, Confort…" />
-              </Field>
-              <Field label="Année">
-                <Input type="number" value={f.vehicule.annee ?? ""} onChange={(e) => set("vehicule", "annee", e.target.value ? Number(e.target.value) : "")} />
-              </Field>
-              <Field label="Couleur">
-                <Input value={f.vehicule.couleur ?? ""} onChange={(e) => set("vehicule", "couleur", e.target.value)} />
-              </Field>
-              <Field label="Énergie">
-                <select value={f.vehicule.carburant ?? ""} onChange={(e) => set("vehicule", "carburant", e.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm">
-                  <option value="">—</option>
-                  {CARBURANTS.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </Field>
-              <Field label="Kilométrage">
-                <Input type="number" value={f.vehicule.kilometrage ?? ""} onChange={(e) => set("vehicule", "kilometrage", e.target.value ? Number(e.target.value) : "")} />
-              </Field>
-            </div>
+            {/* LOT U0b — fiche partagée avec l'écran parc : une seule definition
+                des champs, donc plus de divergence possible entre les deux
+                points de saisie. */}
+            <FormulaireVehicule
+              value={f.vehicule}
+              onChange={(champ, valeur) => set("vehicule", champ as string, valeur)}
+              erreurs={errors}
+              avecDimensions
+            />
           </Section>
 
           {/* 2 — Client */}

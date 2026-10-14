@@ -8,7 +8,8 @@ import Link from "next/link";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
-import { STATUT_LABELS, STATUT_STYLE, CARBURANTS, TYPES_VEHICULE } from "~/server/lib/vehicule-service";
+import { STATUT_LABELS, STATUT_STYLE } from "~/server/lib/vehicule-service";
+import { FormulaireVehicule } from "~/components/vehicule/FormulaireVehicule";
 import { usePermissions } from "~/hooks/usePermissions";
 
 const TYPE_LABELS: Record<string, string> = {
@@ -20,12 +21,18 @@ const EMPTY_FORM = {
   clientId: 0,
   marque: "",
   modele: "",
+  version: "",
   annee: "",
   couleur: "",
   numeroChassis: "",
   kilometrage: "",
   carburant: "diesel",
   typeVehicule: "voiture",
+  longueur: "",
+  largeur: "",
+  hauteur: "",
+  poids: "",
+  dimensionsEstimees: false,
   notes: "",
 };
 
@@ -44,8 +51,15 @@ export function VehiculesListClient() {
   });
   const { data: clientsData } = api.clients.list.useQuery({ statut: "ACTIF", limit: 200 });
   const create = api.vehicules.create.useMutation({
-    onSuccess: () => {
-      toast.success("Véhicule créé (en réception)");
+    onSuccess: (r: any) => {
+      // R4 — transparence : si la plaque a retrouvé un véhicule déjà connu, on
+      // l'informe explicitement. Avant, cet écran REFUSAIT la saisie ; il
+      // pouvait aussi écraser silencieusement des données (corrigé en U0a).
+      if (r?.vehiculeReconcilie) {
+        toast.info(`Véhicule déjà connu (${r.immatriculation}) — fiche complétée, rien n'a été écrasé`);
+      } else {
+        toast.success("Véhicule créé (en réception)");
+      }
       utils.vehicules.list.invalidate();
       setShowForm(false);
       setForm(EMPTY_FORM);
@@ -71,12 +85,19 @@ export function VehiculesListClient() {
       clientId: form.clientId || undefined,
       marque: form.marque || undefined,
       modele: form.modele || undefined,
+      version: form.version || undefined,
       annee: form.annee ? Number(form.annee) : undefined,
       couleur: form.couleur || undefined,
       numeroChassis: form.numeroChassis || undefined,
       kilometrage: form.kilometrage ? Number(form.kilometrage) : undefined,
       carburant: form.carburant as any,
       typeVehicule: form.typeVehicule as any,
+      // LOT U0d — empreinte physique.
+      longueur: form.longueur ? Number(form.longueur) : undefined,
+      largeur: form.largeur ? Number(form.largeur) : undefined,
+      hauteur: form.hauteur ? Number(form.hauteur) : undefined,
+      poids: form.poids ? Number(form.poids) : undefined,
+      dimensionsEstimees: !!form.dimensionsEstimees,
       notes: form.notes || undefined,
     });
   };
@@ -169,10 +190,6 @@ export function VehiculesListClient() {
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label className="text-xs text-muted-foreground">Immatriculation *</Label>
-                  <Input className="mt-1 font-mono" value={form.immatriculation} onChange={(e) => setForm({ ...form, immatriculation: e.target.value })} placeholder="LT-1234-AB" />
-                </div>
-                <div>
                   <Label className="text-xs text-muted-foreground">Propriétaire (client)</Label>
                   <select value={form.clientId} onChange={(e) => setForm({ ...form, clientId: Number(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
                     <option value={0}>— Aucun —</option>
@@ -181,43 +198,15 @@ export function VehiculesListClient() {
                     ))}
                   </select>
                 </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">Marque</Label>
-                  <Input className="mt-1" value={form.marque} onChange={(e) => setForm({ ...form, marque: e.target.value })} placeholder="Toyota" />
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">Modèle</Label>
-                  <Input className="mt-1" value={form.modele} onChange={(e) => setForm({ ...form, modele: e.target.value })} placeholder="Hilux" />
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">Type</Label>
-                  <select value={form.typeVehicule} onChange={(e) => setForm({ ...form, typeVehicule: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                    {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">Carburant</Label>
-                  <select value={form.carburant} onChange={(e) => setForm({ ...form, carburant: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                    {CARBURANTS.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">Année</Label>
-                  <Input type="number" className="mt-1" value={form.annee} onChange={(e) => setForm({ ...form, annee: e.target.value })} placeholder="2020" />
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">Kilométrage</Label>
-                  <Input type="number" min={0} className="mt-1" value={form.kilometrage} onChange={(e) => setForm({ ...form, kilometrage: e.target.value })} />
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">Couleur</Label>
-                  <Input className="mt-1" value={form.couleur} onChange={(e) => setForm({ ...form, couleur: e.target.value })} />
-                </div>
-                <div>
-                  <Label className="text-xs text-muted-foreground">N° de châssis</Label>
-                  <Input className="mt-1" value={form.numeroChassis} onChange={(e) => setForm({ ...form, numeroChassis: e.target.value })} />
-                </div>
               </div>
+              {/* LOT U0b — fiche VÉHICULE partagées avec la réception : une
+                  seule définition des champs, donc plus de divergence possible
+                  entre les deux points de saisie. */}
+              <FormulaireVehicule
+                value={form}
+                onChange={(champ, valeur) => setForm({ ...form, [champ]: valeur })}
+                avecDimensions
+              />
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setShowForm(false)}>Annuler</Button>

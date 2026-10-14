@@ -19,6 +19,7 @@ import {
   CircleHelp,
   Users,
   FileSignature,
+  Copy,
   Car,
   Wrench,
   CalendarClock,
@@ -340,6 +341,17 @@ export const DOMAINS: AppDomain[] = [
         icon: FileSignature,
         desc: "Maintenance, véhicules rattachés, échéances",
         moduleId: "contrats",
+      },
+      {
+        // LOT R5 (E6) — la page existait mais n'était atteignable par aucune
+        // entrée de menu : un agent ne pouvait pas y accéder sans connaître
+        // l'URL. Une fonctionnalité livrée mais invisible n'est pas livrée.
+        id: "clients-doublons",
+        label: "Doublons clients",
+        href: "/dashboard/clients/doublons",
+        icon: Copy,
+        desc: "Clients en doublon (même téléphone) — fusion contrôlée",
+        moduleId: "clients",
       },
     ],
   },

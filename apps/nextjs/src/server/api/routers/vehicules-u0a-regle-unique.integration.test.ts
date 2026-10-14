@@ -258,4 +258,38 @@ describe("LOT U0a — règle véhicule unique sur les 3 écrans", () => {
     expect(Number(v.id)).toBe(r1.id);
     expect(Number(v.client_id)).toBeGreaterThan(0);
   });
+  it("8. U0d — l'empreinte physique est conservée et l'estimation reste signalée", async () => {
+    const or = orRouter.createCaller(ctxSuperadmin());
+    const parc = vehiculesRouter.createCaller(ctxSuperadmin());
+
+    const r1 = await or.receptionner({
+      client: { nom: "Client U0a dims", telephone: "690100666" },
+      vehicule: {
+        immatriculation: "U0A-PARC-444",
+        marque: "Scania",
+        typeVehicule: "poids_lourd",
+        longueur: 12.5,
+        largeur: 2.55,
+        hauteur: 3.9,
+        poids: 18000,
+        dimensionsEstimees: true,
+      },
+      reception: { kilometrageEntree: 1000, pannesDeclarees: "Freins" },
+    });
+
+    const lignes = (await db.execute(
+      sql`SELECT longueur, largeur, hauteur, poids, dimensions_estimees
+          FROM vehicules WHERE id = ${r1.vehiculeId}`,
+    )) as unknown as { longueur: number; largeur: number; hauteur: number; poids: number; dimensions_estimees: boolean }[];
+    expect(Number(lignes[0].longueur)).toBe(12.5);
+    expect(Number(lignes[0].largeur)).toBe(2.55);
+    expect(Number(lignes[0].hauteur)).toBe(3.9);
+    expect(Number(lignes[0].poids)).toBe(18000);
+    // La qualité de la donnée reste visible : mesuré vs estimé.
+    expect(lignes[0].dimensions_estimees).toBe(true);
+
+    // Le parc reprend les mêmes champs (parité U0b/U0d).
+    const r2 = await parc.create({ immatriculation: "U0A-PARC-444", longueur: 12.5 });
+    expect(r2.id).toBe(r1.vehiculeId);
+  });
 });
