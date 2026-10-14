@@ -1,0 +1,3 @@
+ALTER TABLE "parking_vehicles" ADD COLUMN "vehicule_id" integer;--> statement-breakpoint
+ALTER TABLE "parking_vehicles" ADD CONSTRAINT "parking_vehicles_vehicule_id_vehicules_id_fk" FOREIGN KEY ("vehicule_id") REFERENCES "public"."vehicules"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "idx_parking_vehicles_vehicule_id" ON "parking_vehicles" USING btree ("vehicule_id");

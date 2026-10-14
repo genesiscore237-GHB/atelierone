@@ -4,20 +4,24 @@
 // Les placements passent par le moteur spatial (parking-spatial) : jamais de
 // collision ni de véhicule hors zone. Les mouvements sont immuables (insert-only).
 import { z } from "zod";
-import { and, eq, isNull, isNotNull, inArray, asc, desc, sql } from "drizzle-orm";
+import { and, eq, isNull, isNotNull, inArray, asc, desc, sql, getTableColumns, or, ilike } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, requirePermissionProcedure } from "~/server/api/trpc";
 import {
   db,
+  agences,
   parkingSites,
   parkingZones,
   parkingSpots,
   parkingVehicles,
   parkingMovements,
+  parkingTransfers,
   parkingAlerts,
   parkingTasks,
   parkingConfigs,
+  utilisateurs,
   auditLogs,
+  ordresReparation,
   type ParkingGeometry,
 } from "@atelierone/db";
 import {
@@ -54,6 +58,11 @@ import {
   type ParkingRuleConfig,
   type VehiculeAlertable,
 } from "~/server/lib/parking-alerts";
+import {
+  trouverOuCreerCanonique,
+  synchroniserIdentiteCanonique,
+  projeterImmoDepuisParking,
+} from "~/server/lib/parking-vehicule-service";
 
 export const STATUTS_VEHICULE = [
   "EN_PARKING",
@@ -577,9 +586,21 @@ spots: spots.map((s) => {
   vehicule: requirePermissionProcedure("parking.consulter")
     .input(idSchema)
     .query(async ({ ctx, input }) => {
+      // T0.4b : site / zone / emplacement / agence étaient absents du select —
+      // la fiche affichait systématiquement « — ». Jointures comme l'export.
       const [v] = await db
-        .select()
+        .select({
+          ...getTableColumns(parkingVehicles),
+          site: parkingSites.nom,
+          zone: parkingZones.nom,
+          spot: parkingSpots.code,
+          agenceNom: agences.nom,
+        })
         .from(parkingVehicles)
+        .leftJoin(parkingSites, eq(parkingSites.id, parkingVehicles.siteId))
+        .leftJoin(parkingZones, eq(parkingZones.id, parkingVehicles.zoneId))
+        .leftJoin(parkingSpots, eq(parkingSpots.id, parkingVehicles.spotId))
+        .leftJoin(agences, eq(agences.id, parkingVehicles.agenceId))
         .where(and(eq(parkingVehicles.id, input.id), eq(parkingVehicles.agenceId, ctx.user.agenceId)))
         .limit(1);
       if (!v) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
@@ -605,6 +626,24 @@ spots: spots.map((s) => {
           .limit(50),
       ]);
 
+      // Lot 3 — liens croisés 360° : OR atelier en cours du véhicule canonique lié.
+      let atelier: { ors: Array<{ id: number; numero: string; statut: string; priorite: string | null; dateOuverture: Date | null }> } | null = null;
+      if (v.vehiculeId != null) {
+        const orsAtelier = await db
+          .select({
+            id: ordresReparation.id,
+            numero: ordresReparation.numero,
+            statut: ordresReparation.statut,
+            priorite: ordresReparation.priorite,
+            dateOuverture: ordresReparation.dateOuverture,
+          })
+          .from(ordresReparation)
+          .where(and(eq(ordresReparation.vehiculeId, v.vehiculeId), sql`${ordresReparation.statut} NOT IN ('LIVRE','ANNULE')`))
+          .orderBy(desc(ordresReparation.dateOuverture))
+          .limit(5);
+        atelier = { ors: orsAtelier };
+      }
+
       return {
         vehicule: {
           ...v,
@@ -613,6 +652,56 @@ spots: spots.map((s) => {
         },
         mouvements,
         taches,
+        atelier,
+      };
+    }),
+
+  /**
+   * Lot 3 — fiche atelier → emplacement parking (lien croisé 360°).
+   * Retourne la ligne parking liée au véhicule canonique (via vehicule_id),
+   * ou null si le véhicule n'est pas suivi au parking.
+   */
+  vehiculeParCanonique: requirePermissionProcedure("parking.consulter")
+    .input(z.object({ vehiculeId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      const [v] = await db
+        .select({
+          id: parkingVehicles.id,
+          numRegistre: parkingVehicles.numRegistre,
+          statut: parkingVehicles.statut,
+          siteId: parkingVehicles.siteId,
+          centreX: parkingVehicles.centreX,
+          immatriculation: parkingVehicles.immatriculation,
+          siteCode: parkingSites.code,
+          siteNom: parkingSites.nom,
+          zoneNom: parkingZones.nom,
+          spotCode: parkingSpots.code,
+        })
+        .from(parkingVehicles)
+        .leftJoin(parkingSites, eq(parkingSites.id, parkingVehicles.siteId))
+        .leftJoin(parkingZones, eq(parkingZones.id, parkingVehicles.zoneId))
+        .leftJoin(parkingSpots, eq(parkingSpots.id, parkingVehicles.spotId))
+        .where(and(eq(parkingVehicles.vehiculeId, input.vehiculeId), eq(parkingVehicles.agenceId, ctx.user.agenceId)))
+        .orderBy(desc(parkingVehicles.id))
+        .limit(1);
+      if (!v) return null;
+
+      const alertes = await db
+        .select({ c: sql<number>`count(*)::int` })
+        .from(parkingAlerts)
+        .where(and(eq(parkingAlerts.vehicleId, v.id), eq(parkingAlerts.agenceId, ctx.user.agenceId), eq(parkingAlerts.statut, "OUVERTE")));
+
+      return {
+        id: v.id,
+        numRegistre: v.numRegistre,
+        statut: v.statut,
+        siteId: v.siteId,
+        siteCode: v.siteCode,
+        siteNom: v.siteNom,
+        zoneNom: v.zoneNom,
+        spotCode: v.spotCode,
+        positionne: v.centreX != null,
+        alertesOuvertes: alertes[0]?.c ?? 0,
       };
     }),
 
@@ -827,12 +916,29 @@ spots: spots.map((s) => {
         .limit(1);
       if (dup) throw new TRPCError({ code: "CONFLICT", message: `Numéro de registre déjà utilisé : ${numRegistre}.` });
 
+      // LOT 1 — véhicule canonique : appariement/création par immatriculation
+      // normalisée (null si immatriculation absente — aucune invention). Si le
+      // canonique est créé, son statut immobilisation est projeté depuis le
+      // statut parking ; s'il existe déjà, son état atelier fait foi.
+      const vehiculeId = await trouverOuCreerCanonique(db, {
+        agenceId,
+        immatriculation: input.immatriculation,
+        marque: input.marque,
+        modele: input.modele,
+        version: input.version,
+        couleur: input.couleur,
+        vin: input.vin,
+        statutParking: input.statut ?? "EN_PARKING",
+        notes: `Créé depuis le registre parking — n° ${numRegistre}`,
+      });
+
       const photos = auteurPhotos(input.photos, ctx.user);
       const [created] = await db
         .insert(parkingVehicles)
         .values({
           agenceId,
           numRegistre,
+          vehiculeId,
           marque: input.marque ?? null,
           modele: input.modele ?? null,
           version: input.version ?? null,
@@ -956,6 +1062,43 @@ spots: spots.map((s) => {
           code: "INTERNAL_SERVER_ERROR",
           message: `Échec de mise à jour du véhicule #${input.id} : aucune ligne retournée.`,
         });
+      }
+
+      // LOT 1 — (a) (ré)liation au canonique si immatriculation fournie non
+      // vide et lien absent/changé (immaturée vidée = lien conservé) ;
+      // (b) identité partagée registre → canonique ;
+      // (c) projection du statut parking → statut_immobilisation.
+      let vehiculeId = existing.vehiculeId;
+      const immatNouvelle = input.immatriculation !== undefined ? input.immatriculation : existing.immatriculation;
+      const immatChangee =
+        input.immatriculation !== undefined &&
+        (input.immatriculation ?? "").trim() !== (existing.immatriculation ?? "").trim();
+      if (vehiculeId == null || (immatChangee && (immatNouvelle ?? "").trim() !== "")) {
+        const cible = await trouverOuCreerCanonique(db, {
+          agenceId: ctx.user.agenceId,
+          immatriculation: immatNouvelle,
+          marque: input.marque !== undefined ? input.marque : existing.marque,
+          modele: input.modele !== undefined ? input.modele : existing.modele,
+          version: input.version !== undefined ? input.version : existing.version,
+          couleur: input.couleur !== undefined ? input.couleur : existing.couleur,
+          vin: input.vin !== undefined ? input.vin : existing.vin,
+          statutParking: input.statut ?? existing.statut,
+          notes: `Créé depuis le registre parking (mise à jour) — n° ${existing.numRegistre}`,
+        });
+        if (cible !== vehiculeId) {
+          await db.execute(sql`UPDATE parking_vehicles SET vehicule_id = ${cible} WHERE id = ${input.id}`);
+          vehiculeId = cible;
+        }
+      }
+      await synchroniserIdentiteCanonique(db, vehiculeId, {
+        marque: input.marque,
+        modele: input.modele,
+        version: input.version,
+        couleur: input.couleur,
+        vin: input.vin,
+      });
+      if (input.statut !== undefined) {
+        await projeterImmoDepuisParking(db, vehiculeId, input.statut);
       }
 
       return { id: updated.id, statutChange };
@@ -1820,5 +1963,475 @@ spots: spots.map((s) => {
         aDeplacer: result.aDeplacer,
         coutEstimeMinutes: result.coutEstimeMinutes,
       };
+    }),
+
+  // ── Lot 2 — Transfert intra-agence Site 1 ↔ Site 2 (D1, D9a workflow 2 phases) ─
+  // EN_ATTENTE → EN_TRANSIT → RECU (ou ANNULE avant réception).
+  // parking_movements reste insert-only : la ligne TRANSFERT est écrite à la
+  // réception (position source capturée à l'expédition).
+
+  transferts: requirePermissionProcedure("parking.consulter")
+    .input(
+      z.object({
+        recherche: z.string().trim().max(200).optional(),
+        statut: z.enum(["EN_ATTENTE", "EN_TRANSIT", "RECU", "ANNULE"]).optional(),
+        siteId: z.number().optional(),
+        limite: z.number().min(1).max(200).default(100),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const agenceId = ctx.user.agenceId;
+      const conds = [eq(parkingTransfers.agenceId, agenceId)];
+      if (input.statut) conds.push(eq(parkingTransfers.statut, input.statut));
+      if (input.siteId) {
+        conds.push(or(eq(parkingTransfers.siteSourceId, input.siteId), eq(parkingTransfers.siteDestinationId, input.siteId))!);
+      }
+      if (input.recherche) {
+        const r = `%${input.recherche}%`;
+        conds.push(
+          or(
+            ilike(parkingVehicles.immatriculation, r),
+            ilike(parkingVehicles.marque, r),
+            ilike(parkingVehicles.modele, r),
+            ilike(parkingVehicles.clientNom, r),
+            ilike(parkingTransfers.motif, r),
+          )!,
+        );
+      }
+
+      const rows = await db
+        .select({
+          id: parkingTransfers.id,
+          statut: parkingTransfers.statut,
+          motif: parkingTransfers.motif,
+          commentaire: parkingTransfers.commentaire,
+          siteSourceId: parkingTransfers.siteSourceId,
+          siteDestinationId: parkingTransfers.siteDestinationId,
+          creeParId: parkingTransfers.creeParId,
+          expedieParId: parkingTransfers.expedieParId,
+          dateExpedition: parkingTransfers.dateExpedition,
+          recuParId: parkingTransfers.recuParId,
+          dateReception: parkingTransfers.dateReception,
+          annuleParId: parkingTransfers.annuleParId,
+          dateAnnulation: parkingTransfers.dateAnnulation,
+          motifAnnulation: parkingTransfers.motifAnnulation,
+          createdAt: parkingTransfers.createdAt,
+          vehicleId: parkingVehicles.id,
+          numRegistre: parkingVehicles.numRegistre,
+          immatriculation: parkingVehicles.immatriculation,
+          marque: parkingVehicles.marque,
+          modele: parkingVehicles.modele,
+          clientNom: parkingVehicles.clientNom,
+          statutVehicule: parkingVehicles.statut,
+        })
+        .from(parkingTransfers)
+        .innerJoin(parkingVehicles, eq(parkingTransfers.vehicleId, parkingVehicles.id))
+        .where(and(...conds))
+        .orderBy(desc(parkingTransfers.createdAt))
+        .limit(input.limite);
+
+      const siteIds = [...new Set(rows.flatMap((r) => [r.siteSourceId, r.siteDestinationId]))];
+      const userIds = [
+        ...new Set(
+          rows
+            .flatMap((r) => [r.creeParId, r.expedieParId, r.recuParId, r.annuleParId])
+            .filter((x): x is number => x != null),
+        ),
+      ];
+      const [sites, users] = await Promise.all([
+        siteIds.length
+          ? db.select({ id: parkingSites.id, code: parkingSites.code, nom: parkingSites.nom }).from(parkingSites).where(inArray(parkingSites.id, siteIds))
+          : Promise.resolve([]),
+        userIds.length
+          ? db.select({ id: utilisateurs.id, nom: utilisateurs.nom, prenom: utilisateurs.prenom }).from(utilisateurs).where(inArray(utilisateurs.id, userIds))
+          : Promise.resolve([]),
+      ]);
+      const siteById = new Map(sites.map((s) => [s.id, s]));
+      const userById = new Map(users.map((u) => [u.id, u]));
+
+      const acteur = (id: number | null) =>
+        id != null && userById.has(id)
+          ? { id, nom: [userById.get(id)!.prenom, userById.get(id)!.nom].filter(Boolean).join(" ") }
+          : null;
+
+      return rows.map((r) => ({
+        ...r,
+        siteSource: siteById.get(r.siteSourceId) ?? null,
+        siteDestination: siteById.get(r.siteDestinationId) ?? null,
+        creePar: acteur(r.creeParId),
+        expediePar: acteur(r.expedieParId),
+        recuPar: acteur(r.recuParId),
+        annulePar: acteur(r.annuleParId),
+      }));
+    }),
+
+  transfertCreer: requirePermissionProcedure("parking.transfert.creer")
+    .input(
+      z.object({
+        vehicleId: z.number(),
+        siteDestinationId: z.number(),
+        motif: z.string().trim().min(3).max(2000),
+        commentaire: z.string().trim().max(2000).nullish(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const agenceId = ctx.user.agenceId;
+      const [vehicle] = await db
+        .select()
+        .from(parkingVehicles)
+        .where(and(eq(parkingVehicles.id, input.vehicleId), eq(parkingVehicles.agenceId, agenceId)))
+        .limit(1);
+      if (!vehicle) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
+      if (vehicle.statut === "SORTI") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Ce véhicule est déjà sorti du parking." });
+      }
+      if (vehicle.siteId == null) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Véhicule non affecté à un site : impossible de déterminer la source du transfert.",
+        });
+      }
+      if (input.siteDestinationId === vehicle.siteId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Le site de destination est identique au site source." });
+      }
+      const [dest] = await db
+        .select()
+        .from(parkingSites)
+        .where(and(eq(parkingSites.id, input.siteDestinationId), eq(parkingSites.agenceId, agenceId)))
+        .limit(1);
+      if (!dest) throw new TRPCError({ code: "NOT_FOUND", message: "Site de destination introuvable." });
+      if (!dest.isActive) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Le site destination « ${dest.code} » est inactif.` });
+      }
+      const [source] = await db
+        .select()
+        .from(parkingSites)
+        .where(and(eq(parkingSites.id, vehicle.siteId), eq(parkingSites.agenceId, agenceId)))
+        .limit(1);
+      if (!source) throw new TRPCError({ code: "NOT_FOUND", message: "Site source introuvable." });
+
+      const [ouvert] = await db
+        .select({ id: parkingTransfers.id })
+        .from(parkingTransfers)
+        .where(
+          and(
+            eq(parkingTransfers.vehicleId, vehicle.id),
+            inArray(parkingTransfers.statut, ["EN_ATTENTE", "EN_TRANSIT"]),
+          ),
+        )
+        .limit(1);
+      if (ouvert) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: `Un transfert est déjà en cours pour ce véhicule (réf. #${ouvert.id}).`,
+        });
+      }
+
+      const [created] = await db
+        .insert(parkingTransfers)
+        .values({
+          agenceId,
+          vehicleId: vehicle.id,
+          siteSourceId: source.id,
+          siteDestinationId: dest.id,
+          statut: "EN_ATTENTE",
+          motif: input.motif,
+          commentaire: input.commentaire ?? null,
+          creeParId: Number(ctx.user.id),
+        } as any)
+        .returning({ id: parkingTransfers.id });
+      return { id: created.id, ok: true };
+    }),
+
+  transfertExpedier: requirePermissionProcedure("parking.transfert.creer")
+    .input(z.object({ transferId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const agenceId = ctx.user.agenceId;
+      const [tr] = await db
+        .select()
+        .from(parkingTransfers)
+        .where(and(eq(parkingTransfers.id, input.transferId), eq(parkingTransfers.agenceId, agenceId)))
+        .limit(1);
+      if (!tr) throw new TRPCError({ code: "NOT_FOUND", message: "Transfert introuvable." });
+      if (tr.statut !== "EN_ATTENTE") {
+        throw new TRPCError({ code: "CONFLICT", message: `Transfert non expédiable (statut ${tr.statut}).` });
+      }
+      const [vehicle] = await db
+        .select()
+        .from(parkingVehicles)
+        .where(eq(parkingVehicles.id, tr.vehicleId))
+        .limit(1);
+      if (!vehicle) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
+      if (vehicle.statut === "SORTI") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Ce véhicule est sorti du parking : annulez le transfert." });
+      }
+
+      await db.transaction(async (tx) => {
+        // Le véhicule quitte son emplacement : spot libéré, position vidée,
+        // site source conservé (visible dans « à placer » de la source).
+        await libererSpot(tx, vehicle.spotId);
+        await tx
+          .update(parkingVehicles)
+          .set({
+            statut: "A_TRANSFERER",
+            zoneId: null,
+            spotId: null,
+            centreX: null,
+            centreY: null,
+            rotation: 0,
+            updatedAt: new Date(),
+            dateDerniereAction: new Date(),
+          } as any)
+          .where(eq(parkingVehicles.id, vehicle.id));
+        await tx
+          .update(parkingTransfers)
+          .set({
+            statut: "EN_TRANSIT",
+            statutPrecedent: vehicle.statut,
+            zoneOrigineId: vehicle.zoneId,
+            positionOrigineX: vehicle.centreX,
+            positionOrigineY: vehicle.centreY,
+            expedieParId: Number(ctx.user.id),
+            dateExpedition: new Date(),
+            updatedAt: new Date(),
+          } as any)
+          .where(eq(parkingTransfers.id, tr.id));
+      });
+      return { id: tr.id, ok: true };
+    }),
+
+  transfertRecevoir: requirePermissionProcedure("parking.transfert.recevoir")
+    .input(z.object({ transferId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const agenceId = ctx.user.agenceId;
+      const [tr] = await db
+        .select()
+        .from(parkingTransfers)
+        .where(and(eq(parkingTransfers.id, input.transferId), eq(parkingTransfers.agenceId, agenceId)))
+        .limit(1);
+      if (!tr) throw new TRPCError({ code: "NOT_FOUND", message: "Transfert introuvable." });
+      if (tr.statut !== "EN_TRANSIT") {
+        throw new TRPCError({ code: "CONFLICT", message: `Transfert non réceptionnable (statut ${tr.statut}).` });
+      }
+      const [vehicle] = await db
+        .select()
+        .from(parkingVehicles)
+        .where(eq(parkingVehicles.id, tr.vehicleId))
+        .limit(1);
+      if (!vehicle) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
+      if (vehicle.statut === "SORTI") {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Ce véhicule est sorti pendant le transfert : annulez le transfert.",
+        });
+      }
+      const [sourceRows, destRows] = await Promise.all([
+        db.select({ id: parkingSites.id, code: parkingSites.code }).from(parkingSites).where(eq(parkingSites.id, tr.siteSourceId)).limit(1),
+        db.select({ id: parkingSites.id, code: parkingSites.code }).from(parkingSites).where(eq(parkingSites.id, tr.siteDestinationId)).limit(1),
+      ]);
+      const source = sourceRows[0];
+      const dest = destRows[0];
+
+      await db.transaction(async (tx) => {
+        await tx.insert(parkingMovements).values({
+          agenceId,
+          vehicleId: tr.vehicleId,
+          userId: Number(ctx.user.id),
+          type: "TRANSFERT",
+          siteOrigineId: tr.siteSourceId,
+          zoneOrigineId: tr.zoneOrigineId,
+          positionOrigineX: tr.positionOrigineX,
+          positionOrigineY: tr.positionOrigineY,
+          siteDestinationId: tr.siteDestinationId,
+          zoneDestinationId: null,
+          positionDestinationX: null,
+          positionDestinationY: null,
+          motif: tr.motif,
+          commentaire: `Transfert ${source?.code ?? "?"} → ${dest?.code ?? "?"} (réf. ${tr.id})`,
+        } as any);
+        // Arrivée sur le site destination, non positionné : à placer via la carte.
+        await tx
+          .update(parkingVehicles)
+          .set({
+            siteId: tr.siteDestinationId,
+            zoneId: null,
+            spotId: null,
+            centreX: null,
+            centreY: null,
+            rotation: 0,
+            statut: "EN_PARKING",
+            updatedAt: new Date(),
+            dateDerniereAction: new Date(),
+          } as any)
+          .where(eq(parkingVehicles.id, tr.vehicleId));
+        await tx
+          .update(parkingTransfers)
+          .set({
+            statut: "RECU",
+            recuParId: Number(ctx.user.id),
+            dateReception: new Date(),
+            updatedAt: new Date(),
+          } as any)
+          .where(eq(parkingTransfers.id, tr.id));
+        await projeterImmoDepuisParking(tx, vehicle.vehiculeId, "EN_PARKING");
+      });
+      return { id: tr.id, ok: true };
+    }),
+
+  transfertAnnuler: requirePermissionProcedure("parking.transfert.creer")
+    .input(
+      z.object({
+        transferId: z.number(),
+        motifAnnulation: z.string().trim().min(3).max(2000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const agenceId = ctx.user.agenceId;
+      const [tr] = await db
+        .select()
+        .from(parkingTransfers)
+        .where(and(eq(parkingTransfers.id, input.transferId), eq(parkingTransfers.agenceId, agenceId)))
+        .limit(1);
+      if (!tr) throw new TRPCError({ code: "NOT_FOUND", message: "Transfert introuvable." });
+      if (tr.statut !== "EN_ATTENTE" && tr.statut !== "EN_TRANSIT") {
+        throw new TRPCError({ code: "CONFLICT", message: `Transfert non annulable (statut ${tr.statut}).` });
+      }
+
+      await db.transaction(async (tx) => {
+        if (tr.statut === "EN_TRANSIT") {
+          // Restaure l'état métier capturé à l'expédition (le véhicule reste
+          // détaché sur le site source, visible dans « à placer »).
+          const [vehicle] = await tx
+            .select()
+            .from(parkingVehicles)
+            .where(eq(parkingVehicles.id, tr.vehicleId))
+            .limit(1);
+          if (vehicle && vehicle.statut === "A_TRANSFERER") {
+            const precedent =
+              tr.statutPrecedent && tr.statutPrecedent !== "A_TRANSFERER" ? tr.statutPrecedent : "EN_PARKING";
+            await tx
+              .update(parkingVehicles)
+              .set({
+                statut: precedent,
+                updatedAt: new Date(),
+                dateDerniereAction: new Date(),
+              } as any)
+              .where(eq(parkingVehicles.id, tr.vehicleId));
+            await projeterImmoDepuisParking(tx, vehicle.vehiculeId, precedent);
+          }
+        }
+        await tx
+          .update(parkingTransfers)
+          .set({
+            statut: "ANNULE",
+            annuleParId: Number(ctx.user.id),
+            dateAnnulation: new Date(),
+            motifAnnulation: input.motifAnnulation,
+            updatedAt: new Date(),
+          } as any)
+          .where(eq(parkingTransfers.id, tr.id));
+      });
+      return { id: tr.id, ok: true };
+    }),
+
+  // ── Lot 2 — Espaces & Sites (consultation chiffrée + édition des sites) ─────
+  espaces: requirePermissionProcedure("parking.consulter").query(async ({ ctx }) => {
+    const agenceId = ctx.user.agenceId;
+    const [sites, zonesAll, spotsAll, vehiculesAll] = await Promise.all([
+      db
+        .select()
+        .from(parkingSites)
+        .where(eq(parkingSites.agenceId, agenceId))
+        .orderBy(desc(parkingSites.isPrimary), asc(parkingSites.id)),
+      db
+        .select({ id: parkingZones.id, siteId: parkingZones.siteId, isActive: parkingZones.isActive })
+        .from(parkingZones)
+        .where(eq(parkingZones.agenceId, agenceId)),
+      db
+        .select({
+          id: parkingSpots.id,
+          siteId: parkingSpots.siteId,
+          statut: parkingSpots.statut,
+          bloque: parkingSpots.bloque,
+          isActive: parkingSpots.isActive,
+        })
+        .from(parkingSpots)
+        .where(eq(parkingSpots.agenceId, agenceId)),
+      db
+        .select({
+          id: parkingVehicles.id,
+          siteId: parkingVehicles.siteId,
+          centreX: parkingVehicles.centreX,
+        })
+        .from(parkingVehicles)
+        .where(and(eq(parkingVehicles.agenceId, agenceId), sql`${parkingVehicles.statut} <> 'SORTI'`)),
+    ]);
+
+    const stats = sites.map((s) => {
+      const zones = zonesAll.filter((z) => z.siteId === s.id);
+      const spots = spotsAll.filter((sp) => sp.siteId === s.id);
+      const vehicules = vehiculesAll.filter((v) => v.siteId === s.id);
+      return {
+        id: s.id,
+        code: s.code,
+        nom: s.nom,
+        description: s.description,
+        planLargeur: s.planLargeur ?? 100,
+        planHauteur: s.planHauteur ?? 75,
+        isPrimary: s.isPrimary ?? false,
+        isActive: s.isActive ?? true,
+        nbZones: zones.filter((z) => z.isActive).length,
+        nbSpots: spots.filter((sp) => sp.isActive).length,
+        nbSpotsBloques: spots.filter((sp) => sp.bloque).length,
+        nbVehicules: vehicules.length,
+        nbAPositionner: vehicules.filter((v) => v.centreX == null).length,
+      };
+    });
+
+    return {
+      sites: stats,
+      vehiculesNonPositionnes: vehiculesAll.filter((v) => v.siteId == null).length,
+      totalVehicules: vehiculesAll.length,
+    };
+  }),
+
+  siteModifier: requirePermissionProcedure("parking.site.gerer")
+    .input(
+      z.object({
+        siteId: z.number(),
+        nom: z.string().trim().min(2).max(255),
+        description: z.string().trim().max(2000).nullish(),
+        isActive: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const agenceId = ctx.user.agenceId;
+      const [site] = await db
+        .select()
+        .from(parkingSites)
+        .where(and(eq(parkingSites.id, input.siteId), eq(parkingSites.agenceId, agenceId)))
+        .limit(1);
+      if (!site) throw new TRPCError({ code: "NOT_FOUND", message: "Site introuvable." });
+
+      if (input.isActive === false && (site.isActive ?? true)) {
+        const actifs = await db
+          .select({ id: parkingSites.id })
+          .from(parkingSites)
+          .where(and(eq(parkingSites.agenceId, agenceId), eq(parkingSites.isActive, true)));
+        if (actifs.length <= 1) {
+          throw new TRPCError({ code: "CONFLICT", message: "Au moins un site doit rester actif." });
+        }
+      }
+
+      await db
+        .update(parkingSites)
+        .set({
+          nom: input.nom,
+          description: input.description !== undefined ? input.description : site.description,
+          isActive: input.isActive !== undefined ? input.isActive : site.isActive,
+          updatedAt: new Date(),
+        } as any)
+        .where(eq(parkingSites.id, site.id));
+      return { id: site.id, ok: true };
     }),
 });

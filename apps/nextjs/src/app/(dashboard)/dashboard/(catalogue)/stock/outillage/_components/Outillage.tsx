@@ -64,7 +64,7 @@ export function Outillage() {
   }, { refetchInterval: 30_000 });
   const { data: techniciens } = api.rh.roster.useQuery({ statut: "actif" });
   const { data: histo } = api.outillage.historiquePrets.useQuery({ limit: 20 }, { refetchInterval: 30_000 });
-  const { data: orsEnCours } = api.or.getDashboard.useQuery(undefined, { select: (d: any) => (d?.ors ?? []).filter((o: any) => ["EN_COURS", "EN_ATTENTE", "DIAGNOSTIC"].includes(o.statut ?? "")) });
+  const { data: orsEnCours } = api.or.getDashboard.useQuery(undefined, { select: (d: any) => (d?.parc ?? []) });
 
   const preter = api.outillage.preter.useMutation({
     onSuccess: () => { toast.success("Outil prêté"); utils.outillage.list.invalidate(); utils.outillage.historiquePrets.invalidate(); utils.outillage.pretsEnCours.invalidate(); setShowPret(null); setTechPret(0); setMotifPret(""); setDateRetourPret(""); setOrPret(0); },

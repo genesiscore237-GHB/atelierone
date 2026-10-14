@@ -1701,6 +1701,7 @@ export function construireMethodologie(
 export interface FiltresRapport extends FiltresSituation {
   typesEvenement?: TypeEvenementRapport[];
   includeEvenements?: boolean;
+  columns?: string[];
 }
 
 export interface ChargeRapport {

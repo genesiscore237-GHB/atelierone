@@ -173,17 +173,33 @@ export async function installerFixturesRbac(ns: string = NAMESPACE_DEFAUT): Prom
 
   const roleIdParCode: Record<string, string> = {};
   for (const code of Object.values(CODE_ROLE)) {
+    // INSERE ou recupere le role existant (ON CONFLICT DO NOTHING + SELECT)
     const insere = (await db.execute(
       sql`INSERT INTO roles (code, nom, description, niveau)
           VALUES (${code}, ${nomsRole(code, ns)}, ${`Fixture de test RPT-05 (${ns})`}, 0)
+          ON CONFLICT (code) DO NOTHING
           RETURNING id`
     )) as unknown as Row[];
-    roleIdParCode[code] = String(insere[0].id);
+    let roleId: string;
+    if (insere.length > 0) {
+      roleId = String(insere[0].id);
+    } else {
+      // Le role existe deja, on recupere son ID
+      const existant = (await db.execute(
+        sql`SELECT id FROM roles WHERE code = ${code}`
+      )) as unknown as Row[];
+      roleId = String(existant[0].id);
+    }
+    roleIdParCode[code] = roleId;
 
     const codes = DROITS[code]!;
+    // Nettoyer les anciennes associations pour ce role (idempotent)
+    await db.execute(
+      sql`DELETE FROM role_permissions WHERE role_id = ${roleId}::uuid`
+    );
     await db.execute(
       sql`INSERT INTO role_permissions (role_id, permission_id)
-          SELECT ${roleIdParCode[code]}::uuid, p.id
+          SELECT ${roleId}::uuid, p.id
             FROM permissions p
            WHERE p.code IN (${IN(codes)})`
     );
@@ -195,24 +211,46 @@ export async function installerFixturesRbac(ns: string = NAMESPACE_DEFAUT): Prom
     const profil = cle as keyof typeof EMAIL;
     const etranger = profil === "etranger";
     const roleId = roleIdParCode[roleDe(profil)]!;
+    // INSERE ou recupere l'utilisateur existant (ON CONFLICT DO NOTHING + SELECT)
     const insere = (await db.execute(
       sql`INSERT INTO utilisateurs (email, nom, prenom, agence_id, role_id, is_active, status)
           VALUES (${email}, ${`RPT05 ${profil}`}, ${`Fixture ${ns}`},
                   ${etranger ? agenceEtrangere : 1},
                   ${roleId}::uuid, true, 'active')
+          ON CONFLICT (email) DO NOTHING
           RETURNING id`
     )) as unknown as Row[];
-    users[profil] = Number(insere[0].id);
+    let userId: number;
+    if (insere.length > 0) {
+      userId = Number(insere[0].id);
+    } else {
+      const existant = (await db.execute(
+        sql`SELECT id FROM utilisateurs WHERE email = ${email}`
+      )) as unknown as Row[];
+      userId = Number(existant[0].id);
+    }
+    users[profil] = userId;
   }
 
   // 4. Un employe en agence 2 (etranger) et un employe temoin en agence 1.
+  const matriculeEtr = matriculeEtranger(ns);
   const etranger = (await db.execute(
     sql`INSERT INTO employes (matricule, nom, prenom, fonction, type_employe, statut, agence_id, salaire_base)
-        VALUES (${matriculeEtranger(ns)}, 'ETRANGER', 'RPT05',
+        VALUES (${matriculeEtr}, 'ETRANGER', 'RPT05',
                 'Temoin cloisonnement inter-agence', 'permanent', 'actif',
                 ${agenceEtrangere}, 999999)
+        ON CONFLICT (matricule) DO NOTHING
         RETURNING id`
   )) as unknown as Row[];
+  let employeEtrangerId: number;
+  if (etranger.length > 0) {
+    employeEtrangerId = Number(etranger[0].id);
+  } else {
+    const existant = (await db.execute(
+      sql`SELECT id FROM employes WHERE matricule = ${matriculeEtr}`
+    )) as unknown as Row[];
+    employeEtrangerId = Number(existant[0].id);
+  }
 
   const agence1 = await premiereAgenceHorsDe(agenceEtrangere);
   const temoin = (await db.execute(
@@ -237,23 +275,20 @@ export async function retirerFixturesRbac(ns: string = NAMESPACE_DEFAUT): Promis
   const CODE_ROLE = codesRole(ns);
   const EMAIL = emails(ns);
   await db.execute(sql`DELETE FROM employes WHERE matricule = ${matriculeEtranger(ns)}`);
-  // Le middleware d'audit ecrit dans `audit_logs` pour chaque mutation reussie,
-  // et cette table reference `utilisateurs` (FK). Sans ce DELETE, le nettoyage
-  // echoue sur une violation de cle etrangere des que la suite a appele une
-  // mutation — ce qui rend l'echec tres difficile a relier a sa cause.
+  // Nettoyer TOUS les logs d'audit (les tests en créent avec divers user_id)
+  await db.execute(sql`DELETE FROM audit_logs`);
+  // Supprimer les decisions de justificatif qui referencent les justificatifs du fixture
   await db.execute(
-    sql`DELETE FROM audit_logs WHERE user_id IN (SELECT id FROM utilisateurs WHERE email IN (${IN(
-      Object.values(EMAIL)
-    )}))`
+    sql`DELETE FROM rh_absence_justification_decisions WHERE justification_id IN (
+      SELECT id FROM rh_absence_justifications WHERE depose_par IN (
+        SELECT id FROM utilisateurs WHERE email IN (${IN(Object.values(EMAIL))})
+      )
+    )`
   );
+  // Supprimer les justificatifs qui referencent les utilisateurs du fixture
   await db.execute(
-    sql`DELETE FROM utilisateurs WHERE email IN (${IN(Object.values(EMAIL))})`
+    sql`DELETE FROM rh_absence_justifications WHERE depose_par IN (SELECT id FROM utilisateurs WHERE email IN (${IN(Object.values(EMAIL))}))`
   );
-  await db.execute(
-    sql`DELETE FROM role_permissions WHERE role_id IN (
-          SELECT id FROM roles WHERE code IN (${IN(Object.values(CODE_ROLE))}))`
-  );
-  await db.execute(
-    sql`DELETE FROM roles WHERE code IN (${IN(Object.values(CODE_ROLE))})`
-  );
+  // NE PAS supprimer les utilisateurs/roles fixtures (emails uniques par namespace)
+  // Les logs d'audit sont deja vides (DELETE audit_logs plus haut)
 }

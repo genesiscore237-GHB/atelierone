@@ -41,21 +41,60 @@ export function genererReferenceFacture(sequence: number, date = new Date()): st
 }
 
 /**
- * VERROU ANTI-DOUBLON FAC- (P2-11).
+ * Namespaces de séquence (T0.5, Lot 0).
  *
- * Le comptage `LIKE 'FAC-{année}-%'` n'est pas transactionnel : deux facturations
- * concurrentes peuvent générer la même référence (P1). On sérialise la
- * génération avec un verrou advisory transactionnel (`pg_advisory_xact_lock`),
- * clé par (agence, année), relâché automatiquement au commit/rollback.
- * À appeler en tout début de transaction, AVANT le comptage.
+ * Les références `ventes.reference`, `achats.reference` et
+ * `ordres_reparation.numero` sont UNIQUEMENT GLOBALES en base (contrainte
+ * `unique()` sans agence) : la séquence et son verrou doivent donc être
+ * globaux aussi. Une clé par (namespace, année) — jamais par agence, sinon
+ * deux agences concurrentes génèrent la même référence (unique violation).
  */
-export function verrouillerSequenceFacture(
+export type NamespaceSequence = "FAC" | "OR" | "BC";
+
+/**
+ * VERROU ANTI-DOUBLON DE SÉQUENCE (T0.5).
+ *
+ * Le comptage / MAX par préfixe n'est pas transactionnel : deux créations
+ * concurrentes peuvent générer la même référence. On sérialise avec un verrou
+ * advisory transactionnel (`pg_advisory_xact_lock`), clé par (namespace,
+ * année), relâché automatiquement au commit/rollback.
+ * À appeler en tout début de transaction, AVANT le calcul de séquence.
+ */
+export function verrouillerSequence(
   exec: { execute(sql: SQL): Promise<unknown> },
-  agenceId: number,
+  namespace: NamespaceSequence,
   annee = new Date().getFullYear(),
 ): Promise<unknown> {
-  const cle = BigInt(agenceId) * 100_000n + BigInt(annee);
+  const ns = namespace === "FAC" ? 0n : namespace === "OR" ? 1n : 2n;
+  const cle = ns * 100_000n + BigInt(annee);
   return exec.execute(sql`select pg_advisory_xact_lock(${cle})`);
+}
+
+/**
+ * Prochaine valeur d'une séquence par préfixe (T0.5).
+ *
+ * MAX des suffixes numériques + 1, là où `count(*) + 1` réutilisait un numéro
+ * déjà attribué dès qu'une ligne avait été supprimée (trou dans la suite).
+ * Seules les références strictement conformes `{prefixe}{chiffres}` sont
+ * candidates — un préfixe qui aurait glissé dans la colonne ne fait pas
+ * tomber le cast.
+ * À appeler APRÈS `verrouillerSequence`, dans la même transaction.
+ */
+export async function prochaineSequence(
+  // `any` volontaire : drizzle `db` et `tx` partagent le shape select().from()
+  // mais pas exactement le même type de builder.
+  exec: any,
+  table: any,
+  colonne: any,
+  prefixe: string,
+): Promise<number> {
+  const rows = (await exec
+    .select({
+      max: sql<number>`COALESCE(MAX(CASE WHEN ${colonne} ~ ${prefixe + "[0-9]+$"} THEN regexp_replace(${colonne}, ${prefixe}, '')::int END), 0)::int`,
+    })
+    .from(table)) as { max: number | string | null }[];
+  const row = rows[0];
+  return Number(row?.max ?? 0) + 1;
 }
 
 /** Statuts d'OR facturables. */

@@ -15,6 +15,7 @@ import {
   clients,
   ventes,
   ventesLignes,
+  produits,
 } from "@atelierone/db";
 import { eq, and, desc, sql, gte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -40,7 +41,83 @@ const fenetreDepuis = (periode: string): string => {
   const jours = PERIODE_JOURS[periode] ?? 90;
   return new Date(Date.now() - jours * 86400000).toISOString().slice(0, 10);
 };
-const jourStr = (v: string | Date): string => (typeof v === "string" ? v.slice(0, 10) : v.toISOString().slice(0, 10));
+const jourStr = (v: string | Date | null | undefined): string => {
+  if (v == null) return "";
+  return typeof v === "string" ? v.slice(0, 10) : v.toISOString().slice(0, 10);
+};
+
+/**
+ * Calcule la santé garage (KPIs, score, répartitions, règles qualité) —
+ * **pur**, sans aucune écriture. Partagé par le GET `getSanteGarage` et la
+ * mutation `evaluerReglesQualite` (qui, elle, insère les notifications E1).
+ */
+async function calculerSanteGarage(agenceId: number, periode: string) {
+  const debut = fenetreDepuis(periode);
+
+  const cibles = await db.select().from(kpiCibles).where(eq(kpiCibles.agenceId, agenceId));
+  const cibleMap = new Map(cibles.map((c) => [c.code, c]));
+
+  const records = (await chargerRecords(agenceId)) as any[];
+  const actifs = records.filter((o) => o.statut !== "ANNULE" && jourStr(o.dateOuverture) >= debut);
+  const livresPeriode = records.filter((o) => o.statut === "LIVRE" && o.dateCloture && jourStr(o.dateCloture) >= debut);
+  const savPeriode = records.filter((o) => o.savOrigineOrId && jourStr(o.createdAt) >= debut);
+  const demandes = await db.select({ statut: orDemandesPieces.statut }).from(orDemandesPieces).innerJoin(ordresReparation, eq(orDemandesPieces.orId, ordresReparation.id)).where(eq(ordresReparation.agenceId, agenceId));
+
+  const ponctualité = respectPromesse(livresPeriode);
+  const lead = leadTimeMoyenJours(livresPeriode);
+  const retard = retardMoyenJours(livresPeriode);
+  const diag = delaiDiagnosticMoyenJours(records.filter((o) => o.dateDiagSoumis && jourStr(o.dateOuverture) >= debut));
+  const ftq = firstTimeQuality(livresPeriode);
+  const comebacks = analyseComebacks(savPeriode, records.filter((o) => !o.savOrigineOrId));
+  const appro = fiabiliteAppro(demandes);
+  const notes = livresPeriode.filter((o) => o.satisfactionNote != null).map((o) => Number(o.satisfactionNote));
+  const satisf = notes.length ? Math.round((notes.reduce((s, n) => s + n, 0) / notes.length) * 100) / 100 : null;
+
+  const c = (code: string): any => cibleMap.get(code);
+  const val = (code: string) =>
+    code === "PONCTUALITE" ? ponctualité.pourcent
+    : code === "FTQ" ? ftq
+    : code === "TAUX_RETOUR_SAV" ? comebacks.tauxSurLivres
+    : code === "RAPIDITE_DIAG_JOURS" ? diag
+    : code === "FIABILITE_APPRO" ? appro
+    : code === "SATISFACTION_CLIENT" ? satisf
+    : null;
+
+  const kpis = ["PONCTUALITE", "FTQ", "TAUX_RETOUR_SAV", "RAPIDITE_DIAG_JOURS", "FIABILITE_APPRO", "SATISFACTION_CLIENT"].map((code) => {
+    const cb = c(code);
+    const valeur = val(code);
+    const statut = cb ? statutKPI(valeur, Number(cb.cible), cb.seuilOrange != null ? Number(cb.seuilOrange) : null, cb.seuilRouge != null ? Number(cb.seuilRouge) : null, (cb.sens as "HAUT" | "BAS") ?? "HAUT") : "SANS_DATA";
+    return { code, valeur, cible: cb ? Number(cb.cible) : null, unite: cb?.unite ?? "%", sens: cb?.sens ?? "HAUT", statut };
+  });
+
+  // Règles décisionnelles (calcul pur — l'insertion des notifications est
+  // déléguée à la mutation evaluerReglesQualite, jamais à un GET).
+  const regles: Array<{ type: string; titre: string; message: string }> = [];
+  if (comebacks.total > 0 && comebacks.malfaçonOuDiagnostic >= Math.ceil(comebacks.total / 2)) {
+    regles.push({ type: "REGLE_QUALITE", titre: "Alerte Qualité", message: `${comebacks.malfaçonOuDiagnostic} comeback(s) imputable(s) à une malfaçon ou un diagnostic erroné — analyser techniciens et types d'interventions concernés.` });
+  }
+  const cibleDiag = c("RAPIDITE_DIAG_JOURS");
+  if (diag != null && cibleDiag && diag > Number(cibleDiag.cible)) {
+    regles.push({ type: "REGLE_DIAGNOSTIC", titre: "Délai de diagnostic au-dessus de la cible", message: `Délai moyen ${diag} j > cible ${Number(cibleDiag.cible)} j — formation ou profil spécialisé requis sur la famille concernée.` });
+  }
+
+  const sante = scoreSante(kpis.map((k) => ({ code: k.code, statut: k.statut as "VERT" | "ORANGE" | "ROUGE" | "SANS_DATA" })));
+
+  const repPriorite = ["P1", "P2", "P3", "P4"].map((p) => ({ priorite: p, nombre: actifs.filter((o) => o.priorite === p).length }));
+  const repStatut = [
+    ["EN_ATTENTE_DIAGNOSTIC", "En attente diagnostic"], ["EN_ATTENTE_VALIDATION_DIAGNOSTIC", "Diagnostic à valider"],
+    ["EN_COURS", "En cours"], ["EN_ATTENTE_PIECES", "En attente pièces"], ["EN_ATTENTE_VALIDATION", "En attente validation"],
+    ["CONTROLE_QUALITE", "Contrôle qualité"], ["PRET_A_LIVRER", "Prêt à livrer"], ["BLOQUE", "Bloqué"],
+  ].map(([s, libelle]: any) => ({ statut: s, libelle, nombre: actifs.filter((o) => o.statut === s).length })).filter((s) => s.nombre > 0);
+
+  const topAnciens = actifs.map((o) => ({
+    id: o.id, numero: o.numero, immatriculation: o.immatriculation, clientDisplay: o.clientDisplay ?? "",
+    priorite: o.priorite,
+    joursImmobilisation: Math.max(0, Math.floor((Date.now() - new Date(o.dateOuverture).getTime()) / 86400000)),
+  })).sort((a, b) => b.joursImmobilisation - a.joursImmobilisation).slice(0, 5);
+
+  return { periode, kpis, score: sante, regles, repPriorite, repStatut, topAnciens, totalActifs: actifs.length, totalLivrePeriode: livresPeriode.length };
+}
 
 /** Charge les OR de l'agence enrichis des horodatages dérivés de l'historique. */
 async function chargerRecords(agenceId: number) {
@@ -61,6 +138,7 @@ async function chargerRecords(agenceId: number) {
       dateOuverture: ordresReparation.dateOuverture,
       datePromesse: ordresReparation.datePromesse,
       dateCloture: ordresReparation.dateCloture,
+      createdAt: ordresReparation.createdAt,
       savOrigineOrId: ordresReparation.savOrigineOrId,
       motifRetourSAV: ordresReparation.motifRetourSAV,
       responsableTechnicienId: ordresReparation.responsableTechnicienId,
@@ -113,75 +191,30 @@ export const atelierKpiRouter = createTRPCRouter({
     .input(z.object({ periode: z.enum(["jour", "semaine", "mois", "trimestre"]).default("mois") }).optional())
     .query(async ({ ctx, input }) => {
       const periode = input?.periode ?? "mois";
-      const debut = fenetreDepuis(periode);
+      const sante = await calculerSanteGarage(ctx.user.agenceId, periode);
+      return { ...sante, reglesGenerees: sante.regles.length };
+    }),
 
-      const cibles = await db.select().from(kpiCibles).where(eq(kpiCibles.agenceId, ctx.user.agenceId));
-      const cibleMap = new Map(cibles.map((c) => [c.code, c]));
-
-      const records = (await chargerRecords(ctx.user.agenceId)) as any[];
-      const actifs = records.filter((o) => o.statut !== "ANNULE" && jourStr(o.dateOuverture) >= debut);
-      const livresPeriode = records.filter((o) => o.statut === "LIVRE" && o.dateCloture && jourStr(o.dateCloture) >= debut);
-            const savPeriode = records.filter((o) => o.savOrigineOrId && jourStr(o.createdAt) >= debut);
-      const demandes = await db.select({ statut: orDemandesPieces.statut }).from(orDemandesPieces).innerJoin(ordresReparation, eq(orDemandesPieces.orId, ordresReparation.id)).where(eq(ordresReparation.agenceId, ctx.user.agenceId));
-
-      const ponctualité = respectPromesse(livresPeriode);
-      const lead = leadTimeMoyenJours(livresPeriode);
-      const retard = retardMoyenJours(livresPeriode);
-      const diag = delaiDiagnosticMoyenJours(records.filter((o) => o.dateDiagSoumis && jourStr(o.dateOuverture) >= debut));
-      const ftq = firstTimeQuality(livresPeriode);
-      const comebacks = analyseComebacks(savPeriode, records.filter((o) => !o.savOrigineOrId));
-      const appro = fiabiliteAppro(demandes);
-      const notes = livresPeriode.filter((o) => o.satisfactionNote != null).map((o) => Number(o.satisfactionNote));
-      const satisf = notes.length ? Math.round((notes.reduce((s, n) => s + n, 0) / notes.length) * 100) / 100 : null;
-
-      const c = (code: string): any => cibleMap.get(code);
-      const val = (code: string) =>
-        code === "PONCTUALITE" ? ponctualité.pourcent
-        : code === "FTQ" ? ftq
-        : code === "TAUX_RETOUR_SAV" ? comebacks.tauxSurLivres
-        : code === "RAPIDITE_DIAG_JOURS" ? diag
-        : code === "FIABILITE_APPRO" ? appro
-        : code === "SATISFACTION_CLIENT" ? satisf
-        : null;
-
-      const kpis = ["PONCTUALITE", "FTQ", "TAUX_RETOUR_SAV", "RAPIDITE_DIAG_JOURS", "FIABILITE_APPRO", "SATISFACTION_CLIENT"].map((code) => {
-        const cb = c(code);
-        const valeur = val(code);
-        const statut = cb ? statutKPI(valeur, Number(cb.cible), cb.seuilOrange != null ? Number(cb.seuilOrange) : null, cb.seuilRouge != null ? Number(cb.seuilRouge) : null, (cb.sens as "HAUT" | "BAS") ?? "HAUT") : "SANS_DATA";
-        return { code, valeur, cible: cb ? Number(cb.cible) : null, unite: cb?.unite ?? "%", sens: cb?.sens ?? "HAUT", statut };
-      });
-
-      // Règles décisionnelles → notifications E1 (sans spam : une non-lue max par règle)
-      const regles: Array<{ type: string; titre: string; message: string }> = [];
-      if (comebacks.total > 0 && comebacks.malfaçonOuDiagnostic >= Math.ceil(comebacks.total / 2)) {
-        regles.push({ type: "REGLE_QUALITE", titre: "Alerte Qualité", message: `${comebacks.malfaçonOuDiagnostic} comeback(s) imputable(s) à une malfaçon ou un diagnostic erroné — analyser techniciens et types d'interventions concernés.` });
-      }
-      const cibleDiag = c("RAPIDITE_DIAG_JOURS");
-      if (diag != null && cibleDiag && diag > Number(cibleDiag.cible)) {
-        regles.push({ type: "REGLE_DIAGNOSTIC", titre: "Délai de diagnostic au-dessus de la cible", message: `Délai moyen ${diag} j > cible ${Number(cibleDiag.cible)} j — formation ou profil spécialisé requis sur la famille concernée.` });
-      }
+  /**
+   * Évalue les règles qualité et insère les notifications E1 correspondantes
+   * (anti-spam : une non-lue max par type). Séparée du GET pour que la lecture
+   * du dashboard reste sans effet de bord (REST : pas d'écriture dans un GET).
+   */
+  evaluerReglesQualite: requirePermissionProcedure("or.modifier")
+    .input(z.object({ periode: z.enum(["jour", "semaine", "mois", "trimestre"]).default("mois") }).optional())
+    .mutation(async ({ ctx, input }) => {
+      const periode = input?.periode ?? "mois";
+      const sante = await calculerSanteGarage(ctx.user.agenceId, periode);
       const unread = await db.select({ type: atelierNotifications.type }).from(atelierNotifications).where(and(eq(atelierNotifications.agenceId, ctx.user.agenceId), eq(atelierNotifications.lu, false)));
       const unreadTypes = new Set(unread.map((u) => u.type));
-      for (const regle of regles) {
+      let inserees = 0;
+      for (const regle of sante.regles) {
         if (!unreadTypes.has(regle.type)) {
           await db.insert(atelierNotifications).values({ agenceId: ctx.user.agenceId, type: regle.type, titre: regle.titre, message: regle.message, lu: false } as any);
+          inserees++;
         }
       }
-
-      const repPriorite = ["P1", "P2", "P3", "P4"].map((p) => ({ priorite: p, nombre: actifs.filter((o) => o.priorite === p).length }));
-      const repStatut = [
-        ["EN_ATTENTE_DIAGNOSTIC", "En attente diagnostic"], ["EN_ATTENTE_VALIDATION_DIAGNOSTIC", "Diagnostic à valider"],
-        ["EN_COURS", "En cours"], ["EN_ATTENTE_PIECES", "En attente pièces"], ["EN_ATTENTE_VALIDATION", "En attente validation"],
-        ["CONTROLE_QUALITE", "Contrôle qualité"], ["PRET_A_LIVRER", "Prêt à livrer"], ["BLOQUE", "Bloqué"],
-      ].map(([s, libelle]: any) => ({ statut: s, libelle, nombre: actifs.filter((o) => o.statut === s).length })).filter((s) => s.nombre > 0);
-
-      const topAnciens = actifs.map((o) => ({
-        id: o.id, numero: o.numero, immatriculation: o.immatriculation, clientDisplay: o.clientDisplay ?? "",
-        priorite: o.priorite,
-        joursImmobilisation: Math.max(0, Math.floor((Date.now() - new Date(o.dateOuverture).getTime()) / 86400000)),
-      })).sort((a, b) => b.joursImmobilisation - a.joursImmobilisation).slice(0, 5);
-
-      return { periode, kpis, repPriorite, repStatut, topAnciens, reglesGenerees: regles.length, totalActifs: actifs.length, totalLivrePeriode: livresPeriode.length };
+      return { regles: sante.regles.length, inserees };
     }),
 
   // ─── Vue Qualité & SAV (comebacks par motif) ───
@@ -230,13 +263,15 @@ export const atelierKpiRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const periode = input?.periode ?? "trimestre";
       const debut = fenetreDepuis(periode);
-      const records = ((await chargerRecords(ctx.user.agenceId)) as any[]).filter((o) => o.dateDiagSoumis && jourStr(o.dateOuverture) >= debut);
+      const allRecords = (await chargerRecords(ctx.user.agenceId)) as any[];
+      const records = allRecords.filter((o) => o.dateDiagSoumis && jourStr(o.dateOuverture) >= debut);
+      const renvoyeParOr = new Map(allRecords.map((o) => [o.id, !!o.renvoye]));
       const rapports = await db
         .select({ orId: orRapportsDiagnostic.orId, statut: orRapportsDiagnostic.statut })
         .from(orRapportsDiagnostic)
         .innerJoin(ordresReparation, eq(orRapportsDiagnostic.orId, ordresReparation.id))
         .where(and(eq(ordresReparation.agenceId, ctx.user.agenceId), gte(ordresReparation.createdAt, new Date(`${debut}T00:00:00`))));
-      const precision = precisionDiagnostic(rapports.map((r) => ({ statut: r.statut, renvoye: false })));
+      const precision = precisionDiagnostic(rapports.map((r) => ({ statut: r.statut, renvoye: renvoyeParOr.get(r.orId) ?? false })));
       const delais = records.map((o) => ({
         id: o.id, numero: o.numero, immatriculation: o.immatriculation, clientDisplay: o.clientDisplay ?? "",
         jours: Math.round(((new Date(o.dateDiagSoumis!).getTime() - new Date(jourStr(o.dateOuverture)).getTime()) / 86400000) * 10) / 10,
@@ -426,14 +461,24 @@ export const atelierKpiRouter = createTRPCRouter({
       let totalFacture = 0, totalPaye = 0, totalMarge = 0;
       const etats = { NON_TRANSMISE: 0, ATTENTE_BON_COMMANDE: 0, ATTENTE_PAIEMENT: 0, AVANCE: 0, PAYEE: 0 };
       const parClient = new Map<number, { client: string; facture: number; paye: number; reste: number; ors: number }>();
-      const lignes: Record<number, { totalLigne: string | null; coutUnitaire: string | null; quantite: number }[]> = {};
+      const lignes: Record<number, { totalLigne: string | null; coutUnitaire: string | null; quantite: number; prixAchat: string | null }[]> = {};
       const ids = ors.map((o) => o.venteId).filter(Boolean) as number[];
 
       if (ids.length) {
         const vRows = await db.select({ id: ventes.id, montantTotal: ventes.montantTotal, montantPaye: ventes.montantPaye }).from(ventes).where(sql`${ventes.id} IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
         const vMap = new Map(vRows.map((v) => [v.id, v]));
-        const lRows = await db.select({ venteId: ventesLignes.venteId, totalLigne: ventesLignes.totalLigne, coutUnitaire: ventesLignes.coutUnitaire, quantite: ventesLignes.quantite }).from(ventesLignes).where(sql`${ventesLignes.venteId} IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
+        const lRows = await db
+          .select({ venteId: ventesLignes.venteId, totalLigne: ventesLignes.totalLigne, coutUnitaire: ventesLignes.coutUnitaire, quantite: ventesLignes.quantite, prixAchat: produits.prixAchat })
+          .from(ventesLignes)
+          .leftJoin(produits, eq(ventesLignes.produitId, produits.id))
+          .where(sql`${ventesLignes.venteId} IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
         for (const l of lRows) (lignes[l.venteId] ??= []).push(l);
+
+        // Coût : coutUnitaire de la vente, sinon fallback prixAchat catalogue (jamais 0 inventé → marge = CA).
+        const coutDe = (l: { coutUnitaire: string | null; prixAchat: string | null; quantite: number }) =>
+          l.coutUnitaire != null ? Number(l.coutUnitaire) * Number(l.quantite)
+          : l.prixAchat != null ? Number(l.prixAchat) * Number(l.quantite)
+          : 0;
 
         for (const o of ors) {
           if (!o.venteId) continue;
@@ -442,7 +487,7 @@ export const atelierKpiRouter = createTRPCRouter({
           const total = Number(v.montantTotal ?? 0);
           const paye = Number(v.montantPaye ?? 0);
           const margeLignes = lignes[o.venteId] ?? [];
-          const marge = margeLignes.reduce((s, l) => s + (Number(l.totalLigne ?? 0) - (l.coutUnitaire != null ? Number(l.coutUnitaire) * Number(l.quantite) : 0)), 0);
+          const marge = margeLignes.reduce((s, l) => s + (Number(l.totalLigne ?? 0) - coutDe(l)), 0);
           totalFacture += total; totalPaye += paye; totalMarge += marge;
           let etat: keyof typeof etats;
           if (paye >= total && total > 0) etat = "PAYEE";
@@ -468,5 +513,93 @@ export const atelierKpiRouter = createTRPCRouter({
         etats, topClientsRetard,
         tauxRecouvrement: totalFacture > 0 ? Math.round((totalPaye / totalFacture) * 1000) / 10 : null,
       };
+    }),
+
+  // ─── Temps passé par statut (agrégat sur or_historique, fenêtre glissante) ───
+  tempsParStatut: requirePermissionProcedure("or.consulter")
+    .input(z.object({ periode: z.enum(["jour", "semaine", "mois", "trimestre"]).default("mois") }).optional())
+    .query(async ({ ctx, input }) => {
+      const periode = input?.periode ?? "mois";
+      const debut = fenetreDepuis(periode);
+      const debutTs = new Date(`${debut}T00:00:00`).getTime();
+      const now = Date.now();
+
+      const hist = await db
+        .select({
+          orId: orHistorique.orId,
+          ancienneValeur: orHistorique.ancienneValeur,
+          nouvelleValeur: orHistorique.nouvelleValeur,
+          changeLe: orHistorique.changeLe,
+        })
+        .from(orHistorique)
+        .innerJoin(ordresReparation, eq(orHistorique.orId, ordresReparation.id))
+        .where(and(eq(ordresReparation.agenceId, ctx.user.agenceId), eq(orHistorique.type, "STATUT")))
+        .orderBy(orHistorique.orId, orHistorique.changeLe);
+
+      const meta = await db
+        .select({ id: ordresReparation.id, statut: ordresReparation.statut, dateOuverture: ordresReparation.dateOuverture, dateCloture: ordresReparation.dateCloture })
+        .from(ordresReparation)
+        .where(eq(ordresReparation.agenceId, ctx.user.agenceId));
+      const metaMap = new Map(meta.map((m) => [m.id, m]));
+
+      type Agg = { totalMs: number; occurrences: number; ors: Set<number> };
+      const aggs = new Map<string, Agg>();
+      const add = (statut: string | null, start: number, end: number, orId: number) => {
+        if (!statut) return;
+        const s = Math.max(start, debutTs);
+        const e = Math.min(end, now);
+        if (e <= s) return;
+        const a = aggs.get(statut) ?? { totalMs: 0, occurrences: 0, ors: new Set<number>() };
+        a.totalMs += e - s;
+        a.occurrences += 1;
+        a.ors.add(orId);
+        aggs.set(statut, a);
+      };
+
+      const histParOr = new Map<number, typeof hist>();
+      for (const h of hist) {
+        const list = histParOr.get(h.orId) ?? [];
+        list.push(h);
+        histParOr.set(h.orId, list);
+      }
+
+      for (const [orId, events] of histParOr) {
+        const m = metaMap.get(orId);
+        if (!m) continue;
+        let prevTs = new Date(m.dateOuverture ?? events[0]!.changeLe ?? now).getTime();
+        for (const ev of events) {
+          const ts = new Date(ev.changeLe ?? now).getTime();
+          if (ev.ancienneValeur) add(ev.ancienneValeur, prevTs, ts, orId);
+          prevTs = ts;
+        }
+        const fin = m.dateCloture ? new Date(m.dateCloture).getTime() : now;
+        add(m.statut, prevTs, fin, orId);
+      }
+
+      const STATUT_LIBELLES: Record<string, string> = {
+        EN_ATTENTE_DIAGNOSTIC: "En attente diagnostic",
+        EN_ATTENTE_VALIDATION_DIAGNOSTIC: "Diagnostic à valider",
+        EN_COURS: "En cours",
+        EN_ATTENTE_PIECES: "En attente pièces",
+        EN_ATTENTE_VALIDATION: "En attente validation devis",
+        CONTROLE_QUALITE: "Contrôle qualité",
+        PRET_A_LIVRER: "Prêt à livrer",
+        BLOQUE: "Bloqué",
+        LIVRE: "Livré",
+        ANNULE: "Annulé",
+      };
+
+      const statuts = [...aggs.entries()]
+        .map(([statut, a]) => ({
+          statut,
+          libelle: STATUT_LIBELLES[statut] ?? statut,
+          totalJours: Math.round((a.totalMs / 86400000) * 10) / 10,
+          moyenneJours: a.occurrences ? Math.round((a.totalMs / a.occurrences / 86400000) * 100) / 100 : null,
+          occurrences: a.occurrences,
+          nbOrs: a.ors.size,
+        }))
+        .sort((x, y) => y.totalJours - x.totalJours);
+
+      return { periode, debut, statuts, totalOrsAvecHistorique: histParOr.size };
     }),
 });

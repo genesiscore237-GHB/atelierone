@@ -58,8 +58,8 @@ export const MODULE_PERMISSIONS: Record<string, string[]> = {
   administration: ["admin.parametres", "admin.roles.gerer", "admin.logs.consulter"],
   atelier: ["vehicules.consulter", "or.consulter", "planning.consulter"],
   // Domaine "Garage / Parking" (GPJ) — module porté depuis libracore.
-  garage: ["parking.consulter", "parking.vehicule.creer", "parking.vehicule.modifier", "parking.alertes.gerer"],
-  parking: ["parking.consulter", "parking.vehicule.creer", "parking.vehicule.modifier", "parking.alertes.gerer"],
+  garage: ["parking.consulter", "parking.vehicule.creer", "parking.vehicule.modifier", "parking.vehicule.exporter", "parking.alertes.gerer", "parking.transfert.creer", "parking.transfert.recevoir", "parking.site.gerer"],
+  parking: ["parking.consulter", "parking.vehicule.creer", "parking.vehicule.modifier", "parking.vehicule.exporter", "parking.alertes.gerer", "parking.transfert.creer", "parking.transfert.recevoir", "parking.site.gerer"],
   pilotage: ["comptabilite.rapport", "admin.parametres"],
   sites: ["vehicules.consulter", "stock.consulter"],
   interventions: ["or.consulter", "or.creer"],

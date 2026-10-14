@@ -45,6 +45,7 @@ graphify-out/
 
 # dev logs
 dev-*.log
+logs/
 
 
 

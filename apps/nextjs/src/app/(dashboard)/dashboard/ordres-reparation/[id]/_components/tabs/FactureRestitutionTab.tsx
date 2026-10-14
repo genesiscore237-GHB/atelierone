@@ -35,6 +35,8 @@ export function FactureRestitutionTab({ or }: { or: any }) {
   const utils = api.useUtils();
   const { flags } = useOrPermissions();
   const peutRestituer = flags.canRestitution;
+  // T0.2 : la sortie exceptionnelle exige or.valider (côté serveur aussi).
+  const peutException = peutRestituer && flags.valider;
 
   const { data: ar } = api.or.accuseReception.useQuery({ orId: id });
   const { data: restitutions } = api.or.listerRestitutions.useQuery({ orId: id });
@@ -100,6 +102,7 @@ export function FactureRestitutionTab({ or }: { or: any }) {
     if (restitForm.recuperateurNom.trim().length < 2) { toast.error("Récupérateur requis"); return; }
     if (restitForm.signatureClient.trim().length < 2) { toast.error("Signature (nom tapé) requise"); return; }
     if (restitForm.sortieExceptionnelle) {
+      if (!flags.valider) { toast.error("Sortie exceptionnelle : la permission « or.valider » est requise."); return; }
       if (restitForm.motifException.trim().length < 3) { toast.error("Motif de sortie exceptionnelle requis"); return; }
       if (restitForm.commentaireException.trim().length < 3) { toast.error("Commentaire requis pour la sortie exceptionnelle"); return; }
     }
@@ -226,14 +229,19 @@ export function FactureRestitutionTab({ or }: { or: any }) {
           </div>
           <div className="mt-3 rounded-lg border border-dashed border-warning/40 bg-warning/5 p-3">
             <label className="flex items-start gap-2 text-xs font-medium text-foreground">
-              <input type="checkbox" className="mt-0.5 size-4" checked={restitForm.sortieExceptionnelle}
+              <input type="checkbox" className="mt-0.5 size-4" checked={restitForm.sortieExceptionnelle && peutException}
                 onChange={(e) => setRestitForm({ ...restitForm, sortieExceptionnelle: e.target.checked })}
-                disabled={!peutRestituer} />
+                disabled={!peutException} />
               <span>
                 <b>Sortie exceptionnelle</b> — véhicule sort malgré QC non validé, travaux non terminés ou facture non soldée (le motif, le commentaire et le reste dû restent tracés sur le dossier).
               </span>
             </label>
-            {restitForm.sortieExceptionnelle && (
+            {peutRestituer && !flags.valider && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Sortie exceptionnelle réservée aux profils avec la permission « or.valider » — demandez-la à votre responsable.
+              </p>
+            )}
+            {restitForm.sortieExceptionnelle && peutException && (
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>
                   <Label className="text-xs text-muted-foreground">Motif de la sortie exceptionnelle *</Label>

@@ -188,6 +188,59 @@ try {
     log("parking : véhicules démo insérés (mode --vehicules).");
   }
 
+  // 4c. LOT 1 — liaison parking_vehicles.vehicule_id -> vehicules (dé-duplication).
+  //     Exécuté APRÈS le seed parking pour que les véhicules démo soient liés
+  //     à leur canonique. Idempotent.
+  if (!noSocle) {
+    const tsx = findBin("tsx");
+    if (!tsx) {
+      console.error("[test-db] ÉCHEC — binaire tsx introuvable (migrate-parking-vehicules).");
+      process.exit(1);
+    }
+    const rLien = spawnSync(
+      process.execPath,
+      [tsx, resolve(PKG_ROOT, "src", "migrate-parking-vehicules.ts")],
+      {
+        cwd: PKG_ROOT,
+        encoding: "utf8",
+        env: { ...process.env, DATABASE_URL: TEST_URL, FORCE: undefined },
+        stdio: quiet ? "pipe" : "inherit",
+      },
+    );
+    if (rLien.status !== 0) {
+      console.error("[test-db] ÉCHEC — migrate-parking-vehicules :");
+      console.error(`${rLien.stdout ?? ""}\n${rLien.stderr ?? ""}`);
+      process.exit(rLien.status ?? 1);
+    }
+    log("parking : lien vers vehicules établi (Lot 1).");
+  }
+
+  // 4d. LOT 3 — cibles KPI par défaut (kpi_cibles) pour toutes les agences.
+  //     Idempotent : n'insère que les codes manquants.
+  if (!noSocle) {
+    const tsx = findBin("tsx");
+    if (!tsx) {
+      console.error("[test-db] ÉCHEC — binaire tsx introuvable (migrate-kpi-cibles).");
+      process.exit(1);
+    }
+    const rCibles = spawnSync(
+      process.execPath,
+      [tsx, resolve(PKG_ROOT, "src", "migrate-kpi-cibles.ts")],
+      {
+        cwd: PKG_ROOT,
+        encoding: "utf8",
+        env: { ...process.env, DATABASE_URL: TEST_URL, FORCE: undefined },
+        stdio: quiet ? "pipe" : "inherit",
+      },
+    );
+    if (rCibles.status !== 0) {
+      console.error("[test-db] ÉCHEC — migrate-kpi-cibles :");
+      console.error(`${rCibles.stdout ?? ""}\n${rCibles.stderr ?? ""}`);
+      process.exit(rCibles.status ?? 1);
+    }
+    log("kpi_cibles : cibles par défaut assurées (Lot 3).");
+  }
+
   // 5. vérification
   const t = postgres(TEST_URL, { max: 1 });
   const n = await t`select count(*)::int as n from information_schema.tables

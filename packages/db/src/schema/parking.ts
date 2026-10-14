@@ -1,8 +1,9 @@
 import {
-  pgTable, serial, integer, varchar, timestamp, boolean, text, jsonb, doublePrecision, uuid,
+  pgTable, serial, integer, varchar, timestamp, boolean, text, jsonb, doublePrecision, uuid, index,
 } from "drizzle-orm/pg-core";
 import { agences } from "./agences";
 import { utilisateurs } from "./utilisateurs";
+import { vehicules } from "./vehicules";
 
 // ─── MODULE PARKING & VÉHICULES IMMOBILISÉS (GPJ) ────────────────────────────
 // Modèle spatial : Site → Zone → Emplacement logique → Véhicule (empreinte + rotation).
@@ -111,6 +112,11 @@ export type ParkingVehicleStatus =
 export const parkingVehicles = pgTable("parking_vehicles", {
   id: serial("id").primaryKey(),
   agenceId: integer("agence_id").notNull().references(() => agences.id),
+  // Lot 1 — lien vers le véhicule canonique (table vehicules) : la table
+  // parking_vehicles cesse d'être un second registre de véhicules. NULL tant
+  // que le véhicule n'a pas d'immatriculation (aucune invention — le registre
+  // GPJ contient des véhicules sans plaque).
+  vehiculeId: integer("vehicule_id").references(() => vehicules.id, { onDelete: "set null" }),
   // Numéro historique du registre (1-48, le 33 n'existe pas).
   numRegistre: integer("num_registre").notNull(),
   marque: varchar("marque", { length: 100 }),
@@ -156,7 +162,10 @@ export const parkingVehicles = pgTable("parking_vehicles", {
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => ({
+  // Lot 1 — lookup inverse : véhicules canoniques -> lignes du registre parking.
+  idxParkingVehiculeId: index("idx_parking_vehicles_vehicule_id").on(table.vehiculeId),
+}));
 
 export type ParkingMovementType = "ENTREE" | "DEPLACEMENT" | "SORTIE" | "TRANSFERT" | "ROTATION" | "PLACEMENT";
 
@@ -180,6 +189,43 @@ export const parkingMovements = pgTable("parking_movements", {
   commentaire: text("commentaire"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+// ─── Lot 2 — Transfert intra-agence de véhicule (Site 1 ↔ Site 2, D1/D9a) ──────
+// Workflow 2 phases : EN_ATTENTE → EN_TRANSIT → RECU (ou ANNULE à tout moment
+// avant réception). parking_movements reste un journal immuable : la ligne
+// TRANSFERT y est écrite à la réception (origine capturée à l'expédition).
+export type ParkingTransferStatus = "EN_ATTENTE" | "EN_TRANSIT" | "RECU" | "ANNULE";
+
+export const parkingTransfers = pgTable("parking_transfers", {
+  id: serial("id").primaryKey(),
+  agenceId: integer("agence_id").notNull().references(() => agences.id),
+  vehicleId: integer("vehicle_id").notNull().references(() => parkingVehicles.id),
+  siteSourceId: integer("site_source_id").notNull().references(() => parkingSites.id),
+  siteDestinationId: integer("site_destination_id").notNull().references(() => parkingSites.id),
+  statut: varchar("statut", { length: 20 }).notNull().default("EN_ATTENTE"),
+  // État métier du véhicule capturé à l'expédition (restauré en cas d'annulation en transit).
+  statutPrecedent: varchar("statut_precedent", { length: 40 }),
+  motif: text("motif").notNull(),
+  commentaire: text("commentaire"),
+  // Position source capturée à l'expédition (le véhicule est détaché du spot).
+  zoneOrigineId: integer("zone_origine_id").references(() => parkingZones.id),
+  positionOrigineX: doublePrecision("position_origine_x"),
+  positionOrigineY: doublePrecision("position_origine_y"),
+  // Acteurs distincts (séparation des pouvoirs — modèle transferts_stock).
+  creeParId: integer("cree_par_id").references(() => utilisateurs.id),
+  expedieParId: integer("expedie_par_id").references(() => utilisateurs.id),
+  dateExpedition: timestamp("date_expedition"),
+  recuParId: integer("recu_par_id").references(() => utilisateurs.id),
+  dateReception: timestamp("date_reception"),
+  annuleParId: integer("annule_par_id").references(() => utilisateurs.id),
+  dateAnnulation: timestamp("date_annulation"),
+  motifAnnulation: text("motif_annulation"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  idxParkingTransfersVehicleId: index("idx_parking_transfers_vehicle_id").on(table.vehicleId),
+  idxParkingTransfersStatut: index("idx_parking_transfers_statut").on(table.statut),
+}));
 
 export type ParkingAlertCode =
   | "PRET_POUR_SORTIE"

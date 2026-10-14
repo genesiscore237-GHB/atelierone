@@ -59,6 +59,10 @@ export const SOCLE_PERMISSIONS = [
   { code: "parking.vehicule.modifier", nom: "Modifier un véhicule du registre parking", module: "parking" },
   { code: "parking.vehicule.exporter", nom: "Exporter les véhicules du registre", module: "parking" },
   { code: "parking.alertes.gerer", nom: "Gérer les alertes du parking", module: "parking" },
+  // Lot 2 — transfert intra-agence (séparation des pouvoirs : expédier / réceptionner)
+  { code: "parking.transfert.creer", nom: "Créer et expédier un transfert de véhicule entre sites", module: "parking" },
+  { code: "parking.transfert.recevoir", nom: "Réceptionner un transfert de véhicule sur un site", module: "parking" },
+  { code: "parking.site.gerer", nom: "Gérer les sites du parking (nom, description, activation)", module: "parking" },
   // Contrats flottes
   { code: "contrats.consulter", nom: "Consulter les contrats", module: "contrats" },
   { code: "contrats.creer", nom: "Créer un contrat flotte", module: "contrats" },
@@ -168,6 +172,7 @@ export const SOCLE_MATRICE: Record<string, string[]> = {
     "planning.consulter", "planning.assigner",
     "stock.consulter", "stock.modifier", "contrats.consulter", "clients.consulter", "pos.vente.lire",
     "parking.consulter", "parking.vehicule.creer", "parking.vehicule.modifier", "parking.vehicule.exporter", "parking.alertes.gerer",
+    "parking.transfert.creer", "parking.transfert.recevoir", "parking.site.gerer",
   ],
   secretaire: [
     "clients.consulter", "clients.creer", "clients.modifier",
@@ -176,7 +181,8 @@ export const SOCLE_MATRICE: Record<string, string[]> = {
     "pos.vente.creer", "pos.vente.lire", "pos.vente.annuler",
     "caisse.consulter", "caisse.ouvrir", "caisse.fermer", "caisse.mouvement",
     "creances.consulter", "contrats.consulter", "planning.consulter",
-"parking.consulter", "parking.vehicule.creer", "parking.vehicule.modifier", "parking.vehicule.exporter",
+    "parking.consulter", "parking.vehicule.creer", "parking.vehicule.modifier", "parking.vehicule.exporter",
+    "parking.transfert.creer",
   ],
   magasinier: [
     "stock.consulter", "stock.modifier", "stock.inventaire", "stock.utiliser",

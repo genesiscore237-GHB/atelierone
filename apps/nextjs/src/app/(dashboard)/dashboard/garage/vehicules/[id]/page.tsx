@@ -25,6 +25,8 @@ import {
   Printer,
   Download,
   FileSpreadsheet,
+  Wrench,
+  ChevronRight,
 } from "lucide-react";
 import { api } from "~/trpc/react";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
@@ -450,6 +452,57 @@ export default function GarageVehiculeFichePage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Lot 3 — liens croisés 360° : travaux atelier du véhicule canonique lié */}
+          {(v.vehiculeId != null || (data.atelier?.ors?.length ?? 0) > 0) && (
+            <Card>
+              <CardHeader className="no-print">
+                <CardTitle className="flex items-center gap-2">
+                  <Wrench size={16} /> Atelier
+                  {v.vehiculeId != null && (
+                    <Button asChild variant="outline" size="sm" className="ml-auto gap-1 text-xs">
+                      <Link href={`/dashboard/vehicules/${v.vehiculeId}`}>
+                        Fiche véhicule 360° <ChevronRight size={13} />
+                      </Link>
+                    </Button>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {(data.atelier?.ors?.length ?? 0) === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    {v.vehiculeId != null
+                      ? "Aucun ordre de réparation en cours pour ce véhicule."
+                      : "Véhicule non lié au registre atelier (aucune immatriculation appariée)."}
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {(data.atelier?.ors ?? []).map((or) => (
+                      <div key={or.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold">{or.numero}</span>
+                          <span className="text-xs text-muted-foreground">{or.statut}</span>
+                          {or.priorite && (
+                            <span className={`rounded px-1.5 py-0.5 text-[10px] font-black text-white ${or.priorite === "P1" ? "bg-destructive" : or.priorite === "P2" ? "bg-amber-500" : or.priorite === "P3" ? "bg-emerald-500" : "bg-muted text-muted-foreground"}`}>
+                              {or.priorite}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {or.dateOuverture && (
+                            <span className="text-[11px] text-muted-foreground">entrée {formatDate(or.dateOuverture)}</span>
+                          )}
+                          <Button asChild variant="ghost" size="sm" className="h-7 gap-1 text-xs">
+                            <Link href={`/dashboard/ordres-reparation/${or.id}`}>Ouvrir <ChevronRight size={12} /></Link>
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between no-print">

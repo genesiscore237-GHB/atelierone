@@ -1,3 +1,9 @@
+## Plan de travail (source de vérité)
+
+Le cahier des charges, le planning d'avancement et les décisions actées de l'**harmonisation du véhicule** sont tenus dans `docs/HARMONISATION-VEHICULE.md` :
+- Le consulter **en premier** avant toute tâche sur les modules véhicule / parking / atelier / OR.
+- Le **mettre à jour** à chaque jalon (fin de lot, décision produit, blocage, nouveau risque) — c'est la seule source durable du plan (pas dans l'historique de conversation).
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.

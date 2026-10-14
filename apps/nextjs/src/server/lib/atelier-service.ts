@@ -184,7 +184,9 @@ const TRANSITIONS_ATELIER: Record<string, string[]> = {
   CONTROLE_QUALITE: ["PRET_A_LIVRER", "EN_COURS", "BLOQUE", "ANNULE"],
   PRET_A_LIVRER: ["BLOQUE", "ANNULE"],
   BLOQUE: ["EN_COURS", "EN_ATTENTE_PIECES", "EN_ATTENTE_VALIDATION", "ANNULE"],
-  LIVRE: ["ferme_definitif"],
+  // T0.3 (Lot 0) : LIVRE est terminal — la clôture passe UNIQUEMENT par
+  // or.fermerDefinitivement (gates QC / restitution / facture / solde).
+  LIVRE: [],
   ANNULE: [],
   ferme_definitif: [],
 };

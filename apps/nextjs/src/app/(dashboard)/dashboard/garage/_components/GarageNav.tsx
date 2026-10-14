@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Map, Car, BellRing, Settings } from "lucide-react";
+import { LayoutDashboard, Map, Car, BellRing, Settings, ArrowLeftRight, Building2 } from "lucide-react";
 
 const tabs = [
   { href: "/dashboard/garage", label: "Dashboard", icon: LayoutDashboard, exact: true },
   { href: "/dashboard/garage/carte", label: "Carte", icon: Map },
   { href: "/dashboard/garage/vehicules", label: "Véhicules", icon: Car },
+  { href: "/dashboard/garage/transferts", label: "Transferts", icon: ArrowLeftRight },
+  { href: "/dashboard/garage/espaces", label: "Espaces & Sites", icon: Building2 },
   { href: "/dashboard/garage/alertes", label: "Alertes", icon: BellRing },
   { href: "/dashboard/garage/configuration", label: "Configuration", icon: Settings },
 ];

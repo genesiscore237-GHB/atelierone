@@ -297,8 +297,10 @@ export function construireJournal(opts: OptionsJournal): EvenementJournal[] {
   }
 
   const cles = [...groupes.keys()].sort();
+  const justifCles = new Set(opts.justifications?.map(j => `${j.employeeId}|${j.date.slice(0, 10)}`) ?? []);
   const lignes: EvenementJournal[] = [];
 
+  // Traiter les événements RPT-01
   for (const cle of cles) {
     const evs = (groupes.get(cle) ?? []).slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const ev0 = evs[0];
@@ -506,6 +508,103 @@ export function construireJournal(opts: OptionsJournal): EvenementJournal[] {
       payrollImpactAbsence,
       payrollImpactRetard,
       payrollImpactSituationRH,
+
+      anomalies,
+    });
+  }
+
+  // Traiter les justificatifs sans événement RPT-01 correspondant
+  for (const cle of justifCles) {
+    if (groupes.has(cle)) continue; // Déjà traité dans la boucle principale
+    
+    const [employeeIdStr, iso] = cle.split('|');
+    const employeeId = Number(employeeIdStr);
+    const emp = employes.get(employeeId);
+    if (!emp) continue;
+    
+    const justif = justifParCle.get(cle);
+    if (!justif) continue;
+    
+    const anomalies: Anomalie[] = [];
+    
+    // Anomalie : justificatif sans événement de présence correspondant
+    anomalies.push({
+      code: "ANOMALIE_HORS_PERIODE_EMPLOI",
+      message: "Justificatif sans événement de présence correspondant dans la période.",
+      details: { employeeId, date: iso, justificationId: justif.id },
+    });
+
+    const dow = jourSemaine(iso);
+    const estJourTravaille = jourOuvrePour(emp, iso, situation);
+    const sched = emp.workCycleId ? situation.schedByCycleDay.get(`${emp.workCycleId}:${dow}`) : undefined;
+    const heuresTheoriques = estJourTravaille
+      ? sched
+        ? heuresTheoriquesDuJour(sched, situation.seuilDefaut)
+        : situation.seuilDefaut
+      : 0;
+
+    lignes.push({
+      eventId: eventIdStable(employeeId, iso),
+      employeeId,
+      matricule: emp.matricule,
+      nom: emp.nom,
+      prenom: emp.prenom,
+      departement: emp.departement,
+      departementId: emp.departmentId,
+      fonction: emp.fonction,
+      date: iso,
+
+      type: "AUTRE",
+      libelle: justif.motifLibelle ?? "Justificatif déposé",
+      presenceCode: null,
+
+      rapportEventIds: [],
+      sources: [],
+      casReconciliation: "B",
+      saisieSource: null,
+
+      estJourTravaille,
+      heuresTheoriques: round2(heuresTheoriques),
+      heureTheorique: sched?.startTime ?? null,
+      heureArrivee: null,
+      toleranceMinutes: situation.parametresPresence.lateToleranceMinutes ?? null,
+
+      lateMinutes: 0,
+      lateHours: 0,
+      earlyDepartureMinutes: 0,
+
+      journeeEntiere: false,
+      dureeHeures: 0,
+
+      motif: justif.motifLibelle ?? null,
+      motifCode: justif.motifCode ?? null,
+      justificatifStatut: justif.statut,
+      justificatifUrl: justif.justificatifUrl ?? null,
+      justificatifReference: justif.justificatifReference ?? null,
+      justificatifType: justif.justificatifType ?? null,
+      justificatifLegacy: null,
+
+      presenceValidee: null,
+      validePar: null,
+      auteur: null,
+      validatedBy: null,
+      validatedAt: null,
+      createdBy: null,
+
+      deposePar: justif.deposePar ?? null,
+      deposeAt: justif.deposeAt ?? null,
+      decisionPar: justif.decisionPar ?? null,
+      decisionAt: justif.decisionAt ?? null,
+      refusMotif: justif.refusMotif ?? null,
+
+      comptabilise: null,
+      motifNonComptabilisation: null,
+
+      presenceImpactHours: 0,
+      payrollImpact: 0,
+      payrollImpactAbsence: 0,
+      payrollImpactRetard: 0,
+      payrollImpactSituationRH: 0,
 
       anomalies,
     });

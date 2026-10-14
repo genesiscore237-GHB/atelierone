@@ -31,7 +31,7 @@ export function ChercherAvantCommander() {
   const [sortirOrFor, setSortirOrFor] = useState<{ id: number; titre: string; qte: string; orId: number } | null>(null);
   const [demandeFor, setDemandeFor] = useState<{ designation: string; reference: string; qte: string; notes: string } | null>(null);
   const [commanderFor, setCommanderFor] = useState<{ produitId: string; titre: string; stock: number } | null>(null);
-  const { data: orsEnCours } = api.or.getDashboard.useQuery(undefined, { select: (d: any) => (d?.ors ?? []).filter((o: any) => ["EN_COURS", "EN_ATTENTE", "DIAGNOSTIC"].includes(o.statut ?? "")) });
+  const { data: orsEnCours } = api.or.getDashboard.useQuery(undefined, { select: (d: any) => (d?.parc ?? []) });
 
   const { data, isLoading, refetch } = api.stock.chercherAvantCommander.useQuery(
     { q: q || undefined, type: (type || "TOUS") as any, limit: 100 },

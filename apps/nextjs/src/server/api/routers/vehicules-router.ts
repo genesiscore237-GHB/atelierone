@@ -30,6 +30,10 @@ import {
   CARBURANTS,
   TYPES_VEHICULE,
 } from "~/server/lib/vehicule-service";
+import {
+  synchroniserIdentiteParking,
+  projeterParkingDepuisImmo,
+} from "~/server/lib/parking-vehicule-service";
 
 /** MODULE VÉHICULES & ATELIER — parc, fiche, statuts d'immobilisation, historique. */
 export const vehiculesRouter = createTRPCRouter({
@@ -500,6 +504,13 @@ export const vehiculesRouter = createTRPCRouter({
       }
       updateData.updatedAt = new Date();
       await db.update(vehicules).set(updateData as any).where(eq(vehicules.id, id));
+      // LOT 1 — identité partagée canonique → registre parking (lignes liées).
+      await synchroniserIdentiteParking(db, id, {
+        marque: rest.marque,
+        modele: rest.modele,
+        couleur: rest.couleur,
+        vin: rest.numeroChassis,
+      });
       return { success: true };
     }),
 
@@ -524,6 +535,8 @@ export const vehiculesRouter = createTRPCRouter({
           updatedAt: new Date(),
         } as any)
         .where(eq(vehicules.id, input.id));
+      // LOT 1 — projection du statut atelier → registre parking lié.
+      await projeterParkingDepuisImmo(db, input.id, input.nouveauStatut);
       return { success: true, statut: input.nouveauStatut };
     }),
 

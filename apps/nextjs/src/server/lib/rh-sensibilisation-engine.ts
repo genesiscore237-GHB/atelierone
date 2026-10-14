@@ -89,6 +89,39 @@ export const CODES_REGLES_EXIGEES = [
   "ABSENCE_NON_JUSTIFIEE",
 ] as const;
 
+/**
+ * Ligne brute de `hr_sensibilisation_rules`, exprimée structurellement pour que
+ * le moteur reste pur (aucun import DB). Une seule implémentation partagée par
+ * `rhSensibilisation.indicateurs` et `rhCentreRapports.rapport` (RPT-06).
+ */
+export interface RegleSensibilisationBrute {
+  code: string;
+  label: string;
+  niveau: string;
+  priorite: number;
+  condition: string;
+  metrique: string;
+  seuil: number | string;
+  message: string;
+  actionRecommandee: string;
+  active: boolean | null;
+}
+
+export function normaliserRegles(rows: RegleSensibilisationBrute[]): RegleSensibilisation[] {
+  return rows.map((r) => ({
+    code: r.code,
+    label: r.label,
+    niveau: r.niveau as NiveauSensibilisation,
+    priorite: r.priorite,
+    condition: r.condition as ConditionSensibilisation,
+    metrique: r.metrique,
+    seuil: Number(r.seuil),
+    message: r.message,
+    actionRecommandee: r.actionRecommandee,
+    active: r.active ?? true,
+  }));
+}
+
 export interface IndicateurMessage {
   valeur: number;
   seuil: number;

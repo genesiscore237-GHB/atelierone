@@ -146,6 +146,133 @@ export const COLONNES_TRI_SALARIALES = [
 export type ColonneTriSalariale = (typeof COLONNES_TRI_SALARIALES)[number];
 
 /**
+ * Liste des colonnes autorisées pour le rapport RH.
+ * Utilisée pour valider et filtrer le paramètre `columns[]`.
+ */
+export const COLONNES_RAPPORT_AUTORISEES = [
+  // Identification
+  "employeeId",
+  "matricule",
+  "nom",
+  "prenom",
+  "departement",
+  "fonction",
+  "posteSegments",
+  "statut",
+  "mode",
+  "dateEmbauche",
+  "dateFinContrat",
+  "dateSortie",
+  // Présence
+  "joursTheoriques",
+  "joursPresence",
+  "joursAbsence",
+  "joursAbsents",
+  "joursConges",
+  "joursMuets",
+  "heuresTheoriques",
+  "heuresAttendues",
+  "heuresTravaillees",
+  "heuresNormales",
+  "heuresSupp",
+  "retardTotalMinutes",
+  "departAnticipeTotalMinutes",
+  "tauxPresence",
+  "tauxPresenceHeures",
+  // Salaire (sensibles)
+  "masseAcquise",
+  "baseContractuelle",
+  "gains",
+  "retenues",
+  "totalNet",
+  "netLabel",
+  "tauxHoraire",
+  "bulletinExiste",
+  "segmentsSalaires",
+  "avancePeriode",
+  "recuperePeriode",
+  "soldeFinPeriode",
+  "soldeActuel",
+  "nbAvances",
+  // Salaire (fiche employé)
+  "salaireBase",
+  "net",
+  // Avances
+  "avancePeriode",
+  "recuperePeriode",
+  "soldeFinPeriode",
+  "soldeActuel",
+  "nbAvances",
+  // Anomalies
+  "anomalieCount",
+  "anomalies",
+  "salariesVisible",
+] as const;
+
+export type ColonneRapportAutorisee = (typeof COLONNES_RAPPORT_AUTORISEES)[number];
+
+/** Colonnes sensibles (salaire) qui exigent `rh.salaire.consulter`. */
+export const COLONNES_SENSIBLES_SALAIRE = [
+  "masseAcquise",
+  "baseContractuelle",
+  "gains",
+  "retenues",
+  "totalNet",
+  "netLabel",
+  "tauxHoraire",
+  "bulletinExiste",
+  "segmentsSalaires",
+  "avancePeriode",
+  "recuperePeriode",
+  "soldeFinPeriode",
+  "soldeActuel",
+  "nbAvances",
+  "salaireBase",
+  "net",
+] as const;
+
+export type ColonneSensibleSalaire = (typeof COLONNES_SENSIBLES_SALAIRE)[number];
+
+/**
+ * Normalise la sélection de colonnes.
+ *
+ * - Doublons retirés, ordre conservé
+ * - Colonnes inconnues refusées (erreur explicite)
+ * - Plus de 100 colonnes refusées
+ * - `undefined` ou tableau vide = « aucune sélection » : toutes les colonnes autorisées selon permissions
+ */
+export function normaliserColumns(
+  colonnes: readonly string[] | undefined,
+  canSeeSalary: boolean
+): string[] | undefined {
+  if (colonnes === undefined) return undefined;
+  if (colonnes.length === 0) return [];
+  if (colonnes.length > 100) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `Selection de colonnes trop volumineuse : ${colonnes.length} colonnes, maximum 100.`,
+    });
+  }
+  const vus = new Set<string>();
+  for (const col of colonnes) {
+    if (!COLONNES_RAPPORT_AUTORISEES.includes(col as ColonneRapportAutorisee)) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `Colonne non supportee : ${col}.`,
+      });
+    }
+    if (COLONNES_SENSIBLES_SALAIRE.includes(col as ColonneSensibleSalaire) && !canSeeSalary) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: `Colonne « ${col} » refusee : exige le droit rh.salaire.consulter.`,
+      });
+    }
+    vus.add(col);
+  }
+  return [...vus];
+}
+
+/**
  * Un utilisateur sans `rh.salaire.consulter` ne peut pas trier sur une colonne
  * salariale : il n'en a pas la valeur, et l'accepter produirait un ordre muet.
  * On refuse explicitement plutot que de reordonner derriere son dos.

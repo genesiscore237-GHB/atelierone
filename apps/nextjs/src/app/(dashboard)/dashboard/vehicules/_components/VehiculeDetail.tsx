@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import {
-  ArrowLeft, Car, FileSignature, Gauge, History, Phone, User, Wrench, ClipboardList,
+  ArrowLeft, ArrowRight, Car, FileSignature, Gauge, History, Phone, User, Wrench, ClipboardList,
   PackageSearch, Receipt, Camera, AlertTriangle, CalendarClock, Timer, MapPin, ChevronRight, Loader2,
 } from "lucide-react";
 import Link from "next/link";
@@ -41,6 +41,11 @@ export function VehiculeDetail({ id }: { id: string }) {
   const { data, isLoading, isError } = api.vehicules.get.useQuery({ id: Number(id) });
   const { data: clientsData } = api.clients.list.useQuery({ statut: "ACTIF", limit: 200 });
   const { data: contratsData } = api.vehicules.listContratsActifs.useQuery();
+  // Lot 3 — lien croisé 360° : emplacement parking du véhicule canonique lié.
+  const { data: parking } = api.garage.vehiculeParCanonique.useQuery(
+    { vehiculeId: Number(id) },
+    { enabled: Number.isFinite(Number(id)) && Number(id) > 0, retry: false },
+  );
   const [tab, setTab] = useState("Vue d'ensemble");
   const [clientId, setClientId] = useState(0);
   const [contratId, setContratId] = useState(0);
@@ -312,6 +317,39 @@ export function VehiculeDetail({ id }: { id: string }) {
                 )}
               </div>
             </div>
+
+            {/* Lot 3 — emplacement parking (lien croisé fiche parking) */}
+            {parking && (
+              <div className="rounded-xl border border-border bg-card p-5">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+                    <MapPin size={14} className="text-primary" /> Emplacement parking
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    {parking.alertesOuvertes > 0 && (
+                      <span className="rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] font-black uppercase text-destructive">
+                        {parking.alertesOuvertes} alerte(s)
+                      </span>
+                    )}
+                    <Link href={`/dashboard/garage/vehicules/${parking.id}`}>
+                      <Button size="sm" variant="outline" className="gap-1 text-xs">Fiche parking <ChevronRight size={13} /></Button>
+                    </Link>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
+                  <Field label="Site" value={parking.siteNom ? `${parking.siteNom}${parking.siteCode ? ` (${parking.siteCode})` : ""}` : "—"} />
+                  <Field label="Zone" value={parking.zoneNom ?? "—"} />
+                  <Field label="Emplacement" value={parking.spotCode ?? "—"} mono />
+                  <Field label="Statut parking" value={parking.statut} />
+                </div>
+                {!parking.positionne && (
+                  <p className="mt-2 text-xs text-warning-foreground">Véhicule non positionné sur le plan (panneau « À placer »).</p>
+                )}
+                <Link href="/dashboard/garage/carte" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
+                  Voir sur la carte parking <ArrowRight size={11} />
+                </Link>
+              </div>
+            )}
           </>
         )}
 

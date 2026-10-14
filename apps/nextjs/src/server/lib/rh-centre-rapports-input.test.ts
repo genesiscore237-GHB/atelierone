@@ -7,10 +7,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  COLONNES_RAPPORT_AUTORISEES,
+  COLONNES_SENSIBLES_SALAIRE,
   COLONNES_TRI_SALARIALES,
   EMPLOYEE_IDS_MAX,
   EVENT_PAGE_SIZE_MAX,
   estJourIsoValide,
+  normaliserColumns,
   normaliserEmployeeIds,
   normaliserListe,
   normaliserPagination,
@@ -88,8 +91,58 @@ describe("RPT-05 population d'employes", () => {
   });
 });
 
-describe("RPT-05 pagination", () => {
-  it("applique les defauts", () => {
+describe("RPT-05 colonnes", () => {
+  it("sans colonnes = undefined (toutes autorisées selon permissions)", () => {
+    expect(normaliserColumns(undefined, true)).toBeUndefined();
+    expect(normaliserColumns(undefined, false)).toBeUndefined();
+  });
+
+  it("tableau vide = aucune colonne", () => {
+    expect(normaliserColumns([], true)).toEqual([]);
+    expect(normaliserColumns([], false)).toEqual([]);
+  });
+
+  it("colonnes non sensibles autorisées sans droit salaire", () => {
+    expect(normaliserColumns(["matricule", "nom", "fonction"], false)).toEqual([
+      "matricule",
+      "nom",
+      "fonction",
+    ]);
+  });
+
+  it("colonnes sensibles autorisées avec droit salaire", () => {
+    const cols = ["matricule", "salaireBase", "tauxHoraire", "net"];
+    expect(normaliserColumns(cols, true)).toEqual(cols);
+  });
+
+  it("refuse colonnes sensibles sans droit salaire", () => {
+    expect(() => normaliserColumns(["matricule", "salaireBase"], false)).toThrow(
+      /rh.salaire.consulter/
+    );
+  });
+
+  it("refuse colonne inconnue", () => {
+    expect(() => normaliserColumns(["secret"] as never, true)).toThrow(/non support/);
+  });
+
+  it("retire les doublons", () => {
+    expect(normaliserColumns(["matricule", "nom", "matricule"], true)).toEqual([
+      "matricule",
+      "nom",
+    ]);
+  });
+
+  it("refus si plus de 100 colonnes", () => {
+    const trop = Array.from({ length: 101 }, (_, i) => `matricule${i}`);
+    expect(() => normaliserColumns(trop, true)).toThrow(/trop volumineuse/);
+  });
+
+  it("colonne inconnue rejetée", () => {
+    expect(() => normaliserColumns(["inconnu"] as never, true)).toThrow(/non support/);
+  });
+});
+  describe("RPT-05 pagination", () => {
+    it("applique les defauts", () => {
     expect(normaliserPagination(undefined, undefined, 50, PAGE_SIZE_MAX)).toEqual({
       page: 1,
       pageSize: 50,

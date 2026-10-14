@@ -1,0 +1,1 @@
+ALTER TABLE "parking_transfers" ADD COLUMN "statut_precedent" varchar(40);

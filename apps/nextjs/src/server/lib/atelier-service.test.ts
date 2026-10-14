@@ -103,6 +103,9 @@ describe("Parc V2 — transitions de statut (règles strictes)", () => {
   it("LIVRE et ANNULE sont terminaux", () => {
     expect(transitionStatutAtelierValide("LIVRE", "EN_COURS").ok).toBe(false);
     expect(transitionStatutAtelierValide("ANNULE", "LIVRE").ok).toBe(false);
+    // T0.3 (Lot 0) : la clôture n'est plus une transition de statut — seule
+    // or.fermerDefinitivement (ses gates QC/restitution/facture/solde) clôture.
+    expect(transitionStatutAtelierValide("LIVRE", "ferme_definitif").ok).toBe(false);
   });
   it("transitions illégales refusées", () => {
     expect(transitionStatutAtelierValide("EN_ATTENTE_DIAGNOSTIC", "LIVRE").ok).toBe(false);

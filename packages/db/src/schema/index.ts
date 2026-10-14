@@ -177,6 +177,7 @@ export {
   parkingSpots,
   parkingVehicles,
   parkingMovements,
+  parkingTransfers,
   parkingAlerts,
   parkingTasks,
   parkingConfigs,
@@ -188,5 +189,6 @@ export type {
   ParkingSpotStatus,
   ParkingVehicleStatus,
   ParkingMovementType,
+  ParkingTransferStatus,
   ParkingAlertCode,
 } from "./parking";

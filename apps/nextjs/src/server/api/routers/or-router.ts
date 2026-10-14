@@ -37,7 +37,9 @@ import {
 import { eq, and, desc, sql, gte, lte, asc, inArray, ilike, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
-import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererReferenceFacture, verrouillerSequenceFacture, MODES_PAIEMENT, montantLigne } from "~/server/lib/facturation-service";
+import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererReferenceFacture, verrouillerSequence, prochaineSequence, MODES_PAIEMENT, montantLigne } from "~/server/lib/facturation-service";
+import { RBACService } from "~/server/lib/rbac-service";
+import { projeterParkingDepuisImmo } from "~/server/lib/parking-vehicule-service";
 import {
   migrerStatutLegacy,
   transitionStatutAtelierValide,
@@ -54,6 +56,7 @@ import {
   devisSoumissible,
   statutDemandePieces,
   transitionRetourFournisseurValide,
+  chargeTechnicien,
 } from "~/server/lib/atelier-service";
 import { genererCodeClient } from "~/server/lib/client-service";
 import { sortirPourOR, enregistrerMouvement } from "~/server/lib/stock-engine";
@@ -82,14 +85,18 @@ async function notifierAtelier(
 
 export const STATUTS_OR = STATUTS_ATELIER;
 
-const genNumero = async (agenceId: number): Promise<string> => {
+/**
+ * N° d'OR suivant (T0.5). `ordres_reparation.numero` est UNIQUE globalement :
+ * la séquence est donc globale, sérialisée par verrou advisory (namespace OR,
+ * année) et calculée en MAX (tolère les trous). DOIT être appelé dans une
+ * transaction — le verrou advisory transactionnel en dépend.
+ */
+const genNumero = async (exec: typeof db | any): Promise<string> => {
   const now = new Date();
   const prefix = `OR-${String(now.getFullYear()).slice(2)}-`;
-  const [row] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(ordresReparation)
-    .where(and(eq(ordresReparation.agenceId, agenceId), sql`numero LIKE ${prefix + "%"}`));
-  return `${prefix}${String((row?.n ?? 0) + 1).padStart(4, "0")}`;
+  await verrouillerSequence(exec, "OR", now.getFullYear());
+  const n = await prochaineSequence(exec, ordresReparation, ordresReparation.numero, prefix);
+  return `${prefix}${String(n).padStart(4, "0")}`;
 };
 
 /** MVP : dossier fermé définitivement → plus aucune modification (diagnostic, devis, pièces, travaux, facture). */
@@ -540,56 +547,63 @@ export const orRouter = createTRPCRouter({
         .where(and(eq(contratsMaintenance.statut, "ACTIF"), lte(contratsMaintenance.dateDebut, new Date().toISOString().slice(0, 10))))
         .limit(1);
 
-      const numero = await genNumero(ctx.user.agenceId);
-      const [row] = await db
-        .insert(ordresReparation)
-        .values({
-          agenceId: ctx.user.agenceId,
-          numero,
-          vehiculeId: input.vehiculeId,
-          clientId,
-          contratId: contratCouvert?.id ?? null,
-          plainte: input.plainte ?? null,
-          diagnostic: input.diagnostic ?? null,
-          priorite: input.priorite,
-          motEntree: input.motEntree,
-          familleService: input.familleService ?? null,
-          savOrigineOrId: input.savOrigineOrId ?? null,
-          motifRetourSAV: input.motifRetourSAV ?? null,
-          datePromesse: input.datePromesse ?? null,
-          dateFinPrevue: input.dateFinPrevue ?? null,
-          emplacement: input.emplacement ?? "Réception",
-          responsableTechnicienId: input.responsableTechnicienId ?? null,
-          clientAttendSurPlace: input.clientAttendSurPlace ?? false,
-          courtoisieDemandee: input.courtoisieDemandee ?? false,
-          notes: input.notes ?? null,
-          creePar: Number(ctx.user.id),
-          statut: "EN_ATTENTE_DIAGNOSTIC",
-        } as any)
-        .returning();
+      // T0.5 : numéro + insert + historique + état véhicule dans UNE
+      // transaction — le verrou advisory de genNumero n'existe qu'à l'intérieur
+      // d'une transaction, et l'OR doit être atomique.
+      return db.transaction(async (tx) => {
+        const numero = await genNumero(tx);
+        const [row] = await tx
+          .insert(ordresReparation)
+          .values({
+            agenceId: ctx.user.agenceId,
+            numero,
+            vehiculeId: input.vehiculeId,
+            clientId,
+            contratId: contratCouvert?.id ?? null,
+            plainte: input.plainte ?? null,
+            diagnostic: input.diagnostic ?? null,
+            priorite: input.priorite,
+            motEntree: input.motEntree,
+            familleService: input.familleService ?? null,
+            savOrigineOrId: input.savOrigineOrId ?? null,
+            motifRetourSAV: input.motifRetourSAV ?? null,
+            datePromesse: input.datePromesse ?? null,
+            dateFinPrevue: input.dateFinPrevue ?? null,
+            emplacement: input.emplacement ?? "Réception",
+            responsableTechnicienId: input.responsableTechnicienId ?? null,
+            clientAttendSurPlace: input.clientAttendSurPlace ?? false,
+            courtoisieDemandee: input.courtoisieDemandee ?? false,
+            notes: input.notes ?? null,
+            creePar: Number(ctx.user.id),
+            statut: "EN_ATTENTE_DIAGNOSTIC",
+          } as any)
+          .returning();
 
-      // Historique de création (traçabilité complète)
-      const creationCommentaire = [
-        `Réception ${input.motEntree} — ${input.plainte ?? "sans consigne"}`,
-        input.savOrigineOrId ? `RETOUR SAV lié à l'OR #${input.savOrigineOrId} (${input.motifRetourSAV})` : null,
-        input.datePromesse ? `promesse ${input.datePromesse}` : null,
-      ].filter(Boolean).join(" · ");
-      await db.insert(orHistorique).values({
-        orId: row.id,
-        type: "CREATION",
-        nouvelleValeur: "EN_ATTENTE_DIAGNOSTIC",
-        commentaire: creationCommentaire,
-        changePar: Number(ctx.user.id),
-      } as any);
+        // Historique de création (traçabilité complète)
+        const creationCommentaire = [
+          `Réception ${input.motEntree} — ${input.plainte ?? "sans consigne"}`,
+          input.savOrigineOrId ? `RETOUR SAV lié à l'OR #${input.savOrigineOrId} (${input.motifRetourSAV})` : null,
+          input.datePromesse ? `promesse ${input.datePromesse}` : null,
+        ].filter(Boolean).join(" · ");
+        await tx.insert(orHistorique).values({
+          orId: row.id,
+          type: "CREATION",
+          nouvelleValeur: "EN_ATTENTE_DIAGNOSTIC",
+          commentaire: creationCommentaire,
+          changePar: Number(ctx.user.id),
+        } as any);
 
-      // Le véhicule entre en réparation
-      if (vehicule.statutImmobilisation !== "en_reparation") {
-        await db
-          .update(vehicules)
-          .set({ statutImmobilisation: "en_reparation", updatedAt: new Date() } as any)
-          .where(eq(vehicules.id, input.vehiculeId));
-      }
-      return row;
+        // Le véhicule entre en réparation
+        if (vehicule.statutImmobilisation !== "en_reparation") {
+          await tx
+            .update(vehicules)
+            .set({ statutImmobilisation: "en_reparation", updatedAt: new Date() } as any)
+            .where(eq(vehicules.id, input.vehiculeId));
+          // LOT 1 — projection → registre parking lié.
+          await projeterParkingDepuisImmo(tx, input.vehiculeId, "en_reparation");
+        }
+        return row;
+      });
     }),
 
   // ─── Recherche unifiée réception (plaque, châssis, client, téléphone) ───
@@ -743,8 +757,9 @@ export const orRouter = createTRPCRouter({
           vehiculeId = veh.id;
         }
 
-        // 3. Dossier d'intervention (OR) complet
-        const numero = await genNumero(agenceId);
+        // 3. Dossier d'intervention (OR) complet — T0.5 : genNumero porte le
+        // verrou advisory, il doit être appelé avec la transaction (tx).
+        const numero = await genNumero(tx);
         const [or] = await tx.insert(ordresReparation).values({
           agenceId,
           numero,
@@ -793,6 +808,8 @@ export const orRouter = createTRPCRouter({
 
         // 6. Le véhicule entre en réparation
         await tx.update(vehicules).set({ statutImmobilisation: "en_reparation", updatedAt: new Date() } as any).where(eq(vehicules.id, vehiculeId));
+        // LOT 1 — projection → registre parking lié.
+        await projeterParkingDepuisImmo(tx, vehiculeId, "en_reparation");
 
         return { id: or.id, numero, vehiculeId, clientId };
       }) as any;
@@ -810,6 +827,9 @@ export const orRouter = createTRPCRouter({
           .limit(1);
         if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "Dossier introuvable." });
         if (or.statut === "ferme_definitif") throw new TRPCError({ code: "BAD_REQUEST", message: "Ce dossier est déjà fermé définitivement." });
+        // T0.3 : un dossier annulé n'a rien à clôturer — fermer un OR annulé
+        // créait une fausse « clôture » sur un dossier mort.
+        if (or.statut === "ANNULE") throw new TRPCError({ code: "BAD_REQUEST", message: "Dossier annulé : la clôture définitive ne s'applique qu'à un dossier livré." });
 
         // Aucune clôture d'un dossier incomplet : les contrôles reflètent l'état réel du dossier.
         // 1. Contrôle qualité validé (dernier contrôle)
@@ -1241,6 +1261,20 @@ export const orRouter = createTRPCRouter({
         }
 
         if (exceptionnelle) {
+          // T0.2 : la sortie exceptionnelle n'est pas une porte de sortie
+          // générale. Dossier quasi abouti + droit de validation exigés.
+          if (or.statut !== "PRET_A_LIVRER" && or.statut !== "CONTROLE_QUALITE") {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Sortie exceptionnelle refusée : le dossier doit être « Contrôle qualité » ou « Préparé pour livraison » (statut actuel : ${STATUT_LABELS[or.statut ?? ""] ?? or.statut}).`,
+            });
+          }
+          const peutException =
+            ctx.user.role === "superadmin" ||
+            (await RBACService.hasPermission(ctx.user.id, "or.valider", String(ctx.user.agenceId ?? "")));
+          if (!peutException) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "Sortie exceptionnelle : la permission « or.valider » est requise." });
+          }
           // Motif + commentaire obligatoires pour tracer la sortie exceptionnelle
           if (!motifExceptionTexte) throw new TRPCError({ code: "BAD_REQUEST", message: "Motif de sortie exceptionnelle obligatoire." });
           const commentaire = (input.commentaireException ?? input.observations ?? "").trim();
@@ -1297,6 +1331,8 @@ export const orRouter = createTRPCRouter({
           updatedAt: new Date(),
         } as any).where(eq(ordresReparation.id, input.orId));
         await tx.update(vehicules).set({ statutImmobilisation: "sorti", kilometrage: input.kilometrageSortie, updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
+        // LOT 1 — projection → registre parking lié.
+        await projeterParkingDepuisImmo(tx, or.vehiculeId, "sorti");
         await tx.insert(orHistorique).values({
           orId: input.orId,
           type: "RESTITUTION",
@@ -1361,8 +1397,12 @@ export const orRouter = createTRPCRouter({
       // Cohérence véhicule
       if (input.nouveauStatut === "LIVRE") {
         await db.update(vehicules).set({ statutImmobilisation: "sorti", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
+        // LOT 1 — projection → registre parking lié.
+        await projeterParkingDepuisImmo(db, or.vehiculeId, "sorti");
       } else if (input.nouveauStatut === "EN_COURS" || input.nouveauStatut === "CONTROLE_QUALITE") {
         await db.update(vehicules).set({ statutImmobilisation: "en_reparation", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
+        // LOT 1 — projection → registre parking lié.
+        await projeterParkingDepuisImmo(db, or.vehiculeId, "en_reparation");
       }
 
       return { success: true, statut: input.nouveauStatut };
@@ -1444,7 +1484,9 @@ export const orRouter = createTRPCRouter({
       plainte: z.string().optional(),
       diagnostic: z.string().optional(),
       devisAccepte: z.boolean().optional(),
-      statut: z.enum(STATUTS_OR).optional(),
+      // T0.1 : plus de champ `statut` — toute transition passe par les
+      // endpoints métier (receptionner, changerStatut, restituer, fermer…).
+      // or.update acceptait n'importe quelle valeur sans vérification.
       priorite: z.enum(PRIORITES).optional(),
       datePromesse: z.string().nullable().optional(),
       dateFinPrevue: z.string().nullable().optional(),
@@ -1469,8 +1511,6 @@ export const orRouter = createTRPCRouter({
       const { id, dateReception, ...rest } = input;
       const values: any = { ...rest, updatedAt: new Date() };
       if (dateReception) values.dateReception = new Date(dateReception);
-      if (rest.statut) values.statut = migrerStatutLegacy(rest.statut);
-      if (rest.statut === "LIVRE" || rest.statut === "PRET_A_LIVRER") values.dateCloture = new Date();
       if (rest.datePromesse === null) values.datePromesse = null;
       if (rest.dateFinPrevue === null) values.dateFinPrevue = null;
       await db.update(ordresReparation).set(values).where(and(eq(ordresReparation.id, id), eq(ordresReparation.agenceId, ctx.user.agenceId)));
@@ -1979,11 +2019,12 @@ export const orRouter = createTRPCRouter({
         if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
         const [fournisseur] = await tx.select({ id: fournisseurs.id, nom: fournisseurs.nom }).from(fournisseurs).where(eq(fournisseurs.id, input.fournisseurId)).limit(1);
         if (!fournisseur) throw new TRPCError({ code: "NOT_FOUND", message: "Fournisseur introuvable." });
-        const [last] = await tx
-          .select({ n: sql<number>`count(*)::int` })
-          .from(achats)
-          .where(sql`${achats.reference} LIKE ${`BC-${new Date().getFullYear()}-%`}`);
-        const reference = `BC-${new Date().getFullYear()}-${String((last?.n ?? 0) + 1).padStart(5, "0")}`;
+        // T0.5 : séquence BC globale (achats.reference unique globalement),
+        // verrouillée puis calculée en MAX (tolère les trous).
+        await verrouillerSequence(tx, "BC");
+        const bcPrefix = `BC-${new Date().getFullYear()}-`;
+        const seqBc = await prochaineSequence(tx, achats, achats.reference, bcPrefix);
+        const reference = `${bcPrefix}${String(seqBc).padStart(5, "0")}`;
         const [achat] = await tx
           .insert(achats)
           .values({
@@ -2437,7 +2478,20 @@ export const orRouter = createTRPCRouter({
       })).filter((s) => s.nombre > 0);
       const topAnciens = [...parc].sort((a, b) => b.joursImmobilisation - a.joursImmobilisation).slice(0, 5);
 
-      return { kpis, repPriorite, repStatut, topAnciens, parc, seuils };
+      // Charge des techniciens (Lot 3 — helper partagé chargeTechnicien, capacité 5).
+      const techniciens = await db
+        .select({ id: employes.id, nom: employes.nom, prenom: employes.prenom, fonction: employes.fonction })
+        .from(employes)
+        .where(and(eq(employes.agenceId, ctx.user.agenceId), eq(employes.statut, "actif")))
+        .orderBy(employes.prenom);
+      const chargeTechniciens = techniciens
+        .map((t) => {
+          const actifs = parc.filter((p) => p.responsableTechnicienId === t.id).length;
+          return { technicien: t, ...chargeTechnicien(actifs) };
+        })
+        .sort((a, b) => b.pourcent - a.pourcent);
+
+      return { kpis, repPriorite, repStatut, topAnciens, parc, seuils, chargeTechniciens };
     }),
 
   // ─── Pointages des interventions d'un OR ───
@@ -2618,7 +2672,7 @@ export const orRouter = createTRPCRouter({
         return {
           technicien: t,
           vehicules: assignes,
-          charge: { actifs: assignes.length, capacite: 5, pourcent: Math.round((assignes.length / 5) * 100), depassement80: assignes.length > 4 },
+          charge: chargeTechnicien(assignes.length),
         };
       });
       const nonAssignes = ors.filter((o) => !o.responsableTechnicienId);
@@ -2688,14 +2742,11 @@ export const orRouter = createTRPCRouter({
           }
         }
 
-        // Verrou anti-doublon FAC- : sérialise le comptage dans la transaction (P2-11).
-        await verrouillerSequenceFacture(tx, ctx.user.agenceId);
-
-        const [last] = await tx
-          .select({ n: sql<number>`count(*)::int` })
-          .from(ventes)
-          .where(sql`${ventes.reference} LIKE ${`FAC-${new Date().getFullYear()}-%`}`);
-        const reference = genererReferenceFacture((last?.n ?? 0) + 1);
+        // Verrou anti-doublon FAC- : sérialise le calcul de séquence (T0.5,
+        // clé globale — ventes.reference est unique globalement).
+        await verrouillerSequence(tx, "FAC");
+        const seq = await prochaineSequence(tx, ventes, ventes.reference, `FAC-${new Date().getFullYear()}-`);
+        const reference = genererReferenceFacture(seq);
         const montantPaye = input.modePaiement === "credit" ? (input.montantPaye ?? 0) : (input.montantPaye ?? restant);
 
         const [vente] = await tx
@@ -2821,11 +2872,10 @@ export const orRouter = createTRPCRouter({
         if (totalGroupe <= 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Aucun montant à facturer (dossiers déjà facturés)." });
         const totalAvecRemise = Math.round(totalGroupe * (1 - remisePourcent / 100));
 
-        // Verrou anti-doublon FAC- : sérialise le comptage dans la transaction (P2-11).
-        await verrouillerSequenceFacture(tx, ctx.user.agenceId);
-
-        const [last] = await tx.select({ n: sql<number>`count(*)::int` }).from(ventes).where(sql`${ventes.reference} LIKE ${`FAC-${new Date().getFullYear()}-%`}`);
-        const reference = genererReferenceFacture((last?.n ?? 0) + 1);
+        // Verrou anti-doublon FAC- : sérialise le calcul de séquence (T0.5).
+        await verrouillerSequence(tx, "FAC");
+        const seq = await prochaineSequence(tx, ventes, ventes.reference, `FAC-${new Date().getFullYear()}-`);
+        const reference = genererReferenceFacture(seq);
         const montantPaye = input.modePaiement === "credit" ? (input.montantPaye ?? 0) : (input.montantPaye ?? totalAvecRemise);
 
         if (input.modePaiement === "credit" && client) {

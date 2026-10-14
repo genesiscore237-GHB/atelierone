@@ -75,6 +75,9 @@ export const exportRouter = createTRPCRouter({
         options: {
           ...input,
           organizationId: profile[0]!.agenceId,
+          // T0.4c : ExportService lit `agenceId` (pas `organizationId`) — sans
+          // ce champ, Number(undefined) = NaN et l'export retournait vide.
+          agenceId: String(profile[0]!.agenceId),
         },
         userId: String(ctx.user.id),
         status: "pending",

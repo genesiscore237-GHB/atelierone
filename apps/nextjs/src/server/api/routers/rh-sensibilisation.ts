@@ -16,9 +16,9 @@ import {
   appliquerMasquageSalaire,
   calculerIndicateursEquipe,
   calculerIndicateursSensibilisation,
+  normaliserRegles,
   reglesManquantes,
   type IndicateurSensibilisation,
-  type RegleSensibilisation,
 } from "~/server/lib/rh-sensibilisation-engine";
 
 /**
@@ -32,21 +32,6 @@ import {
  * `chargerDonneesRapport`; seule la lecture des règles (7 lignes par agence)
  * est ajoutée.
  */
-
-function normaliserRegles(rows: typeof hrSensibilisationRules.$inferSelect[]): RegleSensibilisation[] {
-  return rows.map((r) => ({
-    code: r.code,
-    label: r.label,
-    niveau: r.niveau as RegleSensibilisation["niveau"],
-    priorite: r.priorite,
-    condition: r.condition as RegleSensibilisation["condition"],
-    metrique: r.metrique,
-    seuil: Number(r.seuil),
-    message: r.message,
-    actionRecommandee: r.actionRecommandee,
-    active: r.active,
-  }));
-}
 
 export const rhSensibilisationRouter = createTRPCRouter({
   /**
