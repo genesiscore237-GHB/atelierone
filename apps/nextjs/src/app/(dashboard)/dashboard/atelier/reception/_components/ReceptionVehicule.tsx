@@ -9,6 +9,7 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { FormulaireVehicule } from "~/components/vehicule/FormulaireVehicule";
+import { CheckListOutillage } from "./CheckListOutillage";
 import { PhotosEtatDesLieux, type PhotoUI } from "./PhotosEtatDesLieux";
 
 /**
@@ -16,12 +17,6 @@ import { PhotosEtatDesLieux, type PhotoUI } from "./PhotosEtatDesLieux";
  * Sections : 1 Véhicule · 2 Client · 3 Chauffeur · 4 Entrée · 5 Check-list
  * outillage (fiche papier) · 6 Pannes & observations · 7 Photos · 8 Validation.
  */
-
-const OUTILLAGE_ITEMS = [
-  "CRIC", "CLÉ DE ROUE", "MANIVELLE", "ROUE DE SECOURS", "EXTINCTEUR", "RADIO", "TRIANGLE", "CD",
-  "DOCUMENTS", "PARAPLUIE", "PIÈCES DU VÉHICULE", "NATTES", "BOUGIES", "HUILE DE FREIN", "SACS",
-  "BÂCHE DU VÉHICULE", "BOÎTE À PHARMACIE", "AUTRES",
-];
 
 const NIVEAUX_CARBURANT = ["vide", "1/4", "1/2", "3/4", "plein"];
 
@@ -196,10 +191,13 @@ export function ReceptionVehicule() {
     const errs = valider();
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
+    // Format INCHANGÉ (RD7) : `{ present, observation }` par élément, en
+    // JSONB. L'ancien code écrivait EN PLUS une clé minuscule `autres` qui
+    // dupliquait l'observation de `AUTRES` : rien ne la relisait, mais deux
+    // clés pour un même fait réinvitent la divergence. Clé unique désormais.
     const outillage = Object.fromEntries(
       Object.entries(f.reception.outillage ?? {}).map(([k, v]) => [k, { present: v, observation: outillageNotes[k] ?? "" }])
     );
-    if (outillageNotes["AUTRES"]) outillage["autres"] = { present: true, observation: outillageNotes["AUTRES"] };
     receptionner.mutate({
       client: { ...f.client, nom: f.client.nom?.trim(), telephone: f.client.telephone?.trim() || undefined },
       // RD4 — réassignation du propriétaire : uniquement si l'opérateur a
@@ -382,17 +380,12 @@ export function ReceptionVehicule() {
           </Section>
 
           {/* 6 — Pannes & observations */}
-          <Section title="6 · Pannes déclarées & observations">
-            <Field label="Pannes déclarées" required error={errors.pannesDeclarees}>
-              <textarea value={r.pannesDeclarees ?? ""} onChange={(e) => set("reception", "pannesDeclarees", e.target.value)} rows={3} className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" placeholder="Voyant moteur allumé, bruit à l'accélération…" />
-            </Field>
-            <Field label="Observations">
-              <textarea value={r.observationsReception ?? ""} onChange={(e) => set("reception", "observationsReception", e.target.value)} rows={2} className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" placeholder="Client pressé, remarques…" />
-            </Field>
-            <Field label="Travaux demandés / plainte (si différente des pannes)">
-              <textarea value={r.plainte ?? ""} onChange={(e) => set("reception", "plainte", e.target.value)} rows={2} className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" />
-            </Field>
-          </Section>
+          {/* LOT U3 (E9, RD7) — l'ancienne section 6 « Pannes déclarées &
+              observations » est SUPPRIMÉE : son contenu est remonté en tête de
+              la section 5 « Constats & check-list outillage ». Deux blocs qui
+              décrivaient le même constat à deux endroits obligeaient l'agent à
+              choisir où écrire. La 3ᵉ zone de texte (plainte) disparaît aussi :
+              le serveur reporte déjà la plainte sur les pannes déclarées. */}
 
           {/* 7 — Photos */}
           <Section title="7 · État des lieux photographique (pièce à conviction)">
@@ -449,29 +442,35 @@ export function ReceptionVehicule() {
           </Section>
 
           {/* 5 — Check-list outillage */}
-          <Section title="5 · Check-list outillage & accessoires (fiche de réception)">
-            <div className="grid grid-cols-2 gap-2">
-              {OUTILLAGE_ITEMS.map((item) => {
-                const key = item === "AUTRES" ? "AUTRES" : item;
-                const present = !!f.reception.outillage?.[key];
-                return (
-                  <label key={item} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2 py-1.5 text-xs ${present ? "border-success/50 bg-success/5" : "border-border"}`}>
-                    <input type="checkbox" checked={present} onChange={(e) => set("reception", "outillage", { ...(f.reception.outillage ?? {}), [key]: e.target.checked })} className="size-4 accent-success" />
-                    {item}
-                  </label>
-                );
-              })}
-            </div>
-            <Field label="Observations outillage (ex: autres éléments)" hint="Saisissez les remarques par élément dans le champ correspondant">
-              <div className="space-y-1.5">
-                {OUTILLAGE_ITEMS.map((item) => (
-                  <div key={item} className="flex items-center gap-2">
-                    <span className="w-40 shrink-0 text-[10px] font-semibold uppercase text-muted-foreground">{item}</span>
-                    <Input value={outillageNotes[item] ?? ""} onChange={(e) => setOutillageNotes({ ...outillageNotes, [item]: e.target.value })} placeholder="observation…" className="h-7 text-xs" />
-                  </div>
-                ))}
+          <Section title="5 · Constats & check-list outillage">
+            {/* LOT U3 (E9, RD7) — l'ancienne section 6 est ABSORBÉE ici :
+                « Pannes déclarées » (obligatoire) et « Observations » remontent
+                en tête du bloc constats. La 3ᵉ zone de texte
+                (« travaux demandés / plainte ») était redondante : le serveur
+                reporte déjà la plainte sur les pannes déclarées. */}
+            <div className="space-y-4">
+              <Field label="Pannes déclarées" required error={errors.pannesDeclarees}>
+                <textarea value={r.pannesDeclarees ?? ""} onChange={(e) => set("reception", "pannesDeclarees", e.target.value)} rows={3} className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" placeholder="Voyant moteur allumé, bruit à l'accélération…" />
+              </Field>
+              <Field label="Observations" hint="Facultatif — remarques du déposant, délai souhaité, contraintes…">
+                <textarea value={r.observationsReception ?? ""} onChange={(e) => set("reception", "observationsReception", e.target.value)} rows={2} className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" placeholder="Client pressé, remarques…" />
+              </Field>
+              <div>
+                <p className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                  Outillage &amp; accessoires
+                </p>
+                <p className="mb-2 text-[11px] text-muted-foreground">
+                  Cochez ce qui est présent dans le véhicule. Le crayon ouvre l&apos;observation
+                  <span className="whitespace-nowrap"> de l&apos;élément </span>concerné.
+                </p>
+                <CheckListOutillage
+                  coches={f.reception.outillage ?? {}}
+                  observations={outillageNotes}
+                  onToggle={(cle, present) => set("reception", "outillage", { ...(f.reception.outillage ?? {}), [cle]: present })}
+                  onObservation={(cle, texte) => setOutillageNotes({ ...outillageNotes, [cle]: texte })}
+                />
               </div>
-            </Field>
+            </div>
           </Section>
 
           {/* 8 — Validation */}
