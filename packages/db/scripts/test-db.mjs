@@ -70,6 +70,34 @@ try {
     log(`schémas public + drizzle purgés.`);
   }
 
+  // 2b. LOT R1 — fusion des doublons d'immatriculation (prérequis de l'index
+  //     unique 0004 immat_norm). Exécuté AVANT drizzle-kit migrate : la
+  //     migration crée un index UNIQUE qui échouerait sur des doublons
+  //     persistants. Idempotent.
+  if (!keep) {
+    // Base fraîche (reset) : aucun doublon possible, étape inutile.
+  } else {
+    const tsxPre = findBin("tsx");
+    if (tsxPre) {
+      const rDedupPre = spawnSync(
+        process.execPath,
+        [tsxPre, resolve(PKG_ROOT, "src", "dedup-vehicules-immat.ts")],
+        {
+          cwd: PKG_ROOT,
+          encoding: "utf8",
+          env: { ...process.env, DATABASE_URL: TEST_URL, FORCE: undefined },
+          stdio: quiet ? "pipe" : "inherit",
+        },
+      );
+      if (rDedupPre.status !== 0) {
+        console.error("[test-db] ÉCHEC — dedup-vehicules-immat (pré-migrate) :");
+        console.error(`${rDedupPre.stdout ?? ""}\n${rDedupPre.stderr ?? ""}`);
+        process.exit(rDedupPre.status ?? 1);
+      }
+      log("vehicules : doublons d'immatriculation fusionnés avant migrate (Lot R1).");
+    }
+  }
+
   // 3. schéma via drizzle-kit migrate (garde-fou intégré, base locale → autorisé)
   const guard = resolve(PKG_ROOT, "scripts", "drizzle-guard.mjs");
   const res = spawnSync(process.execPath, [guard, "migrate"], {

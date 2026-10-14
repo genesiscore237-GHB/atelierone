@@ -46,6 +46,7 @@
     "migrate:parking": "tsx src/migrate-parking.ts",
     "migrate:parking-vehicules": "tsx src/migrate-parking-vehicules.ts",
     "migrate:kpi-cibles": "tsx src/migrate-kpi-cibles.ts",
+    "dedup:vehicules-immat": "tsx src/dedup-vehicules-immat.ts",
     "seed:garage": "tsx src/seed-garage.ts",
     "seed:garage:plan": "tsx src/seed-garage.ts --plan",
     "verify:garage": "tsx src/verify-garage.ts",

@@ -21,6 +21,8 @@ import {
   orHistorique,
   atelierNotifications,
   produits,
+  immatNormaleCondition,
+  immatNormPreferenceSql,
 } from "@atelierone/db";
 import { eq, and, desc, sql, or, ilike } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -33,6 +35,7 @@ import {
 import {
   synchroniserIdentiteParking,
   projeterParkingDepuisImmo,
+  normaliserImmatriculation,
 } from "~/server/lib/parking-vehicule-service";
 
 /** MODULE VÉHICULES & ATELIER — parc, fiche, statuts d'immobilisation, historique. */
@@ -431,10 +434,17 @@ export const vehiculesRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // LOT R1 — dédup par plaque normalisée (« AB 123 CD » ≡ « ab123cd »).
+      const immatNorm = normaliserImmatriculation(input.immatriculation);
+      if (!immatNorm) throw new TRPCError({ code: "BAD_REQUEST", message: "Immatriculation vide." });
       const [dup] = await db
         .select({ id: vehicules.id })
         .from(vehicules)
-        .where(and(eq(vehicules.immatriculation, input.immatriculation.trim()), eq(vehicules.agenceId, ctx.user.agenceId)))
+        .where(and(
+          eq(vehicules.agenceId, ctx.user.agenceId),
+          immatNormaleCondition(vehicules.immatriculation, input.immatriculation),
+        ))
+        .orderBy(immatNormPreferenceSql(vehicules.immatNorm))
         .limit(1);
       if (dup) throw new TRPCError({ code: "BAD_REQUEST", message: "Cette immatriculation existe déjà dans votre agence." });
 
@@ -452,6 +462,7 @@ export const vehiculesRouter = createTRPCRouter({
         .values({
           agenceId: ctx.user.agenceId,
           immatriculation: input.immatriculation.trim(),
+          immatNorm,
           clientId: input.clientId ?? null,
           marque: input.marque ?? null,
           modele: input.modele ?? null,

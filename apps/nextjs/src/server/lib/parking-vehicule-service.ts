@@ -127,19 +127,28 @@ export async function trouverOuCreerCanonique(
   if (!brut) return null;
   const norm = normaliserImmatriculation(brut);
 
+  // LOT R1 — l'appariement se fait sur la forme NORMALISÉE de la plaque, en
+  // calculant la normalisation à la volée depuis `immatriculation` plutôt
+  // qu'en s'appuyant uniquement sur la colonne dérivée `immat_norm` : les
+  // lignes préexistantes (fixtures, backfill) peuvent avoir `immat_norm` à
+  // NULL tant que le script dedup-vehicules-immat n'a pas tourné, et il faut
+  // malgré tout les retrouver pour éviter un doublon. `immat_norm` (indexée)
+  // sert de tri : quand plusieurs lignes portent la même plaque normalisée,
+  // on privilégie celle dont la colonne dérivée est déjà renseignée, puis la
+  // plus ancienne (id croissant).
   const existants = (await exec.execute(sql`
     SELECT id FROM vehicules
     WHERE agence_id = ${params.agenceId}
       AND immatriculation IS NOT NULL
-      AND upper(regexp_replace(btrim(immatriculation), '[[:space:]]+', '', 'g')) = ${norm}
-    ORDER BY id
+      AND upper(regexp_replace(btrim(immatriculation), '\s+', '', 'g')) = ${norm}
+    ORDER BY (immat_norm IS NULL), id
     LIMIT 1`)) as unknown as Lignes;
   if (existants[0]) return Number(existants[0].id);
 
   const crees = (await exec.execute(sql`
-    INSERT INTO vehicules (agence_id, immatriculation, marque, modele, version, couleur,
+    INSERT INTO vehicules (agence_id, immatriculation, immat_norm, marque, modele, version, couleur,
                            numero_chassis, statut_immobilisation, notes)
-    VALUES (${params.agenceId}, ${brut}, ${params.marque ?? null}, ${params.modele ?? null},
+    VALUES (${params.agenceId}, ${brut}, ${norm}, ${params.marque ?? null}, ${params.modele ?? null},
             ${params.version ?? null}, ${params.couleur ?? null}, ${params.vin ?? null},
             ${immobilisationDepuisParking(params.statutParking)}, ${params.notes ?? null})
     RETURNING id`)) as unknown as Lignes;

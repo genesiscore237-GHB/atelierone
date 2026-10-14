@@ -33,13 +33,15 @@ import {
   fournisseurs,
   atelierNotifications,
   stocks,
+  immatNormaleCondition,
+  immatNormPreferenceSql,
 } from "@atelierone/db";
 import { eq, and, desc, sql, gte, lte, asc, inArray, ilike, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
 import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererReferenceFacture, verrouillerSequence, prochaineSequence, MODES_PAIEMENT, montantLigne } from "~/server/lib/facturation-service";
 import { RBACService } from "~/server/lib/rbac-service";
-import { projeterParkingDepuisImmo } from "~/server/lib/parking-vehicule-service";
+import { projeterParkingDepuisImmo, normaliserImmatriculation } from "~/server/lib/parking-vehicule-service";
 import {
   migrerStatutLegacy,
   transitionStatutAtelierValide,
@@ -261,15 +263,22 @@ export const orRouter = createTRPCRouter({
       notes: z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
+      const immatNorm = normaliserImmatriculation(input.immatriculation);
+      if (!immatNorm) throw new TRPCError({ code: "BAD_REQUEST", message: "Immatriculation vide." });
       const [existing] = await db
         .select({ id: vehicules.id })
         .from(vehicules)
-        .where(and(eq(vehicules.agenceId, ctx.user.agenceId), eq(vehicules.immatriculation, input.immatriculation)))
+        .where(and(
+          eq(vehicules.agenceId, ctx.user.agenceId),
+          immatNormaleCondition(vehicules.immatriculation, input.immatriculation),
+        ))
+        .orderBy(immatNormPreferenceSql(vehicules.immatNorm))
         .limit(1);
       if (existing) throw new TRPCError({ code: "BAD_REQUEST", message: "Cette immatriculation existe déjà." });
       const [row] = await db.insert(vehicules).values({
         agenceId: ctx.user.agenceId,
         immatriculation: input.immatriculation,
+        immatNorm,
         marque: input.marque ?? null,
         modele: input.modele ?? null,
         annee: input.annee ?? null,
@@ -737,24 +746,51 @@ export const orRouter = createTRPCRouter({
             updatedAt: new Date(),
           } as any).where(eq(vehicules.id, vehiculeId));
         } else {
-          const [veh] = await tx.insert(vehicules).values({
-            agenceId,
-            clientId,
-            immatriculation: input.vehicule.immatriculation.trim().toUpperCase(),
-            numeroChassis: input.vehicule.numeroChassis?.trim() || null,
-            typeVehicule: input.vehicule.typeVehicule,
-            marque: input.vehicule.marque?.trim() || null,
-            modele: input.vehicule.modele?.trim() || null,
-            version: input.vehicule.version?.trim() || null,
-            annee: input.vehicule.annee ?? null,
-            couleur: input.vehicule.couleur?.trim() || null,
-            carburant: input.vehicule.carburant || null,
-            kilometrage: input.vehicule.kilometrage ?? null,
-            chauffeurNom: input.chauffeur?.nom?.trim() || null,
-            chauffeurTelephone: input.chauffeur?.telephone?.trim() || null,
-            statutImmobilisation: "en_reception",
-          } as any).returning();
-          vehiculeId = veh.id;
+          // R2 — réconciliation par plaque normalisée : si un véhicule portant
+          // la même plaque (« AB-123-CD » ≡ « ab 123 cd ») existe déjà dans
+          // l'agence, on le RÉUTILISE au lieu de créer un doublon. Le client
+          // saisi à la réception n'est réassigné que s'il diffère (RD4, pas
+          // d'écrasement silencieux de la propriété).
+          const immatNorm = normaliserImmatriculation(input.vehicule.immatriculation);
+          const [existant] = await tx
+            .select({ id: vehicules.id, clientId: vehicules.clientId })
+            .from(vehicules)
+            .where(and(
+              eq(vehicules.agenceId, agenceId),
+              immatNormaleCondition(vehicules.immatriculation, input.vehicule.immatriculation),
+            ))
+            .orderBy(immatNormPreferenceSql(vehicules.immatNorm))
+            .limit(1);
+          if (existant) {
+            await tx.update(vehicules).set({
+              chauffeurNom: input.chauffeur?.nom?.trim() || null,
+              chauffeurTelephone: input.chauffeur?.telephone?.trim() || null,
+              kilometrage: input.vehicule.kilometrage ?? undefined,
+              ...(existant.clientId !== clientId ? { clientId } : {}),
+              updatedAt: new Date(),
+            } as any).where(eq(vehicules.id, existant.id));
+            vehiculeId = existant.id;
+          } else {
+            const [veh] = await tx.insert(vehicules).values({
+              agenceId,
+              clientId,
+              immatriculation: input.vehicule.immatriculation.trim().toUpperCase(),
+              immatNorm,
+              numeroChassis: input.vehicule.numeroChassis?.trim() || null,
+              typeVehicule: input.vehicule.typeVehicule,
+              marque: input.vehicule.marque?.trim() || null,
+              modele: input.vehicule.modele?.trim() || null,
+              version: input.vehicule.version?.trim() || null,
+              annee: input.vehicule.annee ?? null,
+              couleur: input.vehicule.couleur?.trim() || null,
+              carburant: input.vehicule.carburant || null,
+              kilometrage: input.vehicule.kilometrage ?? null,
+              chauffeurNom: input.chauffeur?.nom?.trim() || null,
+              chauffeurTelephone: input.chauffeur?.telephone?.trim() || null,
+              statutImmobilisation: "en_reception",
+            } as any).returning();
+            vehiculeId = veh.id;
+          }
         }
 
         // 3. Dossier d'intervention (OR) complet — T0.5 : genNumero porte le
