@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Search, Plus, Loader2, CheckCircle2, X } from "lucide-react";
 import { api } from "~/trpc/react";
 import { toast } from "sonner";
@@ -8,6 +8,8 @@ import Link from "next/link";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { SelectSearch } from "~/components/ui/select-search";
+import { TYPES_VEHICULE, libelleTypeVehicule } from "~/server/lib/vehicule-service";
 
 /**
  * RÉCEPTION VÉHICULE (MVP) — recherche ou création en même temps.
@@ -118,6 +120,20 @@ export function ReceptionVehicule() {
       ? doublonPotentiel.data.client
       : null;
 
+  // LOT U1 (E7) — combobox « Type de véhicule » : la liste fermée n'est plus
+  // l'unique source. On propose la liste de référence (libellés humanisés) PLUS
+  // les types réellement rencontrés par l'agence, et la saisie reste libre.
+  const typesUtilises = api.vehicules.typesUtilises.useQuery();
+  const optionsTypeVehicule = useMemo(() => {
+    const vues = new Set<string>(TYPES_VEHICULE as readonly string[]);
+    for (const o of typesUtilises.data?.options ?? []) vues.add(o.valeur);
+    // Le véhicule chargé peut porter un type hors des deux listes : on l'ajoute
+    // pour que le champ affiche bien la valeur existante.
+    const courant = (f.vehicule.typeVehicule ?? "").trim();
+    if (courant) vues.add(courant);
+    return [...vues].map((v) => ({ value: v, label: libelleTypeVehicule(v) }));
+  }, [typesUtilises.data?.options, f.vehicule.typeVehicule]);
+
   const addPhotos = (files: FileList | null) => {
     if (!files) return;
     const reader = (file: File) => new Promise<string>((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.readAsDataURL(file); });
@@ -219,10 +235,16 @@ export function ReceptionVehicule() {
               <Field label="N° de châssis">
                 <Input value={f.vehicule.numeroChassis ?? ""} onChange={(e) => set("vehicule", "numeroChassis", e.target.value.toUpperCase())} className="font-mono uppercase" />
               </Field>
-              <Field label="Type de véhicule" required>
-                <select value={f.vehicule.typeVehicule ?? "voiture"} onChange={(e) => set("vehicule", "typeVehicule", e.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm">
-                  {["voiture", "utilitaire", "poids_lourd", "moto", "autocar", "autre"].map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
+              <Field label="Type de véhicule" required hint="Liste de l'agence + saisie libre (ex. « benne »)">
+                <SelectSearch
+                  allowCustom
+                  customMaxLength={30}
+                  value={f.vehicule.typeVehicule ?? "voiture"}
+                  onChange={(v) => set("vehicule", "typeVehicule", v)}
+                  options={optionsTypeVehicule}
+                  placeholder="Sélectionner ou saisir un type…"
+                  searchPlaceholder="Rechercher ou saisir un type…"
+                />
               </Field>
               <Field label="Marque" required>
                 <Input value={f.vehicule.marque ?? ""} onChange={(e) => set("vehicule", "marque", e.target.value)} placeholder="Peugeot, Toyota…" />

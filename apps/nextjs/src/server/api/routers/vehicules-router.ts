@@ -31,6 +31,7 @@ import {
   STATUTS_IMMOBILISATION,
   CARBURANTS,
   TYPES_VEHICULE,
+  libelleTypeVehicule,
 } from "~/server/lib/vehicule-service";
 import {
   synchroniserIdentiteParking,
@@ -40,6 +41,32 @@ import {
 
 /** MODULE VÉHICULES & ATELIER — parc, fiche, statuts d'immobilisation, historique. */
 export const vehiculesRouter = createTRPCRouter({
+  /**
+   * LOT U1 (E7) — Types de véhicule déjà utilisés par l'agence.
+   *
+   * Alimente le combobox « Type de véhicule » de la réception : la liste
+   * cerrada n'est plus la seule source, les types réellement rencontrés le
+   * sont aussi (saisie libre autorisée côté UI). Les valeurs en base restent
+   * en snake_case ; `libelle` est purely affichage.
+   */
+  typesUtilises: requirePermissionProcedure("vehicules.consulter")
+    .query(async ({ ctx }) => {
+      const rows = await db
+        .selectDistinct({ valeur: vehicules.typeVehicule })
+        .from(vehicules)
+        .where(and(eq(vehicules.agenceId, ctx.user.agenceId), sql`${vehicules.typeVehicule} IS NOT NULL`))
+        .orderBy(vehicules.typeVehicule);
+      const vus = rows
+        .map((r) => (r.valeur ?? "").trim())
+        .filter((v) => v.length > 0);
+      // Liste de référence d'abord, puis les types rencontrés hors liste.
+      const horsListe = vus.filter((v) => !(TYPES_VEHICULE as readonly string[]).includes(v));
+      return {
+        valeurs: [...TYPES_VEHICULE, ...horsListe],
+        options: [...TYPES_VEHICULE, ...horsListe].map((v) => ({ valeur: v, libelle: libelleTypeVehicule(v) })),
+      };
+    }),
+
   // ─── Liste du parc ───
   list: requirePermissionProcedure("vehicules.consulter")
     .input(

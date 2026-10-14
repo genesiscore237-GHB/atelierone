@@ -83,3 +83,32 @@ export const CARBURANTS = ["essence", "diesel", "electrique", "hybride", "gpl"] 
 
 /** Types de véhicules. */
 export const TYPES_VEHICULE = ["voiture", "utilitaire", "poids_lourd", "moto", "autocar", "autre"] as const;
+
+/**
+ * LOT U1 (E7) — Libellé lisible d'un type de véhicule.
+ *
+ * La valeur STOCKÉE reste snake_case (`poids_lourd`) : pas de migration de
+ * données, et `TYPES_VEHICULE` / les index existants restent valides. Seule
+ * l'AFFICHAGE est humanisé : « Poids lourd » au lieu de « poids_lourd ».
+ *
+ * Fonction pure, partagée serveur/client (aucune dépendance) : la même chaîne
+ * produit le même libellé partout, y compris pour les types saisis librement
+ * (combobox) qui ne sont pas dans `TYPES_VEHICULE`.
+ */
+export function libelleTypeVehicule(value: string | null | undefined): string {
+  const brut = (value ?? "").trim();
+  if (!brut) return "";
+  // « poids_lourd » / « POIDS_LOURD » → « Poids lourd »
+  const mots = brut
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+  if (!mots.length) return "";
+  const [premier, ...reste] = mots;
+  // Seul le premier mot est capitalisé (« Poids lourd », pas « Poids Lourd ») ;
+  // les siglas courts restent en capitales (« TV », « 4x4 », « CD »).
+  const tete = premier.length <= 2 ? premier.toUpperCase() : premier.charAt(0).toUpperCase() + premier.slice(1).toLowerCase();
+  return [tete, ...reste.map((m) => m.toLowerCase())].join(" ");
+}
