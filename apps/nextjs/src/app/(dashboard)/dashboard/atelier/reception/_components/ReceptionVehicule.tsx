@@ -55,11 +55,20 @@ export function ReceptionVehicule() {
   const set = (section: string, k: string, v: any) => setF((p) => ({ ...p, [section]: { ...p[section], [k]: v } }));
   const [outillageNotes, setOutillageNotes] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // RD4 — transparence : client d'origine d'un véhicule chargé (pour détecter
+  // un changement de propriétaire et demander confirmation explicite).
+  const [vehiculeClientOrigine, setVehiculeClientOrigine] = useState<{ id?: number; nom?: string } | null>(null);
 
   const { data: recherche } = api.or.rechercherReception.useQuery({ q: q.trim() }, { enabled: q.trim().length >= 2 && !modeCreation });
   const receptionner = api.or.receptionner.useMutation({
     onSuccess: (r) => {
-      toast.success(`Réception enregistrée — dossier ${r.numero} créé`);
+      // RD3 — transparence : le véhicule existant a été réutilisé (et non
+      // recréé) par plaque normalisée.
+      if ((r as any).vehiculeReconcilie) {
+        toast.info(`Véhicule existant réutilisé — dossier ${r.numero} créé sur le véhicule déjà enregistré`);
+      } else {
+        toast.success(`Réception enregistrée — dossier ${r.numero} créé`);
+      }
       utils.or.list.invalidate();
       utils.vehicules.list.invalidate();
       setF({ vehicule: {}, client: {}, chauffeur: {}, reception: { typeIntervention: "ATELIER", motEntree: "PANNE", priorite: "P3", niveauCarburantEntree: "", outillage: {}, photos: [], validationVerbale: false } });
@@ -67,6 +76,7 @@ export function ReceptionVehicule() {
       setModeCreation(false);
       setQ("");
       setResultats(null);
+      setVehiculeClientOrigine(null);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -78,6 +88,8 @@ export function ReceptionVehicule() {
       chauffeur: { nom: v.chauffeurNom ?? "", telephone: v.chauffeurTelephone ?? "" },
       reception: { typeIntervention: "ATELIER", motEntree: "PANNE", priorite: "P3", niveauCarburantEntree: "", outillage: {}, photos: [], validationVerbale: false },
     });
+    // RD4 — mémorise le propriétaire d'origine (pour détecter un changement).
+    setVehiculeClientOrigine({ id: v.clientId ?? undefined, nom: v.clientNom ?? undefined });
     setModeCreation(false);
     setResultats(null);
     setQ("");
@@ -105,6 +117,9 @@ export function ReceptionVehicule() {
     return errs;
   };
 
+  // RD4 — le véhicule chargé a un propriétaire et le client saisi est différent.
+  const ownerChangeDemande = !!vehiculeClientOrigine?.id && !!f.vehicule.id && !!f.client.id && vehiculeClientOrigine.id !== f.client.id;
+
   const handleSubmit = () => {
     const errs = valider();
     setErrors(errs);
@@ -115,6 +130,9 @@ export function ReceptionVehicule() {
     if (outillageNotes["AUTRES"]) outillage["autres"] = { present: true, observation: outillageNotes["AUTRES"] };
     receptionner.mutate({
       client: { ...f.client, nom: f.client.nom?.trim(), telephone: f.client.telephone?.trim() || undefined },
+      // RD4 — réassignation du propriétaire : uniquement si l'opérateur a
+      // coché la case de confirmation (jamais d'écrasement silencieux).
+      reassignerClient: ownerChangeDemande && !!f.reception.reassignerClient,
       vehicule: { ...f.vehicule, immatriculation: f.vehicule.immatriculation.trim(), marque: f.vehicule.marque?.trim() || undefined, modele: f.vehicule.modele?.trim() || undefined, annee: f.vehicule.annee != null && f.vehicule.annee !== "" ? Number(f.vehicule.annee) : undefined, kilometrage: f.vehicule.kilometrage != null && f.vehicule.kilometrage !== "" ? Number(f.vehicule.kilometrage) : undefined },
       chauffeur: { nom: f.chauffeur.nom?.trim() || undefined, telephone: f.chauffeur.telephone?.trim() || undefined },
       reception: { ...f.reception, outillage, kilometrageEntree: Number(f.reception.kilometrageEntree), photos: f.reception.photos?.length ? f.reception.photos : undefined },
@@ -238,6 +256,27 @@ export function ReceptionVehicule() {
                 <Input value={f.client.ville ?? ""} onChange={(e) => set("client", "ville", e.target.value)} />
               </Field>
             </div>
+            {/* RD4 — transparence : le véhicule chargé a un propriétaire et le
+                client saisi est différent → confirmation explicite requise. */}
+            {ownerChangeDemande && (
+              <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs">
+                <p className="font-medium text-warning">
+                  Ce véhicule est déjà lié au propriétaire « {vehiculeClientOrigine?.nom ?? "inconnu"} ».
+                </p>
+                <label className="mt-2 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!f.reception.reassignerClient}
+                    onChange={(e) => set("reception", "reassignerClient", e.target.checked)}
+                    className="size-4 accent-primary"
+                  />
+                  Réassigner ce véhicule au nouveau client (remplace le propriétaire actuel)
+                </label>
+                <p className="mt-1 text-muted-foreground">
+                  Sans cette case, le véhicule conserve son propriétaire d'origine.
+                </p>
+              </div>
+            )}
           </Section>
 
           {/* 3 — Chauffeur */}

@@ -14,7 +14,12 @@
  *     pas soumis à l'unicité (modèle « pas d'invention »).
  *  5. `or.receptionner` : réconciliation par plaque — une seconde réception
  *     portant la même plaque (saisie différemment) RÉUTILISE le véhicule
- *     existant au lieu de créer un doublon.
+ *     existant au lieu de créer un doublon. Le drapeau `vehiculeReconcilie`
+ *     (RD3) est faux à la création, vrai à la réutilisation.
+ *  6. RD4 — transparence du propriétaire : lors d'une réconciliation, le
+ *     client historique du véhicule est conservé par défaut ; il n'est
+ *     réassigné au nouveau client que si `reassignerClient: true` est envoyé
+ *     (pas d'écrasement silencieux de la propriété).
  *
  * Fixtures réelles — namespace `lotr1`, bande de registre 9300-9349.
  */
@@ -127,6 +132,12 @@ async function retirer(): Promise<void> {
     sql`DELETE FROM vehicules
         WHERE agence_id = 1 AND (immat_norm LIKE 'LOTR1%' OR immatriculation LIKE 'LOTR1%')`,
   );
+  // Clients créés par les réceptions (LOTR1 / Client A-B) — après les véhicules
+  // qui les référencent.
+  await db.execute(
+    sql`DELETE FROM clients
+        WHERE agence_id = 1 AND nom IN ('Client LotR1', 'Client A', 'Client B')`,
+  );
   await db.execute(
     sql`DELETE FROM audit_logs
         WHERE user_id IN (SELECT id FROM utilisateurs WHERE email = ${USER_EMAIL})`,
@@ -223,11 +234,56 @@ describe("LOT R1 — unicité de la plaque par agence (immat_norm)", () => {
     // Les deux OR pointent vers le MÊME véhicule (réutilisation, pas de doublon).
     expect(or1.vehiculeId).toBe(or2.vehiculeId);
 
+    // RD3 — transparence : la 1ʳᵉ réception crée le véhicule (flag faux),
+    // la 2ᵉ le réutilise par plaque normalisée (flag vrai).
+    expect((or1 as any).vehiculeReconcilie).toBe(false);
+    expect((or2 as any).vehiculeReconcilie).toBe(true);
+
     const rows = (await db.execute(
       sql`SELECT id FROM vehicules
           WHERE agence_id = 1 AND immat_norm = ${"LOTR1VEH01"}`,
     )) as unknown as Row[];
     expect(rows.length).toBe(1);
+  });
+
+  it("6. RD4 — le propriétaire est conservé par défaut, réassigné si demandé", async () => {
+    const caller = orRouter.createCaller(ctxSuperadmin());
+    const immat = "LOTR1VEH02";
+
+    // 1ʳᵉ réception : véhicule créé, rattaché au client A.
+    const orA = await caller.receptionner({
+      client: { nom: "Client A", telephone: "690000001" },
+      vehicule: { immatriculation: immat },
+      reception: { kilometrageEntree: 10000, pannesDeclarees: "Vidange" },
+    });
+    const v = await vehiculeByImmatNorm(immat);
+    const clientIdA = v.client_id as number;
+    expect(clientIdA).toBeGreaterThan(0);
+
+    // 2ᵉ réception, même plaque, client B différent, SANS reassignerClient :
+    // le propriétaire historique (A) est conservé (pas d'écrasement silencieux).
+    const orB = await caller.receptionner({
+      client: { nom: "Client B", telephone: "690000002" },
+      vehicule: { immatriculation: immat },
+      reception: { kilometrageEntree: 11000, pannesDeclarees: "Freins" },
+    });
+    expect((orB as any).vehiculeReconcilie).toBe(true);
+    expect(orB.vehiculeId).toBe(orA.vehiculeId);
+    const v2 = await vehiculeByImmatNorm(immat);
+    expect(v2.client_id).toBe(clientIdA);
+
+    // 3ᵉ réception, même plaque, client B, AVEC reassignerClient : le
+    // propriétaire est réassigné à B (changement explicite).
+    const orB2 = await caller.receptionner({
+      client: { nom: "Client B", telephone: "690000002" },
+      vehicule: { immatriculation: immat },
+      reassignerClient: true,
+      reception: { kilometrageEntree: 12000, pannesDeclarees: "Alternateur" },
+    });
+    expect(orB2.vehiculeId).toBe(orA.vehiculeId);
+    const v3 = await vehiculeByImmatNorm(immat);
+    expect(v3.client_id).not.toBe(clientIdA);
+    expect(v3.client_id).toBeGreaterThan(0);
   });
 
   it("normaliserImmatriculation : trim + espaces supprimés + majuscules (ponctuation conservée)", () => {

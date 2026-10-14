@@ -1,4 +1,4 @@
-# CDC — Enregistrement & suivi des véhicules (AtelierOne / GPJ)
+﻿# CDC — Enregistrement & suivi des véhicules (AtelierOne / GPJ)
 
 > **Source de vérité** de la transformation « Réception & suivi véhicules ».
 > Audit initial du **2026-10-14** ; plan de lots ; journal d'avancement.
@@ -94,7 +94,7 @@
 | **R1** | Unicité plaque + normalisation unique | db, véhicules | ✅ |
 | **R2** | Détection auto véhicule/client existant | réception (UI+API) | ✅ |
 | **R3** | Contrôle doublon + réconciliation 4 cas | réception (API) | ✅ |
-| **R4** | Transparence entités existantes | réception (UI) | ⬜ |
+| **R4** | Transparence entités existantes | réception (UI) | ✅ |
 | **R5** | Dédoublonnage client | clients, réception | ⬜ |
 | **U1** | Type véhicule combobox | réception (UI) | ⬜ |
 | **U2** | Km regroupé + invariant | réception (UI+API) | ⬜ |
@@ -134,6 +134,7 @@
 | Date | Jalon | Résultat |
 |---|---|---|
 | 2026-10-14 | **Audit initial** | Rapport complet (§1) ; 3 P0, 6 P1, 7 P2 identifiés ; 15 exigences ; 10 décisions (RD1-RD10) ; 14 lots planifiés |
-| 2026-10-14 | **R1 – R5 – unicité plaque + réconciliation** | Livré. Migration `0004` (index unique partiel `immat_norm`, `vehicules.ts`), helper centralisé `immat-utils.ts` (`normaliserImmat`, `immatNormaleCondition`, `immatNormPreferenceSql` avec fallback `immat_norm IS NULL` pour lignes héritées), script `dedup-vehicules-immat.ts` (backfill + fusion), branchement des 3 points d'insertion (`or.createVehicule`, `or.receptionner`, `trouverOuCreerCanonique`). **Régression** : `garage-lot1` échouait (lookup sur `immat_norm` seul ignorait les lignes NULL) → corrigée par le fallback. Vérifs : TSC 0 erreur dans fichiers touchés ; 36/36 tests verts (`garage-lot1` 8, `garage-lot2` 8, `or-lot0` 5, `or-lot4-cycle` 15) ; test nouveau `or-r1-immat-uniqueness.integration.test.ts`. Pas encore de commit. |
+| 2026-10-14 | **R1 – R5 – unicité plaque + réconciliation** | Livré. Migration `0004` (index unique partiel `immat_norm`, `vehicules.ts`), helper centralisé `immat-utils.ts` (`normaliserImmat`, `immatNormaleCondition`, `immatNormPreferenceSql` avec fallback `immat_norm IS NULL` pour lignes héritées), script `dedup-vehicules-immat.ts` (backfill + fusion), branchement des 3 points d'insertion (`or.createVehicule`, `or.receptionner`, `trouverOuCreerCanonique`). **Régression** : `garage-lot1` échouait (lookup sur `immat_norm` seul ignorait les lignes NULL) → corrigée par le fallback. Vérifs : TSC 0 erreur dans fichiers touchés ; 36/36 tests verts (`garage-lot1` 8, `garage-lot2` 8, `or-lot0` 5, `or-lot4-cycle` 15) ; test nouveau `or-r1-immat-uniqueness.integration.test.ts`. Commit `754b26e` poussé. |
+| 2026-10-14 | **R4 — transparence entités existantes (E5)** | Livré (commit R1 poussé `754b26e`). API `or.receptionner` : retour enrichi de `vehiculeReconcilie` (RD3 — faux à la création du véhicule, vrai à la réutilisation par plaque normalisée) ; garde-fou propriétaire `reassignerClient` (RD4) — le `clientId` d'un véhicule réconcilié n'est réassigné que si l'opérateur envoie explicitement `reassignerClient: true` (sinon le propriétaire historique est conservé, pas d'écrasement silencieux). UI `ReceptionVehicule.tsx` : toast `info` quand le véhicule existant est réutilisé, bandeau « Ce véhicule est déjà lié au propriétaire X » avec case « Réassigner ce véhicule au nouveau client » (visible si propriétaire différent), reset du contexte après succès. Tests : `or-r1-immat-uniqueness.integration.test.ts` étendu — test 5 vérifie le flag `vehiculeReconcilie` (false→true), nouveau test 6 (RD4) vérifie conservation par défaut puis réassignation sur demande. Vérifs : TSC 0 erreur dans les fichiers touchés (erreurs restantes préexistantes) ; 5/5 tests verts ; lint 0 erreur (11 warnings préexistants). |
 
-Lot **R1** livré (plaque unique + réconciliation). **R2** et **R3** sont couverts par ce même livrable (réconciliation par plaque normalisée dans `or.createVehicule` et `or.receptionner`). Prochains lots : **R4** (transparence entités existantes – UI réception), **R5** (dédoublonnage client), **U1** (combobox type véhicule), puis U2–U5, S1, S2, A1, A2.
+Lot **R1** livré (plaque unique + réconciliation). **R2** et **R3** sont couverts par ce même livrable (réconciliation par plaque normalisée dans `or.createVehicule` et `or.receptionner`). Prochains lots : **R5** (dédoublonnage client), **U1** (combobox type véhicule), puis U2–U5, S1, S2, A1, A2.

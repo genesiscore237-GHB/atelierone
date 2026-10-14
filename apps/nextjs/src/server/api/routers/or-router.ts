@@ -682,6 +682,10 @@ export const orRouter = createTRPCRouter({
         carburant: z.string().optional(),
         kilometrage: z.number().int().optional(),
       }),
+      // RD4 — transparence : par défaut, un véhicule existant conserve son
+      // propriétaire historique. Le changement de client n'a lieu que si
+      // l'opérateur le demande explicitement (évite d'écraser la propriété).
+      reassignerClient: z.boolean().default(false),
       chauffeur: z.object({ nom: z.string().optional(), telephone: z.string().optional() }).optional(),
       reception: z.object({
         dateReception: z.string().optional(),
@@ -737,6 +741,9 @@ export const orRouter = createTRPCRouter({
 
         // 2. Véhicule (existant → complété ; sinon créé) — toujours lié à un client
         let vehiculeId = input.vehicule.id ?? null;
+        // RD3 — transparence : vrai si le véhicule a été trouvé (et réutilisé)
+        // par plaque normalisée plutôt que créé à la volée.
+        let vehiculeReconcilie = false;
         if (vehiculeId) {
           await tx.update(vehicules).set({
             clientId,
@@ -762,14 +769,19 @@ export const orRouter = createTRPCRouter({
             .orderBy(immatNormPreferenceSql(vehicules.immatNorm))
             .limit(1);
           if (existant) {
+            // RD4 — transparence : on ne réassigne le client que si
+            // l'opérateur l'a demandé explicitement (reassignerClient). Sinon
+            // le propriétaire historique est conservé (pas d'écrasement).
+            const reassigner = input.reassignerClient && existant.clientId !== clientId;
             await tx.update(vehicules).set({
               chauffeurNom: input.chauffeur?.nom?.trim() || null,
               chauffeurTelephone: input.chauffeur?.telephone?.trim() || null,
               kilometrage: input.vehicule.kilometrage ?? undefined,
-              ...(existant.clientId !== clientId ? { clientId } : {}),
+              ...(reassigner ? { clientId } : {}),
               updatedAt: new Date(),
             } as any).where(eq(vehicules.id, existant.id));
             vehiculeId = existant.id;
+            vehiculeReconcilie = true;
           } else {
             const [veh] = await tx.insert(vehicules).values({
               agenceId,
@@ -847,7 +859,9 @@ export const orRouter = createTRPCRouter({
         // LOT 1 — projection → registre parking lié.
         await projeterParkingDepuisImmo(tx, vehiculeId, "en_reparation");
 
-        return { id: or.id, numero, vehiculeId, clientId };
+        // RD3 — transparence : l'UI informe que le véhicule existant a été
+        // réutilisé (et non recréé) lors de la réception.
+        return { id: or.id, numero, vehiculeId, clientId, vehiculeReconcilie };
       }) as any;
     }),
 
