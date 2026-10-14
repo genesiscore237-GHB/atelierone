@@ -9,11 +9,17 @@ import {
   clientStatutHistorique,
   contratsMaintenance,
   contratsMaintenanceVehicules,
+  contratsFlottes,
+  dettesClients,
+  relances,
+  retours,
+  avoirs,
   vehicules,
   ventes,
   ventesLignes,
   ordresReparation,
   paiements,
+  normaliserTelephone,
 } from "@atelierone/db";
 import { eq, and, or, ilike, desc, sql, inArray, gte, lte } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -754,5 +760,176 @@ export const clientsRouter = createTRPCRouter({
         .set({ attenteBonCommande: false, updatedAt: new Date() } as any)
         .where(eq(ordresReparation.id, input.orId));
       return { success: true };
+    }),
+
+  // ─── LOT R5 — Dédoublonnage client (E6) ────────────────────────────────
+  // Normalisation téléphone : chiffres seuls, préfixe international 237 retiré,
+  // 9 chiffres [62]… — strictement alignée sur `normaliserTelephone`
+  // (packages/db/src/tel-utils.ts). L'expression SQL est volontairement écrite
+  // avec `[^0-9]` et `[0-9]{9}` plutôt que `\D` / `\d{9}` : ces latter
+  // échappements sont réinterprétés par le sql`` de Drizzle et produisent un
+  // NULL silencieux (aucun groupe détecté). Expression sur UNE seule ligne.
+
+  /** Détecte un client existant portant déjà ce téléphone (aide à la saisie). */
+  doublonParTelephone: requirePermissionProcedure("clients.consulter")
+    .input(z.object({ telephone: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const telNorm = normaliserTelephone(input.telephone);
+      if (!telNorm) return { client: null as null | { id: number; nom: string; prenom: string | null; telephone: string | null; codeClient: string | null } };
+      const rows = await db
+        .select({
+          id: clients.id,
+          nom: clients.nom,
+          prenom: clients.prenom,
+          telephone: clients.telephone,
+          codeClient: clients.codeClient,
+          telNorm: sql<string>`regexp_replace(substring(regexp_replace(coalesce(${clients.telephone}, ''), '[^0-9]', '', 'g') from '^(?:237)?([0-9]{9})$'), '[^0-9]', '', 'g')`,
+        })
+        .from(clients)
+        .where(and(eq(clients.agenceId, ctx.user.agenceId), sql`${clients.deletedAt} IS NULL`))
+        .orderBy(clients.createdAt);
+      const match = rows.find((r) => (r.telNorm ?? "").trim() === telNorm);
+      return {
+        client: match
+          ? { id: match.id, nom: match.nom, prenom: match.prenom, telephone: match.telephone, codeClient: match.codeClient }
+          : null,
+      };
+    }),
+
+  /** Regroupe les clients d'une agence partageant un téléphone normalisé. */
+  suggestionsClients: requirePermissionProcedure("clients.consulter")
+    .input(z.object({ agenceId: z.number().int().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const agenceId = input?.agenceId ?? ctx.user.agenceId;
+      const rows = await db
+        .select({
+          id: clients.id,
+          nom: clients.nom,
+          prenom: clients.prenom,
+          telephone: clients.telephone,
+          codeClient: clients.codeClient,
+          statut: clients.statut,
+          createdAt: clients.createdAt,
+          telNorm: sql<string>`regexp_replace(substring(regexp_replace(coalesce(${clients.telephone}, ''), '[^0-9]', '', 'g') from '^(?:237)?([0-9]{9})$'), '[^0-9]', '', 'g')`,
+        })
+        .from(clients)
+        .where(and(eq(clients.agenceId, agenceId), sql`${clients.deletedAt} IS NULL`))
+        .orderBy(clients.nom);
+
+      // Regroupe par téléphone normalisé (9 chiffres valides) ; groupes ≥ 2.
+      const byTel = new Map<string, typeof rows>();
+      for (const r of rows) {
+        const k = (r.telNorm ?? "").trim();
+        if (k.length !== 9) continue;
+        const arr = byTel.get(k) ?? [];
+        arr.push(r);
+        byTel.set(k, arr);
+      }
+      const groupes = [...byTel.entries()]
+        .filter(([, g]) => g.length >= 2)
+        .map(([telNorm, membres]) => ({
+          telNorm,
+          // Le « survivant » est le plus ancien (source de vérité historique).
+          survivant: [...membres].sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0))[0],
+          membres,
+        }))
+        .sort((a, b) => b.membres.length - a.membres.length);
+
+      return { groupes, totalClients: rows.length };
+    }),
+
+  /**
+   * Fusionne N doublons dans un survivant (RD10).
+   * - Le survivant garde ses données non vides (jamais d'écrasement, D3).
+   * - Il hérite des champs VIDES du doublon (nom, email, ville, adresse…).
+   * - TOUTES les FK `client_id` sont reportées vers le survivant : invariant
+   *   « plus aucune référence ne pointe vers un doublon ».
+   * - Les doublons sont archivés (soft-delete), jamais supprimés (traçabilité).
+   */
+  fusionner: requirePermissionProcedure("clients.modifier")
+    .input(z.object({
+      survivantId: z.number().int(),
+      doublonIds: z.array(z.number().int()).min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        const agenceId = ctx.user.agenceId;
+        const doublons = input.doublonIds.filter((id) => id !== input.survivantId);
+        if (!doublons.length) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Aucun doublon à fusionner." });
+        }
+
+        const [survivant] = await tx
+          .select()
+          .from(clients)
+          .where(and(eq(clients.id, input.survivantId), eq(clients.agenceId, agenceId), sql`${clients.deletedAt} IS NULL`))
+          .limit(1);
+        if (!survivant) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Client survivant introuvable." });
+        }
+        const doublonRows = await tx
+          .select()
+          .from(clients)
+          .where(and(inArray(clients.id, doublons), eq(clients.agenceId, agenceId), sql`${clients.deletedAt} IS NULL`));
+        if (doublonRows.length !== doublons.length) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Un ou plusieurs doublons introuvables." });
+        }
+
+        // 1. Complète le survivant avec les champs VIDE des doublons.
+        const texte = (v: unknown): string | null => {
+          const s = typeof v === "string" ? v.trim() : "";
+          return s.length ? s : null;
+        };
+        const inherited: Record<string, unknown> = {};
+        for (const d of doublonRows) {
+          for (const champ of ["prenom", "telephone", "telephoneSecondaire", "email", "adresse", "ville", "codeClient"] as const) {
+            if (texte(survivant[champ]) === null && texte(d[champ]) !== null) {
+              inherited[champ] = texte(d[champ]);
+            }
+          }
+        }
+        if (Object.keys(inherited).length) {
+          await tx.update(clients).set(inherited as any).where(eq(clients.id, input.survivantId));
+        }
+
+        // 2. Repointe TOUTES les FK client_id vers le survivant.
+        //    `.set()` attend la clé TS du CHAMP (« clientId ») — passer le nom
+        //    de la table produit un SET vide (erreur SQL 42601).
+        const REFS: [string, any][] = [
+          ["clientId", clientAdresses],
+          ["clientId", clientContacts],
+          ["clientId", clientInteractions],
+          ["clientId", clientStatutHistorique],
+          ["clientId", contratsMaintenance],
+          ["clientId", contratsFlottes],
+          ["clientId", dettesClients],
+          ["clientId", relances],
+          ["clientId", retours],
+          ["clientId", avoirs],
+          ["clientId", vehicules],
+          ["clientId", ventes],
+          ["clientId", ordresReparation],
+        ];
+        for (const [key, table] of REFS) {
+          for (const dId of doublons) {
+            await tx.update(table).set({ [key]: input.survivantId } as any).where(eq(table.clientId, dId));
+          }
+        }
+
+        // 3. Archive les doublons (soft-delete) et purge leur marquage.
+        for (const dId of doublons) {
+          await tx
+            .update(clients)
+            .set({ deletedAt: new Date(), clientsDoublonnes: false, updatedAt: new Date() } as any)
+            .where(eq(clients.id, dId));
+        }
+        // 4. Le survivant n'a plus de jumeau : il n'est plus marqué doublon.
+        await tx
+          .update(clients)
+          .set({ clientsDoublonnes: false, updatedAt: new Date() } as any)
+          .where(eq(clients.id, input.survivantId));
+
+        return { survivantId: input.survivantId, fusionnes: doublons.length };
+      });
     }),
 });

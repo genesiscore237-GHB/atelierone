@@ -45,6 +45,12 @@ export const clients = pgTable("clients", {
   exigeBonDeCommande: boolean("exige_bon_de_commande").default(false),
   codeClient: varchar("code_client", { length: 50 }).unique(),
   categoriePrix: varchar("categorie_prix", { length: 50 }).default("public"),
+  // LOT R5 — dédoublonnage (E6) : marquage dérivé « potentiel doublon »
+  // (même téléphone normalisé ou même nom+téléphone qu'un autre client de
+  // l'agence). Recalculé par packages/db/src/dedup-clients.ts et maintenu à
+  // la création (or.receptionner). Sert uniquement à SURFACER les doublons
+  // dans l'UI ; la fusion passe par clients.fusionner (jamais automatique).
+  clientsDoublonnes: boolean("clients_doublonnes").default(false),
   notes: text("notes"),
   notesInternes: text("notes_internes"),
   isActive: boolean("is_active").default(true),

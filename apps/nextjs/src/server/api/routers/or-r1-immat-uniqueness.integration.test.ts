@@ -20,17 +20,28 @@
  *     client historique du véhicule est conservé par défaut ; il n'est
  *     réassigné au nouveau client que si `reassignerClient: true` est envoyé
  *     (pas d'écrasement silencieux de la propriété).
+ *  7. LOT R5 (E6) — `clients.suggestionsClients` regroupe les clients d'une
+ *     agence partageant le même téléphone NORMALISÉ (« 690100001 » ≡
+ *     « +237 690 100 001 ») ; un numéro distinct ne produit aucun groupe.
+ *  8. LOT R5 — `clients.fusionner` : le survivant garde ses données non
+ *     vides (jamais d'écrasement), hérite des champs vides du doublon, et
+ *     TOUTES les références clients (véhicules, OR…) sont reportées vers lui
+ *     (RD10 : invariant « plus aucune FK ne pointe vers un doublon »).
+ *  9. LOT R5 — `clients.doublonParTelephone` : la réception signale un
+ *     client existant portant déjà le numéro saisi (aide à la sélection, sans
+ *     fusion automatique).
  *
  * Fixtures réelles — namespace `lotr1`, bande de registre 9300-9349.
  */
 
-import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vitest";
 
 // `next-auth` n'est pas resolvable hors de Next — on ne mocke QUE le
 // transport d'authentification ; le RBAC (DB) reste réel.
 vi.mock("@atelierone/auth", () => ({}));
 
 import { orRouter } from "~/server/api/routers/or-router";
+import { clientsRouter } from "~/server/api/routers/clients-router";
 import { sql } from "drizzle-orm";
 import { db } from "~/server/db";
 import { normaliserImmatriculation } from "~/server/lib/parking-vehicule-service";
@@ -111,14 +122,24 @@ beforeAll(async () => {
   if (!Number.isFinite(userId)) throw new Error(`Fixtures ${NS} : utilisateur introuvable.`);
 });
 
+beforeEach(async () => {
+  // Chaque test repart d'une base neutre : les fixtures R5 (clients C/D,
+  // téléphone 690100001) sont partagées entre tests 7-9 et faussaient les
+  // regroupements de suggestionsClients / doublonParTelephone. Seul le
+  // données métier est purgée — le rôle/utilisateur (créés une fois dans
+  // beforeAll) reste intact car ctxSuperadmin() dépend de userId.
+  await retirerDonnees();
+});
+
 afterAll(async () => {
   await retirer();
 });
 
-async function retirer(): Promise<void> {
+/** Purge les données métier (véhicules, OR, clients R5) sans toucher au RBAC. */
+async function retirerDonnees(): Promise<void> {
   // Nettoyage large, dans l'ordre des clés étrangères : OR d'abord, puis
-  // véhicules, puis fixtures RBAC. Les OR sont ciblés via leur véhicule
-  // (immatriculation LotR1) car leur `numero` est généré côté serveur.
+  // véhicules. Les OR sont ciblés via leur véhicule (immatriculation LotR1)
+  // car leur `numero` est généré côté serveur.
   const vehs = (await db.execute(
     sql`SELECT id FROM vehicules
         WHERE agence_id = 1 AND (immat_norm LIKE 'LOTR1%' OR immatriculation LIKE 'LOTR1%')`,
@@ -132,16 +153,24 @@ async function retirer(): Promise<void> {
     sql`DELETE FROM vehicules
         WHERE agence_id = 1 AND (immat_norm LIKE 'LOTR1%' OR immatriculation LIKE 'LOTR1%')`,
   );
-  // Clients créés par les réceptions (LOTR1 / Client A-B) — après les véhicules
-  // qui les référencent.
+  // Clients créés par les réceptions (LOTR1 / Client A-B / Client D-*) — après
+  // les véhicules qui les référencent. Portée élargie au-delà de l'OR pour
+  // absorber les fixtures R5 (fusion, doublon, téléphone).
   await db.execute(
     sql`DELETE FROM clients
-        WHERE agence_id = 1 AND nom IN ('Client LotR1', 'Client A', 'Client B')`,
+        WHERE agence_id = 1
+          AND (nom IN ('Client LotR1', 'Client A', 'Client B', 'Client C', 'Client D')
+               OR code_client LIKE 'LOTR1-%')`,
   );
   await db.execute(
     sql`DELETE FROM audit_logs
         WHERE user_id IN (SELECT id FROM utilisateurs WHERE email = ${USER_EMAIL})`,
   );
+}
+
+/** Purge complète : données métier + fixtures RBAC (beforeAll / afterAll). */
+async function retirer(): Promise<void> {
+  await retirerDonnees();
   await db.execute(sql`DELETE FROM utilisateurs WHERE email = ${USER_EMAIL}`);
   await db.execute(
     sql`DELETE FROM role_permissions
@@ -284,6 +313,139 @@ describe("LOT R1 — unicité de la plaque par agence (immat_norm)", () => {
     const v3 = await vehiculeByImmatNorm(immat);
     expect(v3.client_id).not.toBe(clientIdA);
     expect(v3.client_id).toBeGreaterThan(0);
+  });
+
+  it("7. suggestionsClients regroupe les clients au même téléphone normalisé", async () => {
+    const orCaller = orRouter.createCaller(ctxSuperadmin());
+    const clCaller = clientsRouter.createCaller(ctxSuperadmin());
+    const immat = "LOTR1VEH03";
+
+    // Deux réceptions : mêmes plaques (réconciliées) mais clients distincts,
+    // saisis avec deux formats de numéro DIFFÉRENTS qui normalisent pareil.
+    await orCaller.receptionner({
+      client: { nom: "Client C", telephone: "690100001" },
+      vehicule: { immatriculation: immat },
+      reception: { kilometrageEntree: 5000, pannesDeclarees: "Vidange" },
+    });
+    await orCaller.receptionner({
+      client: { nom: "Client D", telephone: "+237 690 100 001" },
+      vehicule: { immatriculation: immat },
+      reassignerClient: true,
+      reception: { kilometrageEntree: 6000, pannesDeclarees: "Freins" },
+    });
+
+    const res = await clCaller.suggestionsClients();
+    const groupe = res.groupes.find((g) => g.telNorm === "690100001");
+    expect(groupe).toBeDefined();
+    expect(groupe!.membres.length).toBeGreaterThanOrEqual(2);
+    const noms = groupe!.membres.map((m) => m.nom).sort();
+    expect(noms).toContain("Client C");
+    expect(noms).toContain("Client D");
+
+    // Le survivant proposé est le plus ancien (source de vérité historique).
+    expect(groupe!.survivant.id).toBe(
+      Math.min(...groupe!.membres.map((m) => m.id)),
+    );
+  });
+
+  it("8. fusionner complète le survivant et reporte TOUTES les références (RD10)", async () => {
+    const orCaller = orRouter.createCaller(ctxSuperadmin());
+    const clCaller = clientsRouter.createCaller(ctxSuperadmin());
+    const immat = "LOTR1VEH04";
+
+    // Deux clients distincts, même téléphone normalisé, formats différents.
+    const or1 = await orCaller.receptionner({
+      client: { nom: "Client C", telephone: "690100001", email: "c@lotr1.cm" },
+      vehicule: { immatriculation: immat },
+      reception: { kilometrageEntree: 5000, pannesDeclarees: "Vidange" },
+    });
+    const or2 = await orCaller.receptionner({
+      client: { nom: "Client D", telephone: "+237 690 100 001", ville: "Douala" },
+      vehicule: { immatriculation: immat },
+      reassignerClient: true,
+      reception: { kilometrageEntree: 6000, pannesDeclarees: "Freins" },
+    });
+
+    const v1 = await vehiculeByImmatNorm(immat);
+    const doublonId = v1.client_id as number;
+    expect(doublonId).toBeGreaterThan(0);
+
+    // Survivant = Client C (le plus ancien), doublon = Client D.
+    const res = await clCaller.suggestionsClients();
+    const groupe = res.groupes.find((g) => g.telNorm === "690100001");
+    expect(groupe).toBeDefined();
+    const survivantId = groupe!.survivant.id;
+    expect(survivantId).not.toBe(doublonId);
+
+    // Le doublon porte la ville (champ que le survivant n'a pas).
+    const avSurv = (await db.execute(
+      sql`SELECT ville, email FROM clients WHERE id = ${survivantId}`,
+    )) as unknown as Row[];
+    expect(avSurv[0]?.ville ?? null).toBeNull();
+
+    const r = await clCaller.fusionner({ survivantId, doublonIds: [doublonId] });
+    expect(r.fusionnes).toBe(1);
+
+    // Survivant : ville héritée du doublon, email non écrasé (D3/RD4).
+    const apSurv = (await db.execute(
+      sql`SELECT ville, email, deleted_at FROM clients WHERE id = ${survivantId}`,
+    )) as unknown as Row[];
+    expect(apSurv[0]?.ville).toBe("Douala");
+    expect(apSurv[0]?.email).toBe("c@lotr1.cm");
+    expect(apSurv[0]?.deleted_at).toBeNull();
+
+    // RD10 — TOUTES les références sont reportées : plus aucune ligne ne
+    // pointe vers le doublon, et les deux OR + le véhicule pointent le survivant.
+    const vehRef = (await db.execute(
+      sql`SELECT client_id FROM vehicules WHERE id = ${or1.vehiculeId}`,
+    )) as unknown as Row[];
+    expect(vehRef[0]?.client_id).toBe(survivantId);
+
+    const orRef = (await db.execute(
+      sql`SELECT client_id FROM ordres_reparation WHERE id IN (${or1.id}, ${or2.id})`,
+    )) as unknown as Row[];
+    expect(orRef.length).toBe(2);
+    for (const row of orRef) expect(row.client_id).toBe(survivantId);
+
+    const fkRestantes = (await db.execute(
+      sql`SELECT
+            (SELECT count(*) FROM vehicules WHERE client_id = ${doublonId}) AS veh,
+            (SELECT count(*) FROM ordres_reparation WHERE client_id = ${doublonId}) AS ors`,
+    )) as unknown as Row[];
+    expect(Number(fkRestantes[0]?.veh ?? 0)).toBe(0);
+    expect(Number(fkRestantes[0]?.ors ?? 0)).toBe(0);
+
+    // Le doublon est archivé (soft-delete), jamais supprimé physiquement.
+    const doublon = (await db.execute(
+      sql`SELECT deleted_at FROM clients WHERE id = ${doublonId}`,
+    )) as unknown as Row[];
+    expect(doublon[0]?.deleted_at).not.toBeNull();
+
+    // Un client archivé n'apparaît plus dans les suggestions.
+    const apres = await clCaller.suggestionsClients();
+    const gApres = apres.groupes.find((g) => g.telNorm === "690100001");
+    expect(gApres).toBeUndefined();
+  });
+
+  it("9. doublonParTelephone signale un client existant portant déjà le numéro", async () => {
+    const orCaller = orRouter.createCaller(ctxSuperadmin());
+    const clCaller = clientsRouter.createCaller(ctxSuperadmin());
+    const immat = "LOTR1VEH05";
+
+    await orCaller.receptionner({
+      client: { nom: "Client D", telephone: "690100001" },
+      vehicule: { immatriculation: immat },
+      reception: { kilometrageEntree: 7000, pannesDeclarees: "Alternateur" },
+    });
+
+    // Même numéro, format international → même client détecté (pas de doublon).
+    const res = await clCaller.doublonParTelephone({ telephone: "+237 690 100 001" });
+    expect(res.client).not.toBeNull();
+    expect(res.client!.nom).toBe("Client D");
+
+    // Numéro inconnu → aucun signal (la réception créera un client neuf).
+    const inconnu = await clCaller.doublonParTelephone({ telephone: "699999999" });
+    expect(inconnu.client).toBeNull();
   });
 
   it("normaliserImmatriculation : trim + espaces supprimés + majuscules (ponctuation conservée)", () => {

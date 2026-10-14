@@ -269,6 +269,32 @@ try {
     log("kpi_cibles : cibles par défaut assurées (Lot 3).");
   }
 
+  // 4e. LOT R5 — fusion des doublons de clients (E6). Exécuté APRÈS migrate
+  //     (la colonne clients_doublonnes de 0005 doit exister pour le marquage
+  //     final). Idempotent. Inutile sur une base fraîche (reset) : aucun
+  //     doublon possible.
+  if (keep && !noSocle) {
+    const tsxCl = findBin("tsx");
+    if (tsxCl) {
+      const rDedupCl = spawnSync(
+        process.execPath,
+        [tsxCl, resolve(PKG_ROOT, "src", "dedup-clients.ts")],
+        {
+          cwd: PKG_ROOT,
+          encoding: "utf8",
+          env: { ...process.env, DATABASE_URL: TEST_URL, FORCE: undefined },
+          stdio: quiet ? "pipe" : "inherit",
+        },
+      );
+      if (rDedupCl.status !== 0) {
+        console.error("[test-db] ÉCHEC — dedup-clients (post-migrate) :");
+        console.error(`${rDedupCl.stdout ?? ""}\n${rDedupCl.stderr ?? ""}`);
+        process.exit(rDedupCl.status ?? 1);
+      }
+      log("clients : doublons fusionnés après migrate (Lot R5).");
+    }
+  }
+
   // 5. vérification
   const t = postgres(TEST_URL, { max: 1 });
   const n = await t`select count(*)::int as n from information_schema.tables

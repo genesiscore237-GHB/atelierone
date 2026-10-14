@@ -35,6 +35,7 @@ import {
   stocks,
   immatNormaleCondition,
   immatNormPreferenceSql,
+  normaliserTelephone,
 } from "@atelierone/db";
 import { eq, and, desc, sql, gte, lte, asc, inArray, ilike, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -736,6 +737,36 @@ export const orRouter = createTRPCRouter({
             typeClient: "PART",
             statut: "ACTIF",
           } as any).returning();
+          // LOT R5 — dédoublonnage (E6) : le nouveau client est-il un doublon
+          // potentiel d'un client existant de l'agence (même téléphone
+          // normalisé, ou même nom + téléphone) ? On le MARQUE (et on marque
+          // l'existant) pour que l'UI puisse proposer une fusion explicite.
+          // Aucune fusion automatique (pas d'invention, D3) : le marquage sert
+          // seulement à SURFACER le doublon ; la fusion passe par
+          // clients.fusionner.
+          const telNorm = normaliserTelephone(input.client.telephone);
+          let doublonPotentiel = false;
+          if (telNorm) {
+            const [memeTel] = await tx
+              .select({ id: clients.id, nom: clients.nom, prenom: clients.prenom })
+              .from(clients)
+              .where(and(
+                eq(clients.agenceId, agenceId),
+                sql`${clients.deletedAt} IS NULL`,
+                sql`${clients.id} <> ${cli.id}`,
+                sql`regexp_replace(substring(regexp_replace(coalesce(${clients.telephone}, ''), '[^0-9]', '', 'g') from '^(?:237)?([0-9]{9})$'), '[^0-9]', '', 'g') = ${telNorm}`,
+              ))
+              .limit(1);
+            doublonPotentiel = !!memeTel;
+            if (memeTel) {
+              // Marque aussi l'existant pour qu'il apparaisse dans la liste
+              // de dédoublonnage (deux sens : le nouveau ET l'ancien).
+              await tx.update(clients).set({ clientsDoublonnes: true } as any).where(eq(clients.id, memeTel.id));
+            }
+          }
+          if (doublonPotentiel) {
+            await tx.update(clients).set({ clientsDoublonnes: true } as any).where(eq(clients.id, cli.id));
+          }
           clientId = cli.id;
         }
 

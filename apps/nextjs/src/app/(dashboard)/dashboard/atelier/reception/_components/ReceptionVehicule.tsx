@@ -101,6 +101,23 @@ export function ReceptionVehicule() {
     setQ("");
   };
 
+  // LOT R5 — dédoublonnage (E6) : quand un numéro est saisi pour un NOUVEAU
+  // client (pas de client.id), on interroge les clients existants de l'agence
+  // au même téléphone normalisé. Si trouvé, on propose (sans imposer) de
+  // sélectionner ce client existant au lieu d'en créer un doublon.
+  const telNormalise = (f.client.telephone ?? "").replace(/\D+/g, "").replace(/^0/, "");
+  // « Continuer avec un nouveau client » : mémorise le numéro écarté pour ne
+  // pas re-proposer le même doublon à chaque frappe.
+  const [telDoublonEcarte, setTelDoublonEcarte] = useState<string | null>(null);
+  const doublonPotentiel = api.clients.doublonParTelephone.useQuery(
+    { telephone: f.client.telephone ?? "" },
+    { enabled: !f.client.id && telNormalise.length >= 9 && !receptionner.isPending }
+  );
+  const doublonAffiche =
+    doublonPotentiel.data?.client && !f.client.id && telDoublonEcarte !== telNormalise
+      ? doublonPotentiel.data.client
+      : null;
+
   const addPhotos = (files: FileList | null) => {
     if (!files) return;
     const reader = (file: File) => new Promise<string>((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.readAsDataURL(file); });
@@ -256,6 +273,28 @@ export function ReceptionVehicule() {
                 <Input value={f.client.ville ?? ""} onChange={(e) => set("client", "ville", e.target.value)} />
               </Field>
             </div>
+            {/* LOT R5 — dédoublonnage (E6) : un client existant porte déjà ce
+                numéro → on propose de le sélectionner au lieu de créer un
+                doublon. Proposition, jamais imposée (D3 : pas d'invention). */}
+            {doublonAffiche && (
+              <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs">
+                <p className="font-medium text-warning">
+                  Un client existe déjà avec ce numéro : « {doublonAffiche.nom}{" "}
+                  {doublonAffiche.prenom ?? ""} » ({doublonAffiche.codeClient ?? "—"}).
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => chargerClient(doublonAffiche)}>
+                    Sélectionner ce client existant
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setTelDoublonEcarte(telNormalise)}>
+                    Continuer avec un nouveau client
+                  </Button>
+                </div>
+                <p className="mt-1 text-muted-foreground">
+                  Créer un second client avec le même numéro risque de dupliquer la fiche. Vous pourrez fusionner plus tard depuis le registre Clients.
+                </p>
+              </div>
+            )}
             {/* RD4 — transparence : le véhicule chargé a un propriétaire et le
                 client saisi est différent → confirmation explicite requise. */}
             {ownerChangeDemande && (
