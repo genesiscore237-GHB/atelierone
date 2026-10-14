@@ -62,6 +62,7 @@ import {
   trouverOuCreerCanonique,
   synchroniserIdentiteCanonique,
   projeterImmoDepuisParking,
+  sortirVehiculeParking,
 } from "~/server/lib/parking-vehicule-service";
 
 export const STATUTS_VEHICULE = [
@@ -1556,33 +1557,18 @@ spots: spots.map((s) => {
       }
 
       await db.transaction(async (tx) => {
-        await libererSpot(tx, vehicle.spotId);
-        await tx
-          .update(parkingVehicles)
-          .set({
-            statut: "SORTI",
-            siteId: null,
-            zoneId: null,
-            spotId: null,
-            centreX: null,
-            centreY: null,
-            rotation: 0,
-            updatedAt: new Date(),
-            dateDerniereAction: new Date(),
-          } as any)
-          .where(eq(parkingVehicles.id, vehicle.id));
-        await tx.insert(parkingMovements).values({
+        // LOT S1 (RD8) — la sortie est une logique UNIQUE partagée avec
+        // `or.restituerVehicule` (libération du spot + mouvement SORTIE).
+        const r = await sortirVehiculeParking(tx, {
           agenceId,
-          vehicleId: vehicle.id,
           userId: Number(ctx.user.id),
-          type: "SORTIE",
-          siteOrigineId: vehicle.siteId,
-          zoneOrigineId: vehicle.zoneId,
-          positionOrigineX: vehicle.centreX,
-          positionOrigineY: vehicle.centreY,
+          parkingVehicleId: vehicle.id,
           motif: input.motif ?? null,
           commentaire: "Sortie du parking",
-        } as any);
+        });
+        if (!r.applique && r.raison === "pas_de_ligne_parking") {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
+        }
       });
       return { id: vehicle.id, ok: true };
     }),

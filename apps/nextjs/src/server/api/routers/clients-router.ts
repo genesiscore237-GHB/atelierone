@@ -30,6 +30,7 @@ import {
   peutOuvrirOrdre,
   type TypeClient,
 } from "~/server/lib/client-service";
+import { verrouillerSequence, prochaineSequence } from "~/server/lib/facturation-service";
 
 /** MODULE CLIENTS — fiche 360°, types, statuts, contacts, adresses, interactions. */
 export const clientsRouter = createTRPCRouter({
@@ -160,58 +161,65 @@ export const clientsRouter = createTRPCRouter({
         throw new TRPCError({ code: "BAD_REQUEST", message: `Champs obligatoires manquants (${input.typeClient}) : ${manquants.join(", ")}.` });
       }
 
-      // Code client : manuel (immuable) ou auto CLT-année-séquence
-      let codeClient = input.codeClient?.trim();
-      if (!codeClient) {
-        const [last] = await db
-          .select({ n: sql<number>`count(*)::int` })
-          .from(clients)
-          .where(and(eq(clients.agenceId, ctx.user.agenceId), sql`${clients.codeClient} LIKE ${`CLT-${new Date().getFullYear()}-%`}`));
-        codeClient = genererCodeClient((last?.n ?? 0) + 1);
-      } else {
-        const [dup] = await db.select({ id: clients.id }).from(clients).where(eq(clients.codeClient, codeClient)).limit(1);
-        if (dup) throw new TRPCError({ code: "BAD_REQUEST", message: "Ce code client existe déjà." });
-      }
-
       const statut = input.typeClient === "PROSP" ? "PROSPECT" : "ACTIF";
 
-      const [client] = await db
-        .insert(clients)
-        .values({
-          typeClient: input.typeClient,
-          statut,
-          civilite: input.civilite ?? null,
-          nom: input.nom ?? input.raisonSociale ?? "",
-          prenom: input.prenom ?? null,
-          raisonSociale: input.raisonSociale ?? null,
-          sigle: input.sigle ?? null,
-          niuNif: input.niuNif ?? null,
-          rccm: input.rccm ?? null,
-          compagnieAssurance: input.compagnieAssurance ?? null,
-          numeroPolice: input.numeroPolice ?? null,
-          numeroSinistre: input.numeroSinistre ?? null,
-          expertAssurance: input.expertAssurance ?? null,
-          montantPriseEnCharge: input.montantPriseEnCharge != null ? String(input.montantPriseEnCharge) : null,
-          franchiseClient: input.franchiseClient != null ? String(input.franchiseClient) : null,
-          telephone: input.telephone ?? null,
-          telephoneSecondaire: input.telephoneSecondaire ?? null,
-          whatsapp: input.whatsapp ?? null,
-          email: input.email ?? null,
-          adresse: input.adresse ?? null,
-          ville: input.ville ?? null,
-          modePaiementPrefere: input.modePaiementPrefere ?? "especes",
-          delaiPaiementJours: input.delaiPaiementJours ?? 0,
-          plafondCredit: input.plafondCredit != null ? String(input.plafondCredit) : "0",
-          remiseDefautPct: input.remiseDefautPct != null ? String(input.remiseDefautPct) : "0",
-          exigeBonDeCommande: input.exigeBonDeCommande ?? false,
-          notes: input.notes ?? null,
-          notesInternes: input.notesInternes ?? null,
-          codeClient,
-          isActive: true,
-          createdBy: Number(ctx.user.id),
-          agenceId: ctx.user.agenceId,
-        } as any)
-        .returning();
+      // LOT S1 — course sur `clients_code_client_unique` : `count(*)+1` laissait
+      // deux créations concurrentes lire la même valeur. Génération + insertion
+      // sont désormais dans UNE transaction protégée par pg_advisory_xact_lock
+      // (même convention que `or.genNumero`, T0.5).
+      const client = await db.transaction(async (tx) => {
+        // Code client : manuel (immuable) ou auto CLT-année-séquence
+        let codeClient = input.codeClient?.trim();
+        if (!codeClient) {
+          const now = new Date();
+          const prefix = `CLT-${now.getFullYear()}-`;
+          await verrouillerSequence(tx, "CLT", now.getFullYear());
+          const seq = await prochaineSequence(tx, clients, clients.codeClient, prefix);
+          codeClient = genererCodeClient(seq, now);
+        } else {
+          const [dup] = await tx.select({ id: clients.id }).from(clients).where(eq(clients.codeClient, codeClient)).limit(1);
+          if (dup) throw new TRPCError({ code: "BAD_REQUEST", message: "Ce code client existe déjà." });
+        }
+
+        const [created] = await tx
+          .insert(clients)
+          .values({
+            typeClient: input.typeClient,
+            statut,
+            civilite: input.civilite ?? null,
+            nom: input.nom ?? input.raisonSociale ?? "",
+            prenom: input.prenom ?? null,
+            raisonSociale: input.raisonSociale ?? null,
+            sigle: input.sigle ?? null,
+            niuNif: input.niuNif ?? null,
+            rccm: input.rccm ?? null,
+            compagnieAssurance: input.compagnieAssurance ?? null,
+            numeroPolice: input.numeroPolice ?? null,
+            numeroSinistre: input.numeroSinistre ?? null,
+            expertAssurance: input.expertAssurance ?? null,
+            montantPriseEnCharge: input.montantPriseEnCharge != null ? String(input.montantPriseEnCharge) : null,
+            franchiseClient: input.franchiseClient != null ? String(input.franchiseClient) : null,
+            telephone: input.telephone ?? null,
+            telephoneSecondaire: input.telephoneSecondaire ?? null,
+            whatsapp: input.whatsapp ?? null,
+            email: input.email ?? null,
+            adresse: input.adresse ?? null,
+            ville: input.ville ?? null,
+            modePaiementPrefere: input.modePaiementPrefere ?? "especes",
+            delaiPaiementJours: input.delaiPaiementJours ?? 0,
+            plafondCredit: input.plafondCredit != null ? String(input.plafondCredit) : "0",
+            remiseDefautPct: input.remiseDefautPct != null ? String(input.remiseDefautPct) : "0",
+            exigeBonDeCommande: input.exigeBonDeCommande ?? false,
+            notes: input.notes ?? null,
+            notesInternes: input.notesInternes ?? null,
+            codeClient,
+            isActive: true,
+            createdBy: Number(ctx.user.id),
+            agenceId: ctx.user.agenceId,
+          } as any)
+          .returning();
+        return created;
+      });
 
       // Contact principal (obligatoire ENTR/ADMIN/FLOTTE)
       if (input.contactPrincipal) {
@@ -259,7 +267,7 @@ export const clientsRouter = createTRPCRouter({
         changePar: Number(ctx.user.id),
       } as any);
 
-      return { id: client.id, codeClient, statut };
+      return { id: client.id, codeClient: client.codeClient, statut };
     }),
 
   // ─── Mise à jour de la fiche ───

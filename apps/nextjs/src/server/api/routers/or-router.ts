@@ -42,7 +42,7 @@ import { TRPCError } from "@trpc/server";
 import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
 import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererReferenceFacture, verrouillerSequence, prochaineSequence, MODES_PAIEMENT, montantLigne } from "~/server/lib/facturation-service";
 import { RBACService } from "~/server/lib/rbac-service";
-import { projeterParkingDepuisImmo, normaliserImmatriculation } from "~/server/lib/parking-vehicule-service";
+import { projeterParkingDepuisImmo, normaliserImmatriculation, sortirVehiculeParking } from "~/server/lib/parking-vehicule-service";
 import {
   migrerStatutLegacy,
   transitionStatutAtelierValide,
@@ -100,6 +100,26 @@ const genNumero = async (exec: typeof db | any): Promise<string> => {
   await verrouillerSequence(exec, "OR", now.getFullYear());
   const n = await prochaineSequence(exec, ordresReparation, ordresReparation.numero, prefix);
   return `${prefix}${String(n).padStart(4, "0")}`;
+};
+
+/**
+ * Code client suivant (même verrou anti-doublon que `genNumero`, namespace CLT).
+ *
+ * `clients.code_client` porte une contrainte UNIQUE **globale** (pas par
+ * agence) : la séquence l'est donc aussi. Elle est calculée en MAX et
+ * sérialisée par `pg_advisory_xact_lock`, sinon deux réceptions concurrentes
+ * de la même agence lisent le même `count(*)` et violent l'unique
+ * (`clients_code_client_unique`) — défaut observé en exécution parallèle.
+ *
+ * DOIT être appelé dans une transaction (le verrou advisory transactionnel en
+ * dépend), comme `genNumero`.
+ */
+const genCodeClient = async (exec: typeof db | any): Promise<string> => {
+  const now = new Date();
+  const prefix = `CLT-${now.getFullYear()}-`;
+  await verrouillerSequence(exec, "CLT", now.getFullYear());
+  const n = await prochaineSequence(exec, clients, clients.codeClient, prefix);
+  return genererCodeClient(n, now);
 };
 
 /** MVP : dossier fermé définitivement → plus aucune modification (diagnostic, devis, pièces, travaux, facture). */
@@ -720,11 +740,9 @@ export const orRouter = createTRPCRouter({
           if (!cli) throw new TRPCError({ code: "BAD_REQUEST", message: "Client introuvable." });
         } else {
           // Code client auto aligné sur la convention app (CLT-année-séquence) — P2-11
-          const [lastCli] = await tx
-            .select({ n: sql<number>`count(*)::int` })
-            .from(clients)
-            .where(and(eq(clients.agenceId, agenceId), sql`${clients.codeClient} LIKE ${`CLT-${new Date().getFullYear()}-%`}`));
-          const codeClient = genererCodeClient((lastCli?.n ?? 0) + 1);
+          // Séquence verrouillée + calculée en MAX : `count(*)+1` faisait
+          // collision sur `clients_code_client_unique` en réception concurrente.
+          const codeClient = await genCodeClient(tx);
           const [cli] = await tx.insert(clients).values({
             agenceId,
             nom: input.client.nom.trim(),
@@ -1412,8 +1430,30 @@ export const orRouter = createTRPCRouter({
           updatedAt: new Date(),
         } as any).where(eq(ordresReparation.id, input.orId));
         await tx.update(vehicules).set({ statutImmobilisation: "sorti", kilometrage: input.kilometrageSortie, updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
-        // LOT 1 — projection → registre parking lié.
-        await projeterParkingDepuisImmo(tx, or.vehiculeId, "sorti");
+        // LOT S1 (E12, RD8) — la restitution est une VRAIE sortie du parking.
+        //
+        // AVANT ce lot, on appelait `projeterParkingDepuisImmo(…, "sorti")` :
+        // un simple `UPDATE parking_vehicles SET statut='SORTI'`, qui laissait
+        // la place RÉSERVÉE, la position d'origine et aucun mouvement SORTIE
+        // (P0-3 : place fantôme invisible de l'historique).
+        //
+        // La projection est désormais REDONDANTE et SUPPRIMÉE ici : elle ne fait
+        // qu'écrire le statut, et surtout elle marquerait la ligne SORTI AVANT
+        // la sortie réelle — ce qui ferait croire à un véhicule déjà sorti et
+        // laisserait le spot occupé. `sortirVehiculeParking` est donc le point
+        // de passage UNIQUE (libération du spot + effacement position +
+        // mouvement SORTIE) et couvre le statut.
+        //
+        // Idempotence assumée : si le véhicule n'a pas de ligne parking, ou s'il
+        // est déjà SORTI (sortie faite par ailleurs), la restitution ne
+        // échoue pas — elle le signale via `sortieParking`.
+        const sortieParking = await sortirVehiculeParking(tx, {
+          agenceId: ctx.user.agenceId,
+          userId: Number(ctx.user.id),
+          vehiculeId: or.vehiculeId,
+          motif: `Restitution dossier ${or.numero ?? input.orId}`,
+          commentaire: `Véhicule restitué à ${input.recuperateurNom}${exceptionnelle ? " (sortie exceptionnelle)" : ""}`,
+        });
         await tx.insert(orHistorique).values({
           orId: input.orId,
           type: "RESTITUTION",
@@ -1422,7 +1462,7 @@ export const orRouter = createTRPCRouter({
           commentaire: `Véhicule restitué à ${input.recuperateurNom}${input.motifNonRepare ? ` — NON RÉPARÉ (${input.motifNonRepare})` : ""} — km sortie ${input.kilometrageSortie}${infosException}`,
           changePar: Number(ctx.user.id),
         } as any);
-        return { success: true, exceptionnelle: exceptionnelle ? true : undefined };
+        return { success: true, exceptionnelle: exceptionnelle ? true : undefined, sortieParking: sortieParking.raison };
       }) as any;
     }),
 
@@ -1478,8 +1518,17 @@ export const orRouter = createTRPCRouter({
       // Cohérence véhicule
       if (input.nouveauStatut === "LIVRE") {
         await db.update(vehicules).set({ statutImmobilisation: "sorti", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
-        // LOT 1 — projection → registre parking lié.
-        await projeterParkingDepuisImmo(db, or.vehiculeId, "sorti");
+        // LOT S1 (E12, RD8) — même exigence que `or.restituerVehicule` : une
+        // livraison marque le véhicule SORTI, donc sa place doit être LIBÉRÉE
+        // et la sortie journalisée. La projection seule laissait une place
+        // fantôme (P0-3). Idempotent : no-op si déjà sorti / sans ligne.
+        await sortirVehiculeParking(db, {
+          agenceId: ctx.user.agenceId,
+          userId: Number(ctx.user.id),
+          vehiculeId: or.vehiculeId,
+          motif: `Livraison dossier ${or.numero ?? input.id}`,
+          commentaire: "Véhicule livré (changement de statut LIVRE)",
+        });
       } else if (input.nouveauStatut === "EN_COURS" || input.nouveauStatut === "CONTROLE_QUALITE") {
         await db.update(vehicules).set({ statutImmobilisation: "en_reparation", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
         // LOT 1 — projection → registre parking lié.

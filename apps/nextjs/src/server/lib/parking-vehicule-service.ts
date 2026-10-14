@@ -100,6 +100,95 @@ export async function projeterParkingDepuisImmo(
     WHERE vehicule_id = ${vehiculeId} AND statut <> ${statut}`);
 }
 
+// ─── Sortie du parking (source de vérité unique, RD8 / lot S1) ───────────────
+
+/**
+ * LOT S1 (E12, RD8) — SORTIE RÉELLE d'un véhicule du registre parking.
+ *
+ * C'est LA logique unique de sortie, partagée par `garage.sortie` ET
+ * `or.restituerVehicule`. Avant ce lot, la restitution d'un dossier d'atelier
+ * ne faisait qu'un `UPDATE parking_vehicles SET statut='SORTI'` (projection) :
+ * la place restait **réservée/bloquée** et **aucun mouvement SORTIE** n'était
+ * journalisé (P0-3 : place fantôme, véhicule invisible à l'historique).
+ *
+ * Effets, identiques à l'ancienne procédure `garage.sortie` :
+ *   1. le spot est libéré (`bloque = false`, `reserve_pour = NULL`) ;
+ *   2. la ligne passe `SORTI` et perd sa position (site/zone/spot/centre) ;
+ *   3. un mouvement `SORTIE` est écrit avec la position d'origine.
+ *
+ * IDEMPOTENCE : si aucune ligne parking n'est liée, ou si elle est déjà
+ * `SORTI`, rien n'est fait (pas de double mouvement, pas d'erreur). La
+ * restitution d'un dossier ne doit jamais échouer parce que le parking a déjà
+ * été soldé par ailleurs.
+ */
+export async function sortirVehiculeParking(
+  exec: Exec,
+  params: {
+    agenceId: number;
+    userId?: number | null;
+    /** Ligne du registre identifiée par son id (voie `garage.sortie`). */
+    parkingVehicleId?: number | null;
+    /** Véhicule canonique lié (voie `or.restituerVehicule`). */
+    vehiculeId?: number | null;
+    motif?: string | null;
+    commentaire?: string | null;
+  },
+): Promise<{ applique: boolean; raison: "pas_de_ligne_parking" | "deja_sorti" | "sorti" }> {
+  const cible =
+    params.parkingVehicleId != null
+      ? sql`id = ${params.parkingVehicleId}`
+      : params.vehiculeId != null
+        ? sql`vehicule_id = ${params.vehiculeId}`
+        : null;
+  if (!cible) return { applique: false, raison: "pas_de_ligne_parking" };
+
+  // `FOR UPDATE` : deux sorties concurrentes du même véhicule ne peuvent pas
+  // écrire deux mouvements SORTIE ni libérer un spot déjà réattribué.
+  const lignes = (await exec.execute(sql`
+    SELECT id, statut, spot_id, site_id, zone_id, centre_x, centre_y
+    FROM parking_vehicles
+    WHERE agence_id = ${params.agenceId} AND ${cible}
+    ORDER BY id
+    LIMIT 1
+    FOR UPDATE`)) as unknown as {
+      id: number;
+      statut: string;
+      spot_id: number | null;
+      site_id: number | null;
+      zone_id: number | null;
+      centre_x: number | null;
+      centre_y: number | null;
+    }[];
+  const v = lignes[0];
+  if (!v) return { applique: false, raison: "pas_de_ligne_parking" };
+  if (v.statut === "SORTI") return { applique: false, raison: "deja_sorti" };
+
+  // 1. Libération du spot (no-op si le véhicule n'était pas positionné).
+  if (v.spot_id != null) {
+    await exec.execute(sql`
+      UPDATE parking_spots
+      SET bloque = false, reserve_pour = NULL, updated_at = now()
+      WHERE id = ${v.spot_id}`);
+  }
+  // 2. Passage SORTI + effacement de la position.
+  await exec.execute(sql`
+    UPDATE parking_vehicles
+    SET statut = 'SORTI', site_id = NULL, zone_id = NULL, spot_id = NULL,
+        centre_x = NULL, centre_y = NULL, rotation = 0,
+        updated_at = now(), date_derniere_action = now()
+    WHERE id = ${v.id}`);
+  // 3. Journal du mouvement (position d'origine conservée pour l'historique).
+  await exec.execute(sql`
+    INSERT INTO parking_movements
+      (agence_id, vehicle_id, user_id, type,
+       site_origine_id, zone_origine_id, position_origine_x, position_origine_y,
+       motif, commentaire)
+    VALUES (${params.agenceId}, ${v.id}, ${params.userId ?? null}, 'SORTIE',
+            ${v.site_id}, ${v.zone_id}, ${v.centre_x}, ${v.centre_y},
+            ${params.motif ?? null}, ${params.commentaire ?? "Sortie du parking"})`);
+  return { applique: true, raison: "sorti" };
+}
+
 // ─── Liaison (création / recherche du canonique) ────────────────────────────
 
 /**

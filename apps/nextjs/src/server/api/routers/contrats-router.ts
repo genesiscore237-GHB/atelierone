@@ -169,36 +169,41 @@ export const contratsRouter = createTRPCRouter({
         }
       }
 
-      const [last] = await db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(contratsMaintenance)
-        .where(and(eq(contratsMaintenance.agenceId, ctx.user.agenceId), sql`${contratsMaintenance.numeroContrat} LIKE ${`CONT-${new Date().getFullYear()}-%`}`));
-      const numeroContrat = genererNumeroContrat((last?.n ?? 0) + 1);
-
-      const [contrat] = await db
-        .insert(contratsMaintenance)
-        .values({
-          agenceId: ctx.user.agenceId,
-          clientId: input.clientId,
-          numeroContrat,
-          libelle: input.libelle,
-          typeContrat: input.typeContrat,
-          dateDebut: input.dateDebut,
-          dateFin: input.dateFin ?? null,
-          dateSignature: input.dateSignature ?? null,
-          statut: input.statutInitial,
-          montantForfait: input.montantForfait != null ? String(input.montantForfait) : null,
-          frequenceFacturation: input.frequenceFacturation,
-          delaiPaiementJours: input.delaiPaiementJours ?? 0,
-          delaiInterventionHeures: input.delaiInterventionHeures ?? null,
-          couverture: input.couverture ?? "PIECES_ET_MO",
-          remisePourcent: input.remisePourcent != null ? String(input.remisePourcent) : "0",
-          conditionsParticulieres: input.conditionsParticulieres ?? null,
-          responsableInterne: input.responsableInterne ?? null,
-          notes: input.notes ?? null,
-          createdBy: Number(ctx.user.id),
-        } as any)
-        .returning();
+      // N° de contrat : `contrats_maintenance_numero_contrat_unique` est GLOBAL.
+      // `count(*)+1` faisait collision en création concurrente → on verrouille
+      // (pg_advisory_xact_lock, namespace BC) et on calcule en MAX, comme OR/FAC.
+      const contrat = await db.transaction(async (tx) => {
+        const now = new Date();
+        const prefix = `CONT-${now.getFullYear()}-`;
+        await verrouillerSequence(tx, "BC", now.getFullYear());
+        const seq = await prochaineSequence(tx, contratsMaintenance, contratsMaintenance.numeroContrat, prefix);
+        const numeroContrat = genererNumeroContrat(seq, now);
+        const [created] = await tx
+          .insert(contratsMaintenance)
+          .values({
+            agenceId: ctx.user.agenceId,
+            clientId: input.clientId,
+            numeroContrat,
+            libelle: input.libelle,
+            typeContrat: input.typeContrat,
+            dateDebut: input.dateDebut,
+            dateFin: input.dateFin ?? null,
+            dateSignature: input.dateSignature ?? null,
+            statut: input.statutInitial,
+            montantForfait: input.montantForfait != null ? String(input.montantForfait) : null,
+            frequenceFacturation: input.frequenceFacturation,
+            delaiPaiementJours: input.delaiPaiementJours ?? 0,
+            delaiInterventionHeures: input.delaiInterventionHeures ?? null,
+            couverture: input.couverture ?? "PIECES_ET_MO",
+            remisePourcent: input.remisePourcent != null ? String(input.remisePourcent) : "0",
+            conditionsParticulieres: input.conditionsParticulieres ?? null,
+            responsableInterne: input.responsableInterne ?? null,
+            notes: input.notes ?? null,
+            createdBy: Number(ctx.user.id),
+          } as any)
+          .returning();
+        return created;
+      });
 
       for (const v of input.vehicules ?? []) {
         await db.insert(contratsMaintenanceVehicules).values({
@@ -209,7 +214,7 @@ export const contratsRouter = createTRPCRouter({
           actif: true,
         } as any);
       }
-      return { id: contrat.id, numeroContrat, statut: contrat.statut };
+      return { id: contrat.id, numeroContrat: contrat.numeroContrat, statut: contrat.statut };
     }),
 
   // ─── Mise à jour (brouillon) ───

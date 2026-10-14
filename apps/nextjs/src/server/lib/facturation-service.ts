@@ -49,7 +49,7 @@ export function genererReferenceFacture(sequence: number, date = new Date()): st
  * globaux aussi. Une clé par (namespace, année) — jamais par agence, sinon
  * deux agences concurrentes génèrent la même référence (unique violation).
  */
-export type NamespaceSequence = "FAC" | "OR" | "BC";
+export type NamespaceSequence = "FAC" | "OR" | "BC" | "CLT";
 
 /**
  * VERROU ANTI-DOUBLON DE SÉQUENCE (T0.5).
@@ -65,7 +65,7 @@ export function verrouillerSequence(
   namespace: NamespaceSequence,
   annee = new Date().getFullYear(),
 ): Promise<unknown> {
-  const ns = namespace === "FAC" ? 0n : namespace === "OR" ? 1n : 2n;
+  const ns = namespace === "FAC" ? 0n : namespace === "OR" ? 1n : namespace === "BC" ? 2n : 3n;
   const cle = ns * 100_000n + BigInt(annee);
   return exec.execute(sql`select pg_advisory_xact_lock(${cle})`);
 }
