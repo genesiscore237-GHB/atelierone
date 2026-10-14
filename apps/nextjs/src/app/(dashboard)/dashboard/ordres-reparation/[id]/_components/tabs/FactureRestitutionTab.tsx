@@ -10,6 +10,10 @@ import {
   ReceiptText, History, ClipboardCopy, MessageCircle, Car, KeyRound, Lock, CheckCircle2, Loader2, PackageCheck, Trash2,
 } from "lucide-react";
 import { useOrPermissions } from "../../../_hooks/useOrPermissions";
+import {
+  PhotosEtatDesLieux,
+  type PhotoUI,
+} from "../../../../atelier/reception/_components/PhotosEtatDesLieux";
 
 const CARBURANT_OPTIONS = ["vide", "1/4", "1/2", "3/4", "plein"];
 const CARBURANT_LABELS: Record<string, string> = { vide: "Vide", "1/4": "1/4", "1/2": "1/2", "3/4": "3/4", plein: "Plein" };
@@ -41,6 +45,12 @@ export function FactureRestitutionTab({ or }: { or: any }) {
   const { data: ar } = api.or.accuseReception.useQuery({ orId: id });
   const { data: restitutions } = api.or.listerRestitutions.useQuery({ orId: id });
   const [copie, setCopie] = useState(false);
+
+  // LOT U0c — comparaison entrée / sortie de CETTE visite. C'est la pièce à
+  // conviction : on compare l'état constaté à l'entrée avec celui constaté au
+  // moment où le véhicule repart, pas avec un état ancien.
+  const { data: comparaison } = api.or.comparerPhotosEtatDesLieu.useQuery({ orId: id });
+  const [photosSortie, setPhotosSortie] = useState<PhotoUI[]>([]);
 
   const [restitForm, setRestitForm] = useState({
     kilometrageSortie: "",
@@ -112,6 +122,8 @@ export function FactureRestitutionTab({ or }: { or: any }) {
       kilometrageSortie: Number(restitForm.kilometrageSortie),
       niveauCarburantSortie: restitForm.niveauCarburantSortie || undefined,
       checklist,
+      // LOT U0c — état des lieux de sortie (par face), comparé à l'entrée.
+      photos: photosSortie.map((p) => ({ categorie: p.categorie, url: p.url })),
       recuperateurNom: restitForm.recuperateurNom.trim(),
       signatureClient: restitForm.signatureClient.trim(),
       observations: restitForm.observations.trim() || undefined,
@@ -254,6 +266,61 @@ export function FactureRestitutionTab({ or }: { or: any }) {
               </div>
             )}
           </div>
+          {peutRestituer && (
+            <div className="mt-4 rounded-xl border border-border bg-card/50 p-4">
+              <p className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">
+                État des lieux de sortie
+              </p>
+              {(() => {
+                const faces = comparaison?.lignes?.filter((l) => l.entree || l.sortie) ?? [];
+                return (
+                  <>
+                    {faces.length > 0 && (
+                      <p className="mb-3 text-[11px] text-muted-foreground">
+                        L&apos;état constaté à l&apos;entrée de ce dossier — comparez-le avant de valider la restitution.
+                      </p>
+                    )}
+                    <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {faces.map((l) => (
+                        <div key={l.categorie} className="overflow-hidden rounded-lg border border-border">
+                          <p className="bg-muted/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide">
+                            {comparaison?.libelles?.[l.categorie] ?? l.categorie}
+                          </p>
+                          <div className="grid grid-cols-2 gap-px bg-border">
+                            {(["entree", "sortie"] as const).map((etape) => {
+                              const p = l[etape] as { url?: string } | null;
+                              return (
+                                <div key={etape} className="bg-background">
+                                  <p className="px-1 pt-1 text-[9px] uppercase text-muted-foreground">
+                                    {etape === "entree" ? "Entrée" : "Sortie"}
+                                  </p>
+                                  {p?.url ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img src={p.url} alt={`${l.categorie} ${etape}`} className="aspect-[4/3] w-full object-cover" />
+                                  ) : (
+                                    <div className="flex aspect-[4/3] w-full items-center justify-center text-[9px] text-muted-foreground">
+                                      —
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
+              <PhotosEtatDesLieux
+                photos={photosSortie}
+                onChange={setPhotosSortie}
+                visite="SORTIE"
+                desactive={!peutRestituer}
+                afficherManquantes={false}
+              />
+            </div>
+          )}
           {peutRestituer && (
             <div className="mt-4 flex justify-end">
               <Button className="gap-1.5 text-xs" disabled={restituer.isPending} onClick={soumettreRestitution}>

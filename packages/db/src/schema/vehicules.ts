@@ -1,5 +1,6 @@
 import { pgTable, serial, integer, varchar, text, uniqueIndex, date, timestamp, boolean } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { doublePrecision } from "drizzle-orm/pg-core";
 import { agences } from "./agences";
 import { clients } from "./clients";
 
@@ -32,6 +33,16 @@ export const vehicules = pgTable("vehicules", {
   chauffeurNom: varchar("chauffeur_nom", { length: 100 }),
   chauffeurTelephone: varchar("chauffeur_telephone", { length: 30 }),
   typeVehicule: varchar("type_vehicule", { length: 30 }).default("voiture"),
+  // LOT U0d — Empreinte physique du véhicule. Reprise du registre parking
+  // (U0d) car l'atelier l'ignore : sans elle, impossible de placer un poids
+  // lourd sur le plan d'occupation sans le deviner. `dimensionsEstimees`
+  // distingue une mesure d'une estimation — la qualité de la donnée reste
+  // visible au lieu d'être écrasée dans la même colonne.
+  longueur: doublePrecision("longueur"),
+  largeur: doublePrecision("largeur"),
+  hauteur: doublePrecision("hauteur"),
+  poids: doublePrecision("poids"),
+  dimensionsEstimees: boolean("dimensions_estimees").notNull().default(false),
   statutImmobilisation: varchar("statut_immobilisation", { length: 50 }).default("en_reception"),
   siteId: integer("site_id").references(() => agences.id),
   emplacementId: integer("emplacement_id"),

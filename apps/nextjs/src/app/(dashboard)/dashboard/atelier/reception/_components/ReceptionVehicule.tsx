@@ -10,6 +10,7 @@ import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { SelectSearch } from "~/components/ui/select-search";
 import { TYPES_VEHICULE, libelleTypeVehicule } from "~/server/lib/vehicule-service";
+import { PhotosEtatDesLieux, type PhotoUI } from "./PhotosEtatDesLieux";
 
 /**
  * RÉCEPTION VÉHICULE (MVP) — recherche ou création en même temps.
@@ -75,6 +76,7 @@ export function ReceptionVehicule() {
       utils.vehicules.list.invalidate();
       setF({ vehicule: {}, client: {}, chauffeur: {}, reception: { typeIntervention: "ATELIER", motEntree: "PANNE", priorite: "P3", niveauCarburantEntree: "", outillage: {}, photos: [], validationVerbale: false } });
       setOutillageNotes({});
+      setPhotosEtatDesLieu([]);
       setModeCreation(false);
       setQ("");
       setResultats(null);
@@ -134,11 +136,43 @@ export function ReceptionVehicule() {
     return [...vues].map((v) => ({ value: v, label: libelleTypeVehicule(v) }));
   }, [typesUtilises.data?.options, f.vehicule.typeVehicule]);
 
-  const addPhotos = (files: FileList | null) => {
-    if (!files) return;
-    const reader = (file: File) => new Promise<string>((resolve) => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.readAsDataURL(file); });
-    Promise.all(Array.from(files).filter((x) => x.size <= 2 * 1024 * 1024).map(reader)).then((imgs) => set("reception", "photos", [...(f.reception.photos ?? []), ...imgs]));
-  };
+  // LOT U0c — état des lieux photographique versionné par visite.
+  // Remplace l'ancienne liste plate (`reception.photos: string[]`) qui :
+  //  - ne savait pas de face il s'agissait ;
+  //  - jetait en SILENCE toute photo de plus de 2 Mo (P2-5) ;
+  //  - plantait la réception côté serveur (colonnes inexistantes, voir or-router).
+  const [photosEtatDesLieu, setPhotosEtatDesLieu] = useState<PhotoUI[]>([]);
+
+  // Reprise intelligente : si le véhicule a déjà un état des lieux constaté,
+  // on le propose comme référence pour ne re-photographier que ce qui change.
+  const immatRecherchee = (f.vehicule.immatriculation ?? "").trim();
+  const vehiculeRecherche = api.or.rechercherReception.useQuery(
+    { q: immatRecherchee },
+    { enabled: immatRecherchee.length >= 2 }
+  );
+  const vehiculeIdConnu = (vehiculeRecherche.data?.vehicules?.[0] as { id?: number } | undefined)?.id ?? null;
+  const etatDesLieuPrecedent = api.or.etatDesLieuPrecedent.useQuery(
+    { vehiculeId: vehiculeIdConnu, avantOrId: 0 },
+    { enabled: vehiculeIdConnu != null }
+  );
+  const precedentPhotos = etatDesLieuPrecedent.data?.disponible
+    ? {
+        numero: etatDesLieuPrecedent.data.numero,
+        dateReception: etatDesLieuPrecedent.data.dateReception,
+        // Le tRPC sérialise les dates et rend les champs nullable : on
+        // reprojette explicitement sur le type attendu par le composant.
+        photos: (etatDesLieuPrecedent.data.photos ?? [])
+          .filter((p): p is { id: number; categorie: string; visite: string; repriseDe: number | null; url: string } =>
+            typeof p.id === "number" && typeof p.url === "string")
+          .map((p) => ({
+            id: p.id,
+            categorie: p.categorie,
+            visite: p.visite,
+            repriseDe: p.repriseDe ?? null,
+            url: p.url,
+          })),
+      }
+    : null;
 
   const valider = (): Record<string, string> => {
     const errs: Record<string, string> = {};
@@ -168,7 +202,19 @@ export function ReceptionVehicule() {
       reassignerClient: ownerChangeDemande && !!f.reception.reassignerClient,
       vehicule: { ...f.vehicule, immatriculation: f.vehicule.immatriculation.trim(), marque: f.vehicule.marque?.trim() || undefined, modele: f.vehicule.modele?.trim() || undefined, annee: f.vehicule.annee != null && f.vehicule.annee !== "" ? Number(f.vehicule.annee) : undefined, kilometrage: f.vehicule.kilometrage != null && f.vehicule.kilometrage !== "" ? Number(f.vehicule.kilometrage) : undefined },
       chauffeur: { nom: f.chauffeur.nom?.trim() || undefined, telephone: f.chauffeur.telephone?.trim() || undefined },
-      reception: { ...f.reception, outillage, kilometrageEntree: Number(f.reception.kilometrageEntree), photos: f.reception.photos?.length ? f.reception.photos : undefined },
+      reception: {
+        ...f.reception,
+        outillage,
+        kilometrageEntree: Number(f.reception.kilometrageEntree),
+        // LOT U0c — l'état des lieux part désormais par face, avec traçabilité
+        // des reprises (une reprise ne remplace pas une prise réelle).
+        photos: photosEtatDesLieu
+          .filter((p) => !p.reprise)
+          .map((p) => ({ categorie: p.categorie, url: p.url })),
+        photosReprise: photosEtatDesLieu
+          .filter((p) => p.reprise && p.sourceId != null)
+          .map((p) => ({ categorie: p.categorie, url: p.url, sourceId: p.sourceId as number })),
+      },
     });
   };
 
@@ -366,19 +412,13 @@ export function ReceptionVehicule() {
           </Section>
 
           {/* 7 — Photos */}
-          <Section title="7 · Photos de réception (fortement recommandé)">
-            <div className="flex flex-wrap items-center gap-3">
-              {(r.photos ?? []).map((ph: string, i: number) => (
-                <div key={i} className="relative">
-                  <img src={ph} alt="" className="size-20 rounded-lg border border-border object-cover" />
-                  <button type="button" onClick={() => set("reception", "photos", (r.photos ?? []).filter((_: string, j: number) => j !== i))} className="absolute -right-1.5 -top-1.5 rounded-full bg-destructive p-0.5 text-background"><X className="size-3" /></button>
-                </div>
-              ))}
-              <label className="flex h-20 w-20 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-border text-xs text-muted-foreground hover:border-primary/40">
-                <Plus className="size-5" /> Photos
-                <input type="file" accept="image/jpeg,image/png" multiple className="hidden" onChange={(e) => addPhotos(e.target.files)} />
-              </label>
-            </div>
+          <Section title="7 · État des lieux photographique (pièce à conviction)">
+            <PhotosEtatDesLieux
+              photos={photosEtatDesLieu}
+              onChange={(suivants) => setPhotosEtatDesLieu(suivants)}
+              visite="ENTREE"
+              precedent={precedentPhotos}
+            />
           </Section>
         </div>
 

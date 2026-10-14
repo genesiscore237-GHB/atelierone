@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, varchar, text, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, varchar, text, timestamp, boolean } from "drizzle-orm/pg-core";
 import { ordresReparation } from "./ordres_reparation";
 import { utilisateurs } from "./utilisateurs";
 import { agences } from "./agences";
@@ -27,6 +27,20 @@ export const orPhotos = pgTable("or_photos", {
   type: varchar("type", { length: 10 }).default("PHOTO"), // PHOTO | VIDEO
   creePar: integer("cree_par").references(() => utilisateurs.id),
   createdAt: timestamp("created_at").defaultNow(),
+  /**
+   * LOT U0c — État des lieux photographique VERSIONNÉ PAR VISITE.
+   *
+   * Le registre parking écrase (une photo par catégorie portée par le
+   * véhicule). L'atelier a besoin de l'inverse : chaque intervention conserve
+   * SON jeu de photos, d'où la portée par `orId`. `categorie` désigne la face
+   * photographiée, `visite` l'étape (entrée / restitution) et `repriseDe`
+   * trace une photo recopiée d'une visite antérieure — elle ne se substitue
+   * jamais à une prise réelle.
+   */
+  categorie: varchar("categorie", { length: 50 }).notNull().default("AUTRE"),
+  visite: varchar("visite", { length: 10 }).notNull().default("ENTREE"),
+  repriseDe: integer("reprise_de"),
+  photoPresente: boolean("photo_presente").notNull().default(false),
 });
 
 /** Paramètres du module (seuils d'alerte, listes, texte accusé de réception). */

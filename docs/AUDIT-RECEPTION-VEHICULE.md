@@ -96,6 +96,10 @@
 | **R3** | Contrôle doublon + réconciliation 4 cas | réception (API) | ✅ |
 | **R4** | Transparence entités existantes | réception (UI) | ✅ |
 | **R5** | Dédoublonnage client | clients, réception | ✅ |
+| **U0a** | Service unique de règles véhicule (3 endpoints alignés) | db, véhicules, garage | ⬜ |
+| **U0b** | `FormulaireVehicule` partagé + suppression écran doublon | réception, véhicules | ⬜ |
+| **U0c** | Photos d'état des lieux versionnées par visite + caméra | db, réception, restitution | ✅ |
+| **U0d** | Dimensions physiques + provenance véhicule | db, réception, garage | ⬜ |
 | **U1** | Type véhicule combobox | réception (UI) | ✅ |
 | **U2** | Km regroupé + invariant | réception (UI+API) | ⬜ |
 | **U3** | Check-list reformée | réception (UI) | ⬜ |
@@ -105,6 +109,67 @@
 | **S2** | Alerte véhicule déjà présent | réception (API) | ⬜ |
 | **A1** | Scheduler alertes | parking | ⬜ |
 | **A2** | `or.getAlertes` UI | atelier | ⬜ |
+
+### U0 — Unification des trois créations de véhicule (décision utilisateur, 2026-10-14)
+
+Constat : **trois** interfaces créent un véhicule, avec trois comportements divergents
+(et non deux — leForms `/dashboard/vehicules` a été oublié jusqu'à l'inventaire).
+
+| Interface | Endpoint | Client créé | Plaque déjà connue | Type véhicule |
+|---|---|---|---|---|
+| `/atelier/reception` | `or.receptionner` | oui + dédoublonnage R5 | **réconcilie** (R4) | libre (U1) |
+| `/garage/vehicules` | `garage.create` | **non** (texte libre) | lie au canonique | **champ inexistant** |
+| `/vehicules` | `vehicules.create` | optionnel | **refuse** l'erreur | `z.enum` fermé |
+
+Écarts constatés : (1) un véhicule créé au garage n'a **aucun** enregistrement client
+(il n'apparaît ni à l'historique client, ni aux contrats, ni à la facturation) ;
+(2) même plaque → 3 comportements selon l'écran ; (3) `typeVehicule` libre en
+réception mais `z.enum` en `/vehicules` — **un type « benne » accepté à la réception
+serait refusé ailleurs** (incohérence introduite par U1).
+
+**Décision actée** : garder **deux** interfaces, pas une. Le registre parking est le
+registre GPJ historique (n° 1-48, le 33 n'existe pas, dimensions, emplacements,
+mouvements) : ce n'est pas un doublon du parc, c'est un métier distinct.
+`/dashboard/vehicules` est en revanche un **doublon** → supprimé.
+
+**Cadrage retenu** :
+- La réception est le **point de passage unique** de création.
+- La création directe au garage reste possible **uniquement** si la plaque est inconnue
+  à la réception, et doit alors créer un **vrai client**, pas un texte.
+- Les règles vivent dans **un service**, pas recopiées par écran (cause racine des bugs).
+
+### Éléments repris du formulaire parking vers l'atelier (validés)
+
+| Élément | Décision | Colonne |
+|---|---|---|
+| Photos d'état des lieux par face | **Importer** (U0c) | migration `or_photos.categorie` |
+| Longueur / largeur / hauteur / poids + `dimensionsEstimees` | **Importer** (U0d) | migration `vehicules` |
+| Provenance / notes | **Importer** (U0d) | `vehicules.notes` (existe) |
+| N° registre GPJ | **Lecture seule** à la réception | `parking_vehicles` |
+| Dates de suivi parking | **Lecture seule** à la réception | `parking_vehicles` |
+| `clientNom` / `clientTelephone` | **Non** — la réception a un vrai formulaire client | — |
+| `vin` | **Faux manquant** = `vehicules.numero_chassis` (même colonne) | — |
+
+### Photos — decisions de conception (U0c)
+
+1. **Caméra à la réception**, strictement comme le parking (`CameraCapture` mutualisé :
+   caméra arrière/avant, repli « Charger une photo », messages d'erreur explicites).
+2. **Versionnement par VISITE, pas écrasement.** Le parking écrase (une photo par
+   catégorie sur `parking_vehicles`) : inacceptable pour l'atelier, où chaque
+   intervention doit conserver SON état des lieux. Les photos sont donc portées par
+   **`or_photos.orId`** (une intervention = un jeu), avec `categorie` ajoutée.
+3. **Reprise intelligente** : si le véhicule a déjà une intervention avec photos,
+   la réception propose « Reprendre l'état des lieux précédent » (copie marquée
+   comme reprise) — l'agent re-photographie ce qui a changé au lieu de tout refaire.
+4. **Comparaison à la restitution** : entrée vs sortie de la **même** visite, côte à
+   côte — la pièce à conviction en cas de litige.
+5. **Conservation** : `or_photos` est en `ON DELETE CASCADE` sur l'OR. Une suppression
+   de dossier ferait disparaître les preuves : à durcir (interdiction de supprimer un
+   dossier ayant des photos, ou copie figée).
+6. **Poids** : le parking accepte 6 Mo/photo ; en base64 dans `text`, 8 photos = ~48 Mo
+   par dossier. Compression **côté client** obligatoire avant envoi (redimensionnement
+   + JPEG ~0,7), pas de rejet silencieux (corrige P2-5).
+
 
 ### Responsabilités par module
 
@@ -143,4 +208,6 @@
 
 | 2026-10-14 | **S1 — restitution = vraie sortie du parking (E12, RD8, fermeture du P0-3)** | Livré. **Helper partagé** `sortirVehiculeParking()` dans `server/lib/parking-vehicule-service.ts` (SQL brut, comme le reste du fichier) : résout la ligne parking par `parking_vehicles.id` OU par `vehicules.vehicule_id`, la verrouille en `FOR UPDATE`, **libère le spot** (`bloque=false`, `reserve_pour=NULL`), passe la ligne `SORTI` en effaçant site/zone/spot/centre, et **journalise un mouvement `SORTIE`** avec la position d'origine. **IDEMPOTENT** : aucune ligne liée → `pas_de_ligne_parking` ; déjà `SORTI` → `deja_sorti` (aucun double mouvement, aucune erreur). `garage.sortie` délègue désormais à ce helper (source de vérité unique, RD8). `or.restituerVehicule` l'appelle après mise à jour du véhicule et renvoie `sortieParking` (`sorti`/`deja_sorti`/`pas_de_ligne_parking`). **⚠️ P0-3 avait 2 chemins, pas 1** : `or.changerStatut(…, "LIVRE")` appliquait la même projection défectueuse → corrigé lui aussi. **⚠️ la projection était redondante ET CIRCULAIRE** : `projeterParkingDepuisImmo(…, "sorti")` écrit `SORTI` AVANT la sortie réelle, ce qui faisait croire au helper à un véhicule déjà sorti et laissait le spot occupé — le P0-3 réapparu sous une autre forme, attrapé par le test. Supprimée sur ce chemin. **Bonus — 3 courses sur séquences détectées** : l'exécution **parallèle** de la suite a révélé que `or.receptionner`, `clients.create` et `contrats.create` généraient code client / n° de contrat par `count(*)+1`, en violation de `clients_code_client_unique` et `contrats_maintenance_numero_contrat_unique` sous concurrence (défaut réel, pas seulement de test). Les trois passent désormais par `verrouillerSequence` / `prochaineSequence` (`pg_advisory_xact_lock` + MAX, convention T0.5), avec un namespace `CLT` ajouté. **Tests** : `or-s1-restitution-sortie.integration.test.ts` (5 tests) — spot libéré + position effacée + mouvement SORTIE ; idempotence du helper ; sortie garage puis nouvelle réception (2ᵉ sortie légitime = 2 mouvements) ; restitution d'un véhicule déjà sorti sans nouvelle réception (no-op) ; véhicule sans ligne parking (la restitution réussit). **Prérérence notable** : les 3 cas d'isolation ont d'abord échoué puis ont fait évoluer le test au lieu d'affaiblir l'implémentation. Vérifs : **889/889** verts sur la suite complète (52 fichiers), **2 exécutions consécutives** sans flake (la course était intermittente), TSC 0 erreur dans les fichiers du lot, lint 0 erreur. |
 
-Lots **R1**–**R5**, **U1** et **S1** livrés. **Plus aucun défaut P0 ouvert.** Prochains lots : **U2** (km regroupés + invariant `sortie ≥ entrée`), U3–U5, S2, A1, A2.
+| 2026-10-14 | **U0c — état des lieux photographique versionné par visite** | Livré. **Migration `0006`** : `or_photos.categorie` / `.visite` / `.reprise_de` / `.photo_presente` (+ index `(or_id, visite, categorie)`) et dimensions `vehicules.longueur/largeur/hauteur/poids/dimensions_estimees`. **Service** `server/lib/photos-etat-des-lieux.ts` : enregistrement en **fusion par face** (remplacer une face n'écrase ni les autres faces ni l'autre étape), refus EXPLICITE d'une photo trop lourde, `etatDesLieuVisitePrecedente` (ne remonte que des prises RÉELLES — une reprise ne devient jamais la référence, sinon on propagerait une copie de copie), `comparerEntreeSortie` (par face, dans une MÊME visite). **API** : `or.etatDesLieuPrecedent`, `or.enregistrerEtatDesLieu`, `or.photosEtatDesLieu`, `or.comparerPhotosEtatDesLieu`, `or.supprimerEtatDesLieu`. **UI** : nouveau composant `PhotosEtatDesLieux` (caméra via `CameraCapture` mutualisé — bascule avant/arrière, repli fichier, messages d'erreur explicites ; compression client 1600 px / JPEG 0,7 ; bandeau « Reprise » distinct d'une prise réelle ; rappel des faces manquantes) ; section 7 de la réception refaite ; onglet Facture & Restitution : comparaison entrée/sortie côte à côte + état des lieux de sortie. **⚠️ Bug P0 trouvé et corrigé au passage** : `or.receptionner` insérait `{ orId, photo, uploaderId }` — `photo` et `uploader_id` **n'existent pas** dans `or_photos` (les colonnes sont `url` et `cree_par`). Toute réception **avec** photo échouait donc sur une erreur SQL et **annulait la transaction entière** ; aucun test ne couvrait ce chemin, ce qui l'a rendu invisible. **2 défauts trouvés par les tests eux-mêmes** : (a) `db.execute()`renvoie le tableau de lignes — un `const [x] = await db.execute()` déstructurait la PREMIÈRE LIGNE et faisait échouer la reprise ; (b) l'enregistrement effaçait toutes les faces de l'étape au lieu de fusionner → la photo `MOTEUR` de la réception disparaissait. **Tests** : `or-u0c-photos-etat-des-lieux.integration.test.ts` (7 tests) — réception avec photos (non-régression du bug d'insertion), **versionnement** (2ᵉ visite n'écrase pas la 1ʳᵉ), reprise tracée + visite antérieure intacte, la référence n'est jamais une reprise, fusion par face, comparaison entrée/sortie, refus explicite du poids excessif. Vérifs : **7/7** verts, **896/896** sur la suite complète (53 fichiers), TSC 0 erreur dans les fichiers du lot, lint 0 erreur. |
+
+Lots **R1**–**R5**, **U1**, **S1** et **U0c** livrés. **Plus aucun défaut P0 ouvert.** Prochains lots : **U0a** (service unique de règles véhicule — les 3 créations de véhicule divergentes), **U0b** (composant partagé + suppression de l'écran doublon), **U0d** (dimensions + provenance dans l'UI), puis U2–U5, S2, A1, A2.

@@ -44,6 +44,17 @@ import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererR
 import { RBACService } from "~/server/lib/rbac-service";
 import { projeterParkingDepuisImmo, normaliserImmatriculation, sortirVehiculeParking } from "~/server/lib/parking-vehicule-service";
 import {
+  enregistrerPhotosEtatDesLieu,
+  listerPhotosEtatDesLieu,
+  supprimerPhotosEtatDesLieu,
+  comparerEntreeSortie,
+  etatDesLieuVisitePrecedente,
+  categoriesManquantes,
+  PhotoTropLourdeError,
+  CATEGORIES_ETAT_DES_LIEUX,
+  LIBELLE_CATEGORIE,
+} from "~/server/lib/photos-etat-des-lieux";
+import {
   migrerStatutLegacy,
   transitionStatutAtelierValide,
   calculerAlertes,
@@ -717,7 +728,11 @@ export const orRouter = createTRPCRouter({
         motEntree: z.string().default("PANNE"),
         plainte: z.string().optional(),
         outillage: z.record(z.any()).optional(),
-        photos: z.array(z.string()).optional(),
+        photos: z.array(z.object({ categorie: z.string().max(50).default("AUTRE"), url: z.string() })).optional(),
+        // Photos recopiées de l'état des lieux de la visite PRÉCÉDENTE (U0c) :
+        // tracées via `reprise_de`, elles n'effacent rien et se substituent
+        // jamais à une prise réelle.
+        photosReprise: z.array(z.object({ categorie: z.string().max(50), url: z.string(), sourceId: z.number().int() })).optional(),
         signatureDeposant: z.string().optional(),
         validationVerbale: z.boolean().default(false),
         typeIntervention: z.string().default("ATELIER"),
@@ -887,12 +902,33 @@ export const orRouter = createTRPCRouter({
           statut: "EN_ATTENTE_DIAGNOSTIC",
         } as any).returning();
 
-        // 4. Photos de réception
-        if (input.reception.photos && input.reception.photos.length > 0) {
-          for (const photo of input.reception.photos) {
-            await tx.insert(orPhotos).values({ orId: or.id, photo, uploaderId: Number(ctx.user.id) } as any);
-          }
-        }
+        // 4. État des lieux photographique (LOT U0c).
+        //
+        //    BUG CORRIGÉ : l'insertion précédente écrivait
+        //    `{ orId, photo, uploaderId }` — `photo` et `uploader_id`
+        //    n'existent pas dans `or_photos` (les colonnes sont `url` et
+        //    `cree_par`). Toute réception AVEC photo echouait donc sur une
+        //    erreur SQL et annulait la transaction entière. Aucun test ne
+        //    couvrait ce chemin, ce qui l'a rendu invisible.
+        //
+        //    Le service gère désormais : catégorie par face, versionnement par
+        //    visite (une intervention = un jeu, jamais d'écrasement entre
+        //    visites), traces des reprises, et refus EXPLICITE d'une photo trop
+        //    lourde (au lieu du rejet silencieux d'avant, P2-5).
+        await enregistrerPhotosEtatDesLieu(tx, {
+          orId: or.id,
+          visite: "ENTREE",
+          creePar: Number(ctx.user.id),
+          photos: (input.reception.photos ?? []).map((p) => ({
+            categorie: p.categorie || "AUTRE",
+            url: p.url,
+          })),
+          reprises: (input.reception.photosReprise ?? []).map((r) => ({
+            categorie: r.categorie,
+            url: r.url,
+            sourceId: r.sourceId,
+          })),
+        });
 
         // 5. Historique de réception (traçabilité)
         await tx.insert(orHistorique).values({
@@ -1322,6 +1358,9 @@ export const orRouter = createTRPCRouter({
       observations: z.string().optional(),
       motifNonRepare: z.string().optional(), // REFUS_CLIENT | PIECES_INDISPONIBLES | ABANDON | AUTRE — si non/partiellement réparé
       travauxNonRealises: z.string().optional(),
+      // LOT U0c — état des lieux de sortie, par face. Comparé à l'entrée de la
+      // MÊME visite à la restitution (pièce à conviction en cas de litige).
+      photos: z.array(z.object({ categorie: z.string().max(50).default("AUTRE"), url: z.string() })).optional(),
       // Sortie exceptionnelle : véhicule qui sort malgré QC non validé, travaux non terminés ou facture non soldée.
       sortieExceptionnelle: z.boolean().optional(),
       motifException: z.string().optional(),
@@ -1423,6 +1462,15 @@ export const orRouter = createTRPCRouter({
           restituePar: Number(ctx.user.id),
           dateRestitution: new Date(),
         } as any);
+        // LOT U0c — état des lieux de SORTIE : c'est lui qui sera comparé à
+        // l'entrée de CETTE visite. Sans lui, la comparaison se ferait contre
+        // un état ancien et ne vaudrait rien comme preuve.
+        await enregistrerPhotosEtatDesLieu(tx, {
+          orId: input.orId,
+          visite: "SORTIE",
+          creePar: Number(ctx.user.id),
+          photos: (input.photos ?? []).map((p) => ({ categorie: p.categorie || "AUTRE", url: p.url })),
+        });
         await tx.update(ordresReparation).set({
           statut: "LIVRE",
           kilometrageSortie: input.kilometrageSortie,
@@ -1599,6 +1647,101 @@ export const orRouter = createTRPCRouter({
     .input(z.object({ id: z.number().int() }))
     .query(async ({ ctx, input }) => {
       return db.select().from(orPhotos).where(eq(orPhotos.orId, input.id)).orderBy(asc(orPhotos.createdAt));
+    }),
+
+  // ─── LOT U0c — État des lieux photographique versionné par visite ───────────
+
+  /**
+   * État des lieux de la visite PRÉCÉDENTE du même véhicule.
+   *
+   * Alimente la « reprise intelligente » : au lieu de refaire huit prises à
+   * chaque passage, l'agent repart de l'état constaté la fois précédente et
+   * ne re-photographie que ce qui a changé. Les photos remontées sont
+   * exclusivement des prises RÉELLES (jamais des reprises) : la référence doit
+   * être un état constaté, pas une copie de copie.
+   */
+  etatDesLieuPrecedent: requirePermissionProcedure("or.consulter")
+    .input(z.object({ vehiculeId: z.number().int().nullable(), avantOrId: z.number().int().default(0) }))
+    .query(async ({ input }) => {
+      const precedent = await etatDesLieuVisitePrecedente(db, input.vehiculeId, input.avantOrId);
+      return {
+        disponible: !!precedent,
+        orId: precedent?.orId ?? null,
+        numero: precedent?.numero ?? null,
+        dateReception: precedent?.dateReception ?? null,
+        photos: precedent?.photos ?? [],
+        categoriesManquantes: categoriesManquantes(precedent?.photos ?? []),
+        categories: CATEGORIES_ETAT_DES_LIEUX.map((c) => ({ valeur: c, libelle: LIBELLE_CATEGORIE[c] })),
+      };
+    }),
+
+  /** Enregistre l'état des lieux d'une étape (entrée ou sortie). */
+  enregistrerEtatDesLieu: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      visite: z.enum(["ENTREE", "SORTIE"]).default("ENTREE"),
+      photos: z.array(z.object({ categorie: z.string().max(50).default("AUTRE"), url: z.string() })).default([]),
+      reprises: z.array(z.object({ categorie: z.string().max(50), url: z.string(), sourceId: z.number().int() })).default([]),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id, vehiculeId: ordresReparation.vehiculeId })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      try {
+        const ids = await enregistrerPhotosEtatDesLieu(db, {
+          orId: input.orId,
+          visite: input.visite,
+          creePar: Number(ctx.user.id),
+          photos: input.photos.map((p) => ({ categorie: p.categorie || "AUTRE", url: p.url })),
+          reprises: input.reprises.map((r) => ({ categorie: r.categorie, url: r.url, sourceId: r.sourceId })),
+        });
+        return { enregistrees: ids.length };
+      } catch (e) {
+        if (e instanceof PhotoTropLourdeError) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+        }
+        throw e;
+      }
+    }),
+
+  /** Photos d'un dossier, par étape, avec les faces manquantes (rappel UX). */
+  photosEtatDesLieu: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int(), visite: z.enum(["ENTREE", "SORTIE"]).optional() }))
+    .query(async ({ input }) => {
+      const photos = await listerPhotosEtatDesLieu(db, input.orId, input.visite);
+      return {
+        photos,
+        manquantes: categoriesManquantes(photos.filter((p) => (input.visite ? p.visite === input.visite : true))),
+      };
+    }),
+
+  /** Comparaison entrée / sortie d'une MÊME visite — la pièce à conviction. */
+  comparerPhotosEtatDesLieu: requirePermissionProcedure("or.consulter")
+    .input(z.object({ orId: z.number().int() }))
+    .query(async ({ input }) => {
+      const lignes = await comparerEntreeSortie(db, input.orId);
+      return {
+        lignes,
+        comparees: lignes.filter((l) => l.entree && l.sortie).length,
+        libelles: LIBELLE_CATEGORIE,
+      };
+    }),
+
+  /** Supprime le jeu de photos d'une étape (correction avant clôture). */
+  supprimerEtatDesLieu: requirePermissionProcedure("or.modifier")
+    .input(z.object({ orId: z.number().int(), visite: z.enum(["ENTREE", "SORTIE"]) }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+      await supprimerPhotosEtatDesLieu(db, input.orId, input.visite);
+      return { success: true };
     }),
 
   // ─── Historique du cycle de vie ───
