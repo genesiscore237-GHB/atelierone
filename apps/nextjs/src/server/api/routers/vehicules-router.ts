@@ -38,6 +38,10 @@ import {
   projeterParkingDepuisImmo,
   normaliserImmatriculation,
 } from "~/server/lib/parking-vehicule-service";
+import {
+  resoudreOuCreerVehicule,
+  completerVehiculeSansEcrasement,
+} from "~/server/lib/vehicule-regles";
 
 /** MODULE VÉHICULES & ATELIER — parc, fiche, statuts d'immobilisation, historique. */
 export const vehiculesRouter = createTRPCRouter({
@@ -449,6 +453,8 @@ export const vehiculesRouter = createTRPCRouter({
         clientId: z.number().int().optional(),
         marque: z.string().optional(),
         modele: z.string().optional(),
+        // LOT U0a — parité de fiche avec la réception et le registre parking.
+        version: z.string().max(100).optional(),
         annee: z.number().int().min(1900).max(2100).optional(),
         couleur: z.string().optional(),
         numeroChassis: z.string().optional(),
@@ -456,24 +462,21 @@ export const vehiculesRouter = createTRPCRouter({
         carburant: z.enum(CARBURANTS).optional(),
         chauffeurNom: z.string().max(100).optional(),
         chauffeurTelephone: z.string().max(30).optional(),
-        typeVehicule: z.enum(TYPES_VEHICULE).optional(),
+        // LOT U0a/U1 — type OUVERT (saisie libre, 30 car. comme la colonne) :
+        // un `z.enum` ici faisait refus���r par cet endpoint un type « benne »
+        // pourtant accepté à la réception. Même règle partout.
+        typeVehicule: z.string().trim().min(1).max(30).optional(),
         notes: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // LOT R1 — dédup par plaque normalisée (« AB 123 CD » ≡ « ab123cd »).
-      const immatNorm = normaliserImmatriculation(input.immatriculation);
-      if (!immatNorm) throw new TRPCError({ code: "BAD_REQUEST", message: "Immatriculation vide." });
-      const [dup] = await db
-        .select({ id: vehicules.id })
-        .from(vehicules)
-        .where(and(
-          eq(vehicules.agenceId, ctx.user.agenceId),
-          immatNormaleCondition(vehicules.immatriculation, input.immatriculation),
-        ))
-        .orderBy(immatNormPreferenceSql(vehicules.immatNorm))
-        .limit(1);
-      if (dup) throw new TRPCError({ code: "BAD_REQUEST", message: "Cette immatriculation existe déjà dans votre agence." });
+      // LOT U0a — RÈGLE UNIQUE, alignée sur `or.receptionner`.
+      //
+      // AVANT, cet écran REFUSAIT une immatriculation déjà connue : la même
+      // plaque saisie à la réception était réutilisée, ici ellelevait une
+      // erreur. L'agent obtenait deux comportements selon l'écran.
+      // On applique désormais la règle unique : RÉCONCILIATION + informée
+      // (le retour porte `vehiculeReconcilie`), jamais d'écrasement (RD4).
 
       if (input.clientId) {
         const [client] = await db
@@ -484,29 +487,34 @@ export const vehiculesRouter = createTRPCRouter({
         if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Client introuvable." });
       }
 
-      const [row] = await db
-        .insert(vehicules)
-        .values({
-          agenceId: ctx.user.agenceId,
-          immatriculation: input.immatriculation.trim(),
-          immatNorm,
-          clientId: input.clientId ?? null,
+      const resolution = await resoudreOuCreerVehicule(db, {
+        agenceId: ctx.user.agenceId,
+        immatriculation: input.immatriculation,
+        clientId: input.clientId ?? null,
+        statutImmobilisation: "en_reception",
+        notes: input.notes ?? null,
+        fiche: {
           marque: input.marque ?? null,
           modele: input.modele ?? null,
-          annee: input.annee ?? null,
+          version: input.version ?? null,
           couleur: input.couleur ?? null,
           numeroChassis: input.numeroChassis ?? null,
-          kilometrage: input.kilometrage ?? 0,
+          typeVehicule: input.typeVehicule ?? "voiture",
           carburant: input.carburant ?? null,
+          annee: input.annee ?? null,
+        },
+        colonnesSup: {
+          kilometrage: input.kilometrage ?? 0,
           chauffeurNom: input.chauffeurNom ?? null,
           chauffeurTelephone: input.chauffeurTelephone ?? null,
-          typeVehicule: input.typeVehicule ?? "voiture",
-          statutImmobilisation: "en_reception",
-          notes: input.notes ?? null,
           isActive: true,
-        } as any)
-        .returning();
-      return row;
+        },
+      });
+
+      const [row] = await db.select().from(vehicules).where(eq(vehicules.id, resolution.vehiculeId)).limit(1);
+      // `vehiculeReconcilie` permet à l'UI d'informer l'agent (R4 : aucune
+      // information ne disparaît silencieusement).
+      return { ...row, vehiculeReconcilie: !resolution.cree };
     }),
 
   // ─── Mise à jour ───
@@ -524,7 +532,7 @@ export const vehiculesRouter = createTRPCRouter({
         carburant: z.enum(CARBURANTS).optional(),
         chauffeurNom: z.string().max(100).optional().nullable(),
         chauffeurTelephone: z.string().max(30).optional().nullable(),
-        typeVehicule: z.enum(TYPES_VEHICULE).optional(),
+        typeVehicule: z.string().trim().min(1).max(30).optional().nullable(),
         notes: z.string().optional().nullable(),
       })
     )

@@ -59,11 +59,14 @@ import {
   type VehiculeAlertable,
 } from "~/server/lib/parking-alerts";
 import {
-  trouverOuCreerCanonique,
   synchroniserIdentiteCanonique,
   projeterImmoDepuisParking,
   sortirVehiculeParking,
+  immobilisationDepuisParking,
 } from "~/server/lib/parking-vehicule-service";
+import {
+  resoudreOuCreerVehicule,
+} from "~/server/lib/vehicule-regles";
 
 export const STATUTS_VEHICULE = [
   "EN_PARKING",
@@ -917,21 +920,28 @@ spots: spots.map((s) => {
         .limit(1);
       if (dup) throw new TRPCError({ code: "CONFLICT", message: `Numéro de registre déjà utilisé : ${numRegistre}.` });
 
-      // LOT 1 — véhicule canonique : appariement/création par immatriculation
-      // normalisée (null si immatriculation absente — aucune invention). Si le
-      // canonique est créé, son statut immobilisation est projeté depuis le
-      // statut parking ; s'il existe déjà, son état atelier fait foi.
-      const vehiculeId = await trouverOuCreerCanonique(db, {
-        agenceId,
-        immatriculation: input.immatriculation,
-        marque: input.marque,
-        modele: input.modele,
-        version: input.version,
-        couleur: input.couleur,
-        vin: input.vin,
-        statutParking: input.statut ?? "EN_PARKING",
-        notes: `Créé depuis le registre parking — n° ${numRegistre}`,
-      });
+      // LOT 1 → LOT U0a — véhicule canonique : on passe par le service UNIQUE
+      // `resoudreOuCreerVehicule` (réconciliation par plaque normalisée, sans
+      // écrasement), au lieu de `trouverOuCreerCanonique` qui portait sa propre
+      // copie de la règle. Sans immatriculation, aucune invention : pas de
+      // canonique créé (le registre garde son véhicule sans plaque).
+      let vehiculeId: number | null = null;
+      if ((input.immatriculation ?? "").trim()) {
+        const resolution = await resoudreOuCreerVehicule(db, {
+          agenceId,
+          immatriculation: input.immatriculation,
+          statutImmobilisation: immobilisationDepuisParking(input.statut ?? "EN_PARKING"),
+          notes: `Créé depuis le registre parking — n° ${numRegistre}`,
+          fiche: {
+            marque: input.marque ?? null,
+            modele: input.modele ?? null,
+            version: input.version ?? null,
+            couleur: input.couleur ?? null,
+            numeroChassis: input.vin ?? null,
+          },
+        });
+        vehiculeId = resolution.vehiculeId;
+      }
 
       const photos = auteurPhotos(input.photos, ctx.user);
       const [created] = await db
@@ -1075,20 +1085,25 @@ spots: spots.map((s) => {
         input.immatriculation !== undefined &&
         (input.immatriculation ?? "").trim() !== (existing.immatriculation ?? "").trim();
       if (vehiculeId == null || (immatChangee && (immatNouvelle ?? "").trim() !== "")) {
-        const cible = await trouverOuCreerCanonique(db, {
-          agenceId: ctx.user.agenceId,
-          immatriculation: immatNouvelle,
-          marque: input.marque !== undefined ? input.marque : existing.marque,
-          modele: input.modele !== undefined ? input.modele : existing.modele,
-          version: input.version !== undefined ? input.version : existing.version,
-          couleur: input.couleur !== undefined ? input.couleur : existing.couleur,
-          vin: input.vin !== undefined ? input.vin : existing.vin,
-          statutParking: input.statut ?? existing.statut,
-          notes: `Créé depuis le registre parking (mise à jour) — n° ${existing.numRegistre}`,
-        });
-        if (cible !== vehiculeId) {
-          await db.execute(sql`UPDATE parking_vehicles SET vehicule_id = ${cible} WHERE id = ${input.id}`);
-          vehiculeId = cible;
+        // LOT U0a — même service unique que les deux autres points d'écriture.
+        if ((immatNouvelle ?? "").trim()) {
+          const resolution = await resoudreOuCreerVehicule(db, {
+            agenceId: ctx.user.agenceId,
+            immatriculation: immatNouvelle,
+            statutImmobilisation: immobilisationDepuisParking(input.statut ?? existing.statut),
+            notes: `Créé depuis le registre parking (mise à jour) — n° ${existing.numRegistre}`,
+            fiche: {
+              marque: input.marque !== undefined ? input.marque : existing.marque,
+              modele: input.modele !== undefined ? input.modele : existing.modele,
+              version: input.version !== undefined ? input.version : existing.version,
+              couleur: input.couleur !== undefined ? input.couleur : existing.couleur,
+              numeroChassis: input.vin !== undefined ? input.vin : existing.vin,
+            },
+          });
+          if (resolution.vehiculeId !== vehiculeId) {
+            await db.execute(sql`UPDATE parking_vehicles SET vehicule_id = ${resolution.vehiculeId} WHERE id = ${input.id}`);
+            vehiculeId = resolution.vehiculeId;
+          }
         }
       }
       await synchroniserIdentiteCanonique(db, vehiculeId, {

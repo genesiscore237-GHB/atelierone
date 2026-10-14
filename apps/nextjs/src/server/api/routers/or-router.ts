@@ -42,6 +42,11 @@ import { TRPCError } from "@trpc/server";
 import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
 import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererReferenceFacture, verrouillerSequence, prochaineSequence, MODES_PAIEMENT, montantLigne } from "~/server/lib/facturation-service";
 import { RBACService } from "~/server/lib/rbac-service";
+import {
+  resoudreOuCreerVehicule,
+  completerVehiculeSansEcrasement,
+  marquerDoublonClientTelephone,
+} from "~/server/lib/vehicule-regles";
 import { projeterParkingDepuisImmo, normaliserImmatriculation, sortirVehiculeParking } from "~/server/lib/parking-vehicule-service";
 import {
   enregistrerPhotosEtatDesLieu,
@@ -770,88 +775,52 @@ export const orRouter = createTRPCRouter({
             typeClient: "PART",
             statut: "ACTIF",
           } as any).returning();
-          // LOT R5 — dédoublonnage (E6) : le nouveau client est-il un doublon
-          // potentiel d'un client existant de l'agence (même téléphone
-          // normalisé, ou même nom + téléphone) ? On le MARQUE (et on marque
-          // l'existant) pour que l'UI puisse proposer une fusion explicite.
+          // LOT R5/U0a — dédoublonnage (E6) : le nouveau client est-il un
+          // doublon potentiel d'un client existant de l'agence (même téléphone
+          // normalisé) ? On le MARQUE (et on marque l'existant) pour que l'UI
+          // puisse proposer une fusion explicite.
           // Aucune fusion automatique (pas d'invention, D3) : le marquage sert
           // seulement à SURFACER le doublon ; la fusion passe par
-          // clients.fusionner.
-          const telNorm = normaliserTelephone(input.client.telephone);
-          let doublonPotentiel = false;
-          if (telNorm) {
-            const [memeTel] = await tx
-              .select({ id: clients.id, nom: clients.nom, prenom: clients.prenom })
-              .from(clients)
-              .where(and(
-                eq(clients.agenceId, agenceId),
-                sql`${clients.deletedAt} IS NULL`,
-                sql`${clients.id} <> ${cli.id}`,
-                sql`regexp_replace(substring(regexp_replace(coalesce(${clients.telephone}, ''), '[^0-9]', '', 'g') from '^(?:237)?([0-9]{9})$'), '[^0-9]', '', 'g') = ${telNorm}`,
-              ))
-              .limit(1);
-            doublonPotentiel = !!memeTel;
-            if (memeTel) {
-              // Marque aussi l'existant pour qu'il apparaisse dans la liste
-              // de dédoublonnage (deux sens : le nouveau ET l'ancien).
-              await tx.update(clients).set({ clientsDoublonnes: true } as any).where(eq(clients.id, memeTel.id));
-            }
-          }
-          if (doublonPotentiel) {
-            await tx.update(clients).set({ clientsDoublonnes: true } as any).where(eq(clients.id, cli.id));
-          }
+          // `clients.fusionner`. Règle désormais partagée (service unique).
+          await marquerDoublonClientTelephone(tx, {
+            agenceId,
+            nouveauClientId: cli.id,
+            telephone: input.client.telephone,
+          });
           clientId = cli.id;
         }
 
-        // 2. Véhicule (existant → complété ; sinon créé) — toujours lié à un client
+        // 2. Véhicule — LOT U0a : la résolution par plaque passe désormais par
+        //    le service unique `resoudreOuCreerVehicule`, identique à celui
+        //    utilisé par `vehicules.create` et `garage.create`.
         let vehiculeId = input.vehicule.id ?? null;
         // RD3 — transparence : vrai si le véhicule a été trouvé (et réutilisé)
         // par plaque normalisée plutôt que créé à la volée.
         let vehiculeReconcilie = false;
+
         if (vehiculeId) {
-          await tx.update(vehicules).set({
+          // Véhicule explicitement choisi : on le renseigne sans écraser.
+          await completerVehiculeSansEcrasement(tx, vehiculeId, {
             clientId,
             chauffeurNom: input.chauffeur?.nom?.trim() ?? null,
             chauffeurTelephone: input.chauffeur?.telephone?.trim() ?? null,
-            kilometrage: input.vehicule.kilometrage ?? undefined,
-            updatedAt: new Date(),
-          } as any).where(eq(vehicules.id, vehiculeId));
+          });
+          await tx.update(vehicules).set({ updatedAt: new Date() } as any).where(eq(vehicules.id, vehiculeId));
         } else {
-          // R2 — réconciliation par plaque normalisée : si un véhicule portant
-          // la même plaque (« AB-123-CD » ≡ « ab 123 cd ») existe déjà dans
-          // l'agence, on le RÉUTILISE au lieu de créer un doublon. Le client
-          // saisi à la réception n'est réassigné que s'il diffère (RD4, pas
-          // d'écrasement silencieux de la propriété).
-          const immatNorm = normaliserImmatriculation(input.vehicule.immatriculation);
-          const [existant] = await tx
-            .select({ id: vehicules.id, clientId: vehicules.clientId })
-            .from(vehicules)
-            .where(and(
-              eq(vehicules.agenceId, agenceId),
-              immatNormaleCondition(vehicules.immatriculation, input.vehicule.immatriculation),
-            ))
-            .orderBy(immatNormPreferenceSql(vehicules.immatNorm))
-            .limit(1);
-          if (existant) {
-            // RD4 — transparence : on ne réassigne le client que si
-            // l'opérateur l'a demandé explicitement (reassignerClient). Sinon
-            // le propriétaire historique est conservé (pas d'écrasement).
-            const reassigner = input.reassignerClient && existant.clientId !== clientId;
-            await tx.update(vehicules).set({
-              chauffeurNom: input.chauffeur?.nom?.trim() || null,
-              chauffeurTelephone: input.chauffeur?.telephone?.trim() || null,
-              kilometrage: input.vehicule.kilometrage ?? undefined,
-              ...(reassigner ? { clientId } : {}),
-              updatedAt: new Date(),
-            } as any).where(eq(vehicules.id, existant.id));
-            vehiculeId = existant.id;
-            vehiculeReconcilie = true;
-          } else {
-            const [veh] = await tx.insert(vehicules).values({
-              agenceId,
-              clientId,
-              immatriculation: input.vehicule.immatriculation.trim().toUpperCase(),
-              immatNorm,
+          // R2/RD3/RD4 — réconciliation par plaque normalisée (« AB-123-CD » ≡
+          // « ab 123 cd ») : le véhicule existant est RÉUTILISÉ, ses données
+          // ne sont pas écrasées, et son propriétaire n'est changé que si
+          // l'opérateur l'a demandé (`reassignerClient`).
+          const resolution = await resoudreOuCreerVehicule(tx, {
+            agenceId,
+            immatriculation: input.vehicule.immatriculation,
+            // RD4 : le client saisi n'est appliqué que si le véhicule n'a
+            // AUCUN propriétaire ; sinon le propriétaire historique reste,
+            // sauf réassignation EXPLICITE demandée par l'opérateur.
+            clientId: clientId,
+            reassignerClient: input.reassignerClient,
+            statutImmobilisation: "en_reception",
+            fiche: {
               numeroChassis: input.vehicule.numeroChassis?.trim() || null,
               typeVehicule: input.vehicule.typeVehicule,
               marque: input.vehicule.marque?.trim() || null,
@@ -863,10 +832,10 @@ export const orRouter = createTRPCRouter({
               kilometrage: input.vehicule.kilometrage ?? null,
               chauffeurNom: input.chauffeur?.nom?.trim() || null,
               chauffeurTelephone: input.chauffeur?.telephone?.trim() || null,
-              statutImmobilisation: "en_reception",
-            } as any).returning();
-            vehiculeId = veh.id;
-          }
+            },
+          });
+          vehiculeId = resolution.vehiculeId;
+          vehiculeReconcilie = !resolution.cree;
         }
 
         // 3. Dossier d'intervention (OR) complet — T0.5 : genNumero porte le
