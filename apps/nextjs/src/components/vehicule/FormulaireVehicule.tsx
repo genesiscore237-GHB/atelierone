@@ -52,16 +52,19 @@ function Field({
   required,
   error,
   hint,
+  anchor,
   children,
 }: {
   label: string;
   required?: boolean;
   error?: string;
   hint?: string;
+  /** LOT U4 (E10) — ancre de défilement vers le champ en erreur. */
+  anchor?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div>
+    <div id={anchor ? `champ-${anchor}` : undefined}>
       <Label>
         {label}
         {required && <span className="text-destructive"> *</span>}
@@ -113,7 +116,7 @@ export function FormulaireVehicule({
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      <Field label="Immatriculation" required error={erreurs.immatriculation}>
+      <Field label="Immatriculation" required error={erreurs.immatriculation} anchor="immatriculation">
         <Input
           value={value.immatriculation ?? ""}
           onChange={(e) => onChange("immatriculation", e.target.value.toUpperCase())}
@@ -134,6 +137,7 @@ export function FormulaireVehicule({
         label="Type de véhicule"
         required
         error={erreurs.typeVehicule}
+        anchor="typeVehicule"
         hint="Liste de l'agence + saisie libre (ex. « benne »)"
       >
         <SelectSearch
@@ -147,7 +151,7 @@ export function FormulaireVehicule({
           searchPlaceholder="Rechercher ou saisir un type…"
         />
       </Field>
-      <Field label="Marque" required error={erreurs.marque}>
+      <Field label="Marque" required error={erreurs.marque} anchor="marque">
         <Input
           value={value.marque ?? ""}
           onChange={(e) => onChange("marque", e.target.value)}
@@ -171,7 +175,7 @@ export function FormulaireVehicule({
           disabled={desactive}
         />
       </Field>
-      <Field label="Année" error={erreurs.annee}>
+      <Field label="Année" error={erreurs.annee} anchor="annee">
         <Input
           type="number"
           value={value.annee ?? ""}

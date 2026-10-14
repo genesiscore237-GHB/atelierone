@@ -9,6 +9,11 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { FormulaireVehicule } from "~/components/vehicule/FormulaireVehicule";
+import {
+  validerReception,
+  messageResume,
+  type Erreurs,
+} from "~/lib/validation-reception";
 import { CheckListOutillage } from "./CheckListOutillage";
 import { PhotosEtatDesLieux, type PhotoUI } from "./PhotosEtatDesLieux";
 
@@ -27,9 +32,17 @@ const numOuUndef = (v: unknown): number | undefined => {
   return Number.isFinite(n) ? n : undefined;
 };
 
-function Field({ label, required, error, hint, children }: { label: string; required?: boolean; error?: string; hint?: string; children: React.ReactNode }) {
+/**
+ * Champ de formulaire.
+ *
+ * LOT U4 (E10) — `anchor` pose un `id` sur l'enveloppe : c'est ce qui permet
+ * à `allerAuPremierErreur` de défiler jusqu'au bon champ. Un champ sans
+ * ancre resterait hors d'atteinte du défilement (il est imbriqué dans une
+ * grille de deux colonnes, pas à la racine du document).
+ */
+function Field({ label, required, error, hint, anchor, children }: { label: string; required?: boolean; error?: string; hint?: string; anchor?: string; children: React.ReactNode }) {
   return (
-    <div>
+    <div id={anchor ? `champ-${anchor}` : undefined}>
       <Label>{label}{required && <span className="text-destructive"> *</span>}</Label>
       <div className="mt-1">{children}</div>
       {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
@@ -174,14 +187,22 @@ export function ReceptionVehicule() {
       }
     : null;
 
-  const valider = (): Record<string, string> => {
-    const errs: Record<string, string> = {};
-    if (!f.vehicule.immatriculation?.trim()) errs.immatriculation = "Immatriculation requise";
-    if (!f.client.nom?.trim()) errs.clientNom = "Client / propriétaire requis";
-    if (!f.reception.kilometrageEntree && f.reception.kilometrageEntree !== 0) errs.kilometrageEntree = "Kilométrage d'entrée requis";
-    if (!f.reception.pannesDeclarees?.trim()) errs.pannesDeclarees = "Pannes déclarées requises";
-    if (!f.reception.signatureDeposant?.trim() && !f.reception.validationVerbale) errs.signature = "Signature du déposant ou validation verbale requise";
-    return errs;
+  // LOT U4 (E10) — la validation vit dans `~/lib/validation-reception`
+  // (fonctions pures, testables, réutilisables) et non ici.
+  const valider = (): Erreurs => validerReception(f);
+
+  /** Défile vers le premier champ fautif et y place le focus (E10). */
+  const allerAuPremierErreur = (errs: Erreurs) => {
+    const premier = Object.keys(errs)[0];
+    if (!premier) return;
+    const cible = document.getElementById(`champ-${premier}`);
+    if (!cible) return;
+    cible.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Le focus suit le défilement : l'agent peut corriger sans reprendre la
+    // souris, et sans que le défilement le ramène ailleurs à la validation
+    // suivante.
+    const champ = cible.querySelector<HTMLElement>("input, textarea, select, button");
+    window.setTimeout(() => champ?.focus?.({ preventScroll: true }), 220);
   };
 
   // RD4 — le véhicule chargé a un propriétaire et le client saisi est différent.
@@ -190,7 +211,14 @@ export function ReceptionVehicule() {
   const handleSubmit = () => {
     const errs = valider();
     setErrors(errs);
-    if (Object.keys(errs).length > 0) return;
+    if (Object.keys(errs).length > 0) {
+      // E10 — avant, l'échec était TOTALEMENT SILENCIEUX (ni toast, ni
+      // message, ni défilement) : l'agent cliquait « Enregistrer » et rien ne
+      // se produisait, sans savoir quoi corriger.
+      toast.error(messageResume(errs));
+      allerAuPremierErreur(errs);
+      return;
+    }
     // Format INCHANGÉ (RD7) : `{ present, observation }` par élément, en
     // JSONB. L'ancien code écrivait EN PLUS une clé minuscule `autres` qui
     // dupliquait l'observation de `AUTRES` : rien ne la relisait, mais deux
@@ -303,16 +331,16 @@ export function ReceptionVehicule() {
           {/* 2 — Client */}
           <Section title="2 · Client / Propriétaire">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="Nom / Raison sociale" required error={errors.clientNom}>
+              <Field label="Nom / Raison sociale" required error={errors.clientNom} anchor="clientNom">
                 <Input value={f.client.nom ?? ""} onChange={(e) => set("client", "nom", e.target.value)} placeholder="Dupont, GPJ Trans…" />
               </Field>
               <Field label="Prénom">
                 <Input value={f.client.prenom ?? ""} onChange={(e) => set("client", "prenom", e.target.value)} />
               </Field>
-              <Field label="Téléphone principal" required>
+              <Field label="Téléphone principal" required error={errors.clientTelephone} anchor="clientTelephone">
                 <Input value={f.client.telephone ?? ""} onChange={(e) => set("client", "telephone", e.target.value)} placeholder="06 12 34 56 78" />
               </Field>
-              <Field label="Email">
+              <Field label="Email" error={errors.clientEmail} anchor="clientEmail">
                 <Input type="email" value={f.client.email ?? ""} onChange={(e) => set("client", "email", e.target.value)} />
               </Field>
               <Field label="Adresse">
@@ -405,7 +433,7 @@ export function ReceptionVehicule() {
               <Field label="Date & heure de réception">
                 <Input type="datetime-local" value={r.dateReception ?? ""} onChange={(e) => set("reception", "dateReception", e.target.value)} />
               </Field>
-              <Field label="Kilométrage d'entrée" required error={errors.kilometrageEntree}>
+              <Field label="Kilométrage d'entrée" required error={errors.kilometrageEntree} anchor="kilometrageEntree">
                 <Input type="number" value={r.kilometrageEntree ?? ""} onChange={(e) => set("reception", "kilometrageEntree", e.target.value ? Number(e.target.value) : "")} />
               </Field>
               <Field label="Niveau de carburant">
@@ -449,7 +477,7 @@ export function ReceptionVehicule() {
                 (« travaux demandés / plainte ») était redondante : le serveur
                 reporte déjà la plainte sur les pannes déclarées. */}
             <div className="space-y-4">
-              <Field label="Pannes déclarées" required error={errors.pannesDeclarees}>
+              <Field label="Pannes déclarées" required error={errors.pannesDeclarees} anchor="pannesDeclarees">
                 <textarea value={r.pannesDeclarees ?? ""} onChange={(e) => set("reception", "pannesDeclarees", e.target.value)} rows={3} className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" placeholder="Voyant moteur allumé, bruit à l'accélération…" />
               </Field>
               <Field label="Observations" hint="Facultatif — remarques du déposant, délai souhaité, contraintes…">
@@ -475,7 +503,7 @@ export function ReceptionVehicule() {
 
           {/* 8 — Validation */}
           <Section title="8 · Validation">
-            <Field label="Nom et signature du déposant" required error={errors.signature}>
+            <Field label="Nom et signature du déposant" required error={errors.signature} anchor="signature">
               <Input value={r.signatureDeposant ?? ""} onChange={(e) => set("reception", "signatureDeposant", e.target.value)} placeholder="Nom tapé du déposant" />
             </Field>
             <label className="flex items-center gap-1.5 text-sm">
