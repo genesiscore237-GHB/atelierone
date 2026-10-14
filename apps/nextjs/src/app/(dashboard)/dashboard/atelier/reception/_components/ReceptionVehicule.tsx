@@ -14,6 +14,7 @@ import {
   messageResume,
   type Erreurs,
 } from "~/lib/validation-reception";
+import { invaliderApresReception } from "~/lib/invalidation-reception";
 import { CheckListOutillage } from "./CheckListOutillage";
 import { PhotosEtatDesLieux, type PhotoUI } from "./PhotosEtatDesLieux";
 
@@ -85,8 +86,10 @@ export function ReceptionVehicule() {
       } else {
         toast.success(`Réception enregistrée — dossier ${r.numero} créé`);
       }
-      utils.or.list.invalidate();
-      utils.vehicules.list.invalidate();
+      // LOT U5 (E11, P2-6) — une réception écrit bien plus que « 2 listes » :
+      // dossier, véhicule, client, registre parking projeté, KPI garage. La
+      // liste complète et ses motifs vivent dans `~/lib/invalidation-reception`.
+      void invaliderApresReception(utils);
       setF({ vehicule: {}, client: {}, chauffeur: {}, reception: { typeIntervention: "ATELIER", motEntree: "PANNE", priorite: "P3", niveauCarburantEntree: "", outillage: {}, photos: [], validationVerbale: false } });
       setOutillageNotes({});
       setPhotosEtatDesLieu([]);
@@ -414,16 +417,6 @@ export function ReceptionVehicule() {
               décrivaient le même constat à deux endroits obligeaient l'agent à
               choisir où écrire. La 3ᵉ zone de texte (plainte) disparaît aussi :
               le serveur reporte déjà la plainte sur les pannes déclarées. */}
-
-          {/* 7 — Photos */}
-          <Section title="7 · État des lieux photographique (pièce à conviction)">
-            <PhotosEtatDesLieux
-              photos={photosEtatDesLieu}
-              onChange={(suivants) => setPhotosEtatDesLieu(suivants)}
-              visite="ENTREE"
-              precedent={precedentPhotos}
-            />
-          </Section>
         </div>
 
         <div className="space-y-5 xl:col-span-2">
@@ -501,8 +494,18 @@ export function ReceptionVehicule() {
             </div>
           </Section>
 
-          {/* 8 — Validation */}
-          <Section title="8 · Validation">
+          {/* 6 — État des lieux photographique */}
+          <Section title="6 · État des lieux photographique (pièce à conviction)">
+            <PhotosEtatDesLieux
+              photos={photosEtatDesLieu}
+              onChange={(suivants) => setPhotosEtatDesLieu(suivants)}
+              visite="ENTREE"
+              precedent={precedentPhotos}
+            />
+          </Section>
+
+          {/* 7 — Validation */}
+          <Section title="7 · Validation">
             <Field label="Nom et signature du déposant" required error={errors.signature} anchor="signature">
               <Input value={r.signatureDeposant ?? ""} onChange={(e) => set("reception", "signatureDeposant", e.target.value)} placeholder="Nom tapé du déposant" />
             </Field>
