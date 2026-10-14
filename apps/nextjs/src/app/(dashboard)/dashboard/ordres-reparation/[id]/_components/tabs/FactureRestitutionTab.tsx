@@ -66,6 +66,12 @@ export function FactureRestitutionTab({ or }: { or: any }) {
     checklist: CHECKLIST_SORTIE.map((l) => ({ libelle: l, ok: false, observation: "" })),
   });
 
+  // LOT U2 (RD5) — invariant kilométrage, calculé côté client pour informer
+  // AVANT la soumission. Le serveur le revérifie systématiquement.
+  const kmEntree = or.kilometrageEntree != null ? Number(or.kilometrageEntree) : null;
+  const kmSortieIncoherente =
+    kmEntree != null && restitForm.kilometrageSortie !== "" && Number(restitForm.kilometrageSortie) < kmEntree;
+
   const restituer = api.or.restituerVehicule.useMutation({
     onSuccess: () => {
       toast.success("Véhicule restitué — OR livré");
@@ -109,6 +115,12 @@ export function FactureRestitutionTab({ or }: { or: any }) {
 
   const soumettreRestitution = () => {
     if (restitForm.kilometrageSortie === "") { toast.error("Kilométrage de sortie requis"); return; }
+    // LOT U2 (RD5) — l'IHM prévient avant l'appel ; le serveur reste la
+    // seule garantie (ce contrôle client n'est pas une sécurité).
+    if (kmSortieIncoherente) {
+      toast.error(`Kilométrage de sortie inférieur au km d'entrée (${Number(kmEntree).toLocaleString("fr-FR")} km)`);
+      return;
+    }
     if (restitForm.recuperateurNom.trim().length < 2) { toast.error("Récupérateur requis"); return; }
     if (restitForm.signatureClient.trim().length < 2) { toast.error("Signature (nom tapé) requise"); return; }
     if (restitForm.sortieExceptionnelle) {
@@ -192,7 +204,25 @@ export function FactureRestitutionTab({ or }: { or: any }) {
           <div className="grid gap-3 sm:grid-cols-3">
             <div>
               <Label className="text-xs text-muted-foreground">Kilométrage sortie *</Label>
-              <Input type="number" min={0} value={restitForm.kilometrageSortie} onChange={(e) => setRestitForm({ ...restitForm, kilometrageSortie: e.target.value })} placeholder="Ex : 45 320" className="mt-1" disabled={!peutRestituer} />
+              <Input
+                type="number"
+                min={kmEntree ?? 0}
+                value={restitForm.kilometrageSortie}
+                onChange={(e) => setRestitForm({ ...restitForm, kilometrageSortie: e.target.value })}
+                placeholder="Ex : 45 320"
+                className="mt-1"
+                disabled={!peutRestituer}
+              />
+              {/* LOT U2 (RD5) — invariant affiché AVANT la soumission : le km
+                  de sortie ne peut pas être inférieur au km relevé à l'entrée. */}
+              {kmSortieIncoherente ? (
+                <p className="mt-1 text-xs text-destructive">
+                  Inférieur au km d&apos;entrée ({Number(kmEntree).toLocaleString("fr-FR")} km) : le véhicule ne peut
+                  pas avoir perdu de kilomètres.
+                </p>
+              ) : (
+                kmEntree != null && <p className="mt-1 text-xs text-muted-foreground">Minimum relevé à l&apos;entrée : {Number(kmEntree).toLocaleString("fr-FR")} km</p>
+              )}
             </div>
             <div>
               <Label className="text-xs text-muted-foreground">Niveau carburant sortie</Label>

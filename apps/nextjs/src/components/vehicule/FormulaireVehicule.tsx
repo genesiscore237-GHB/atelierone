@@ -79,6 +79,15 @@ interface FormulaireVehiculeProps {
   erreurs?: Partial<Record<keyof FicheVehicule | string, string>>;
   /** Affiche l'empreinte physique (dimensions) — lot U0d. */
   avecDimensions?: boolean;
+  /**
+   * Affiche le kilométrage dans la fiche.
+   *
+   * LOT U2 (RD5) : à la RÉCEPTION ce champ est MASQUÉ. Il y coexistait deux
+   * champs km aux libellés ambigus (fiche / section Entrée) ; le km qui fait
+   * foi à une entrée est celui relevé à l'entrée, pas celui tapé dans la
+   * fiche. Le parc, lui, garde le champ (c'est sa référence courante).
+   */
+  avecKilometrage?: boolean;
   desactive?: boolean;
 }
 
@@ -87,6 +96,7 @@ export function FormulaireVehicule({
   onChange,
   erreurs = {},
   avecDimensions = false,
+  avecKilometrage = true,
   desactive = false,
 }: FormulaireVehiculeProps) {
   // Liste de référence + types réellement rencontrés par l'agence (U1).
@@ -191,15 +201,17 @@ export function FormulaireVehicule({
           ))}
         </select>
       </Field>
-      <Field label="Kilométrage" error={erreurs.kilometrage}>
-        <Input
-          type="number"
-          min={0}
-          value={value.kilometrage ?? ""}
-          onChange={(e) => onChange("kilometrage", num(e.target.value))}
-          disabled={desactive}
-        />
-      </Field>
+      {avecKilometrage && (
+        <Field label="Kilométrage" error={erreurs.kilometrage}>
+          <Input
+            type="number"
+            min={0}
+            value={value.kilometrage ?? ""}
+            onChange={(e) => onChange("kilometrage", num(e.target.value))}
+            disabled={desactive}
+          />
+        </Field>
+      )}
 
       {avecDimensions && (
         <>

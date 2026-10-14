@@ -146,6 +146,16 @@ export function ReceptionVehicule() {
     { enabled: immatRecherchee.length >= 2 }
   );
   const vehiculeIdConnu = (vehiculeRecherche.data?.vehicules?.[0] as { id?: number } | undefined)?.id ?? null;
+
+  // LOT U2 (RD5) — dernier kilométrage connu : celui de la fiche si le
+  // véhicule a été chargé, sinon celui trouvé par la saisie de la plaque.
+  const dernierKmConnu: number | null = (() => {
+    const fiche = f.vehicule.kilometrage;
+    if (fiche != null && fiche !== "") return Number(fiche);
+    const trouve = vehiculeRecherche.data?.vehicules?.[0] as { kilometrage?: number | null } | undefined;
+    const km = trouve?.kilometrage;
+    return km != null && km > 0 ? Number(km) : null;
+  })();
   const etatDesLieuPrecedent = api.or.etatDesLieuPrecedent.useQuery(
     { vehiculeId: vehiculeIdConnu, avantOrId: 0 },
     { enabled: vehiculeIdConnu != null }
@@ -277,7 +287,19 @@ export function ReceptionVehicule() {
               onChange={(champ, valeur) => set("vehicule", champ as string, valeur)}
               erreurs={errors}
               avecDimensions
+              avecKilometrage={false}
             />
+            {/* LOT U2 (RD5) — l'agent ne doit pas deviner le km de référence :
+                il lui est donné, en lecture seule. */}
+            {dernierKmConnu != null && (
+              <p className="mt-3 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                Dernier kilométrage connu :{" "}
+                <span className="font-semibold text-foreground">
+                  {Number(dernierKmConnu).toLocaleString("fr-FR")} km
+                </span>{" "}
+                — saisi plus bas, en section « Entrée », avec le relevé réel du jour.
+              </p>
+            )}
           </Section>
 
           {/* 2 — Client */}

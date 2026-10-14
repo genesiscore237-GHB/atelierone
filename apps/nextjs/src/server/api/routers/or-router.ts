@@ -782,7 +782,8 @@ export const orRouter = createTRPCRouter({
             codeClient,
             typeClient: "PART",
             statut: "ACTIF",
-          } as any).returning();
+        } as any).returning();
+
           // LOT R5/U0a — dédoublonnage (E6) : le nouveau client est-il un
           // doublon potentiel d'un client existant de l'agence (même téléphone
           // normalisé) ? On le MARQUE (et on marque l'existant) pour que l'UI
@@ -911,6 +912,16 @@ export const orRouter = createTRPCRouter({
             sourceId: r.sourceId,
           })),
         });
+
+        // LOT U2 (RD5) — le kilométrage relevé à l'ENTRÉE devient la référence
+        // de la fiche véhicule. Avant, le km de la fiche et celui de l'entrée
+        // étaient deux champs INDÉPENDANTS : ils pouvaient diverger, et c'est
+        // le km de la fiche (souvent ancien) qui servait ensuite de référence à
+        // la visite suivante. Une seule valeur fait foi désormais.
+        await tx
+          .update(vehicules)
+          .set({ kilometrage: input.reception.kilometrageEntree, updatedAt: new Date() } as any)
+          .where(eq(vehicules.id, vehiculeId));
 
         // 5. Historique de réception (traçabilité)
         await tx.insert(orHistorique).values({
@@ -1352,7 +1363,7 @@ export const orRouter = createTRPCRouter({
       return db.transaction(async (tx) => {
         await verifierDossierOuvert(input.orId, ctx.user.agenceId);
         const [or] = await tx
-          .select({ id: ordresReparation.id, numero: ordresReparation.numero, statut: ordresReparation.statut, vehiculeId: ordresReparation.vehiculeId, clientId: ordresReparation.clientId, dateCloture: ordresReparation.dateCloture, totalFacture: ordresReparation.totalFacture, venteId: ordresReparation.venteId })
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero, statut: ordresReparation.statut, vehiculeId: ordresReparation.vehiculeId, clientId: ordresReparation.clientId, dateCloture: ordresReparation.dateCloture, totalFacture: ordresReparation.totalFacture, venteId: ordresReparation.venteId, kilometrageEntree: ordresReparation.kilometrageEntree })
           .from(ordresReparation)
           .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
           .limit(1);
@@ -1378,6 +1389,29 @@ export const orRouter = createTRPCRouter({
             .where(eq(ventes.id, or.venteId))
             .limit(1);
           if (vente) restantOR = Math.max(0, Number(vente.montantTotal ?? 0) - Number(vente.montantPaye ?? 0));
+        }
+
+        // LOT U2 (RD5) — INVARIANT KILOMÉTRAGE : un véhicule ne peut pas
+        // ressortir avec MOINS de kilomètres qu'à son entrée dans l'atelier.
+        //
+        // Sans cette règle, une coquille de saisie (12 000 au lieu de 120 000)
+        // s'écrit silencieusement sur le dossier ET sur la fiche véhicule, qui
+        // devient une référence fausse pour toutes les visites suivantes. Le
+        // contrôle est ici, côté serveur : l'IHM ne peut pas être la seule
+        // garantie d'une cohérence de données.
+        //
+        // L'écart d'un aller-retour de garage est toléré (le véhicule peut
+        // revenir chez un proche puis revenir) — seule la comparaison stricte
+        // avec le km d'entrée du dossier est opposée.
+        const kmEntree = or.kilometrageEntree != null ? Number(or.kilometrageEntree) : null;
+        if (kmEntree != null && input.kilometrageSortie < kmEntree) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              `Kilométrage de sortie incohérent : ${input.kilometrageSortie.toLocaleString("fr-FR")} km ` +
+              `est inférieur au kilométrage d'entrée (${kmEntree.toLocaleString("fr-FR")} km). ` +
+              `Vérifiez la saisie — le véhicule ne peut pas avoir perdu de kilomètres.`,
+          });
         }
 
         if (exceptionnelle) {
