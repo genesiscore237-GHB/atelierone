@@ -1,3 +1,5 @@
 #!/bin/sh
-# test
-exit 0
+# Verrou de cohérence base — installé par scripts/installer-hooks.mjs
+# Empêche qu'un push sur `main` arrive avant que la production soit à jour.
+# Contournement motivé : NO_VERROU_BASE=1 git push origin main
+node "$(git rev-parse --show-toplevel)/scripts/verifier-base-avant-push.mjs" "$@"
