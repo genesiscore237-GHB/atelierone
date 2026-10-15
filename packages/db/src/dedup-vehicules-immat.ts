@@ -23,10 +23,26 @@ requireLocalOrForced("fusion des doublons d'immatriculation (dedup-vehicules-imm
  * pour éviter d'écraser la propriété) : la clause de fusion ne touche pas à
  * `client_id` du survivant.
  *
- * Idempotent. A exécuter AVANT la migration 0004 (index unique immat_norm).
+ * Idempotent.
+ *
+ * ORDRE D'EXECUTION REAL, corrige le 2026-10-15.
+ *
+ * Ce fichier disait « a executer AVANT la migration 0004 ». C'est faux et
+ * impossible a suivre : le backfill ecrit dans `immat_norm`, colonne que la
+ * migration 0004 est censee creer. Sur une base ou 0004 n'a pas encore ete
+ * appliquee, le script echoue sur `la colonne immat_norm n'existe pas` —
+ * ce qui est exactement ce qui s'est produit sur la base de travail.
+ *
+ * L'ordre correct est :
+ *   1. `0004_vehicule_immat_unique.sql`  (cree `immat_norm` + index)
+ *   2. ce script                        (backfill + fusion des doublons)
+ *
+ * L'index unique est alors cree sur des valeurs toutes-NULL — donc inerte —
+ * et le backfill vient le remplir juste apres, sous la protection de la
+ * contrainte. Sans le backfill, la protection n'existerait pas : c'est lui
+ * qui donne toute sa valeur a l'unicite.
  *
  * Usage : pnpm -F @atelierone/db dedup:vehicules-immat
- *         (invoqué par db:test-setup avant drizzle-kit migrate)
  */
 
 const COLONNES_REFERENCES: Array<{ table: string; colonne: string }> = [

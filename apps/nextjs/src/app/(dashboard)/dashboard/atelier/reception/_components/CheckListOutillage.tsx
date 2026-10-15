@@ -362,19 +362,27 @@ export function CheckListOutillage({
       )}
 
       {/* ── Check-list ───────────────────────────────────────────────── */}
-      {catalogue.isLoading && !gestion ? (
+      {catalogue.isLoading && !gestion && items.length === 0 ? (
         <div className="space-y-1">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="h-8 animate-pulse rounded-lg bg-muted/40" />
           ))}
         </div>
-      ) : catalogue.isError && !gestion ? (
-        <p className="rounded border border-destructive/40 bg-destructive/5 px-2 py-2 text-[11px] text-destructive">
-          Liste des équipements indisponible. La saisie reste possible pour les éléments déjà connus.
-        </p>
       ) : (
-        <div className="space-y-1">
-          {items.map((item) => {
+        <>
+          {/* Échec réseau : on affiche la nomenclature par défaut et on le dit.
+              Le premier jet affichait un message d'erreur et RIEN d'autre —
+              l'agent se retrouvait devant un bloc vide, incapable de saisir
+              un état des lieux. Indisponible n'est pas la même chose que vide :
+              une nomenclature qui n'arrive pas doit laisser passer le travail. */}
+          {catalogue.isError && !gestion && (
+            <p className="mb-1.5 rounded border border-warning/40 bg-warning/5 px-2 py-1.5 text-[11px] text-muted-foreground">
+              Nomenclature personnalisée indisponible — la liste par défaut est affichée.
+              Vos saisies resteront enregistrées.
+            </p>
+          )}
+          <div className="space-y-1">
+            {items.map((item) => {
             const present = !!coches[item.cle];
             const active = ouverte === item.cle;
             const observation = observations[item.cle] ?? "";
@@ -453,9 +461,10 @@ export function CheckListOutillage({
                 )}
               </div>
             );
-          })}
-        </div>
+            })}
+          </div>
+        </>
       )}
-    </div>
-  );
-}
+      </div>
+    );
+  }
