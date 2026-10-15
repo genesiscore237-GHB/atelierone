@@ -48,6 +48,8 @@
     "migrate:kpi-cibles": "tsx src/migrate-kpi-cibles.ts",
     "dedup:vehicules-immat": "tsx src/dedup-vehicules-immat.ts",
     "dedup:clients": "tsx src/dedup-clients.ts",
+    "purge:test": "tsx src/purge-test-data.ts",
+    "diagnose:data": "tsx src/diagnose-data.ts",
     "seed:garage": "tsx src/seed-garage.ts",
     "seed:garage:plan": "tsx src/seed-garage.ts --plan",
     "verify:garage": "tsx src/verify-garage.ts",
