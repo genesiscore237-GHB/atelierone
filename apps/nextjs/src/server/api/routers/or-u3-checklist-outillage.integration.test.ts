@@ -169,7 +169,7 @@ describe("LOT U3 — check-list outillage + section 6 absorbée", () => {
     expect(out.TRIANGLE.observation).toBe("");
   });
 
-  it("4-5. pannes, observations de réception et plainte reportée", async () => {
+  it("4-5. pannes, observations de réception, et la saisie reportée sur la colonne historique", async () => {
     const caller = orRouter.createCaller(ctxSuperadmin());
     const r = await caller.receptionner({
       client: { nom: "Client U3check", telephone: "690100700" },
@@ -187,17 +187,14 @@ describe("LOT U3 — check-list outillage + section 6 absorbée", () => {
     expect(or.pannes_declarees).toBe("Bruit à l’accélération");
     expect(or.observations_reception).toBe("Refuse l’attente, veut repartir demain");
 
-// 5. La plainte reste DISTINTE des pannes.
-    //    Ce test affirmait autrefois `or.plainte === pannes_declarees` — la
-    //    plainte était alimentée par les pannes parce que le formulaire n'en
-    //    proposait qu'une. C'était faux : une réclamation client (« facturé au
-    //   -dessus du devis ») n'est pas un état technique, et le dossier
-    //    affichait les pannes sous l'intitulé « Plainte ». Aucune plainte
-    //    déclarée -> colonne vide.
-    expect(or.plainte).toBeNull();
+// 5. La saisie unique est reportée sur la colonne historique `plainte`,
+    //    que lisent la fiche dossier, le planning, les alertes et le parc.
+    //    Il n'y a PAS deux champs à l'écran : ce que le client déclare en
+    //    déposant son véhicule est sa plainte.
+    expect(or.plainte).toBe("Bruit à l’accélération");
   });
 
-  it("5-bis. une plainte déclarée est conservée telle quelle", async () => {
+  it("5-bis. la saisie n'est jamais amputée de la colonne historique", async () => {
     const caller = orRouter.createCaller(ctxSuperadmin());
     const r = await caller.receptionner({
       client: { nom: "Client U3plainte", telephone: "690100701" },
@@ -205,14 +202,12 @@ describe("LOT U3 — check-list outillage + section 6 absorbée", () => {
       reception: {
         kilometrageEntree: 3000,
         pannesDeclarees: "Bruit au freinage",
-        plainte: "Facture 30 % au-dessus du devis",
         outillage: {},
       },
     });
 
     const or = await lireOr(r.id);
     expect(or.pannes_declarees).toBe("Bruit au freinage");
-    expect(or.plainte).toBe("Facture 30 % au-dessus du devis");
-    expect(or.plainte).not.toBe(or.pannes_declarees);
+    expect(or.plainte).toBe("Bruit au freinage");
   });
 });

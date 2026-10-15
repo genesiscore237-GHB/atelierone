@@ -3,38 +3,35 @@ import { sql } from "drizzle-orm";
 import { db } from "~/server/db";
 
 /**
- * PLAINTE ≠ PANNE DÉCLARÉE
+ * UNE SEULE ZONE DE SAISIE : « Pannes déclarées »
  *
- * Ce sont deux objets métier distincts, et la base les distingue déjà :
- *   - `ordres_reparation.plainte`          → ce dont le client se plaint
- *                                             (« facturé 30 % au-dessus du devis »,
- *                                             « le véhicule est revenu abîmé »)
- *   - `ordres_reparation.pannes_declarees` → l'état technique constaté
- *                                             (« voyant moteur », « bruit à l'accélération »)
+ * Décision métier : ce que le client déclare en déposant son véhicule est sa
+ * plainte. Il n'y a donc pas deux champs à l'écran — un formulaire qui demande
+ * « pannes » ET « plainte » oblige l'agent à choisir lequel est le vrai, et
+ * l'un des deux reste vide.
  *
- * Bug : `or.receptionner` écrivait
- *     plainte: input.reception.plainte ?? input.reception.pannesDeclarees
- * et l'écran de réception ne proposait QUE le champ « pannes déclarées ».
- * Conséquence : sur le formulaire de réception principal, la plainte était
- * TOUJOURS un copié-collage des pannes. La réclamation commerciale d'un client
- * n'était donc jamais enregistrée — et l'écran d'un dossier affichait, sous
- * l'intitulé « Plainte », la liste des pannes. Une information fausse, présentée
- * comme vraie, à l'endroit exact où l'on décide d'une concession commerciale.
+ * `pannes_declarees` est donc la saisie ; `plainte` est la colonne historique
+ * sur laquelle elle est reportée, et que lisent la fiche dossier, le planning,
+ * les alertes et le parc. Tous les écrans qui affichent « Plainte » désignent
+ * exactement ce que le client a déclaré.
  *
- * Corollaire aggravant : un client qui vient se plaindre SANS panne (il veut
- * contester la facture précédente, faire reprendre une rayure) n'a aucune
- * panne à déclarer. Le champ « pannes déclarées » étant obligatoire, l'agent
- * devait y écrire la plainte — ce qui polluait la donnée technique.
+ * Ce test verrouille deux choses qui doivent rester vraies :
+ *   1. la saisie unique alimente bien l'affichage ;
+ *   2. le libellé « Plainte du client » ne réapparaît PAS dans le formulaire.
  *
- * Ce test verrouille l'indépendance des deux champs, dans les deux sens.
+ * Le second point a été corrigé : une zone « Plainte du client » avait été
+ * ajoutée au formulaire sur la base d'une misunderstanding — le besoin exprimé
+ * était déjà couvert par « Pannes déclarées ».
  */
 
 vi.mock("@atelierone/auth", () => ({}));
 
 const { orRouter } = await import("~/server/api/routers/or-router");
+const { readFileSync } = await import("node:fs");
+const { fileURLToPath } = await import("node:url");
 
-const NS = "plainte";
-const IMAAT = `${NS.toUpperCase()}-IMM-01`;
+const NS = "panne";
+const IMAAT = "PANNE-IMM-01";
 const PANNE = "Voyant moteur allume, bruit a l'acceleration";
 const PLAINTE = "Facture 30 % au-dessus du devis du mois dernier";
 
@@ -68,7 +65,7 @@ async function lire(id: number) {
   return row!;
 }
 
-describe("Réception : la plainte n'est pas la panne", () => {
+describe("Réception : une seule zone de saisie — les pannes déclarées", () => {
   beforeAll(async () => {
     // Rejouable : on nettoie d'abord, sinon un run interrompu laisse des
     // fixtures et le suivant bute sur une contrainte d'unicité. L'ordre
@@ -111,7 +108,29 @@ describe("Réception : la plainte n'est pas la panne", () => {
     }
   });
 
-  it("conserve la plainte ET la panne, sans les confondre", async () => {
+  it("l'ecran de reception ne propose QU'UN champ : pannes declarees", async () => {
+    // Garde-fou de conception : si une zone « Plainte du client » réapparaît
+    // dans le formulaire, l'agent aura deux endroits pour écrire le même énoncé
+    // et l'un des deux restera vide — sans que rien ne le signale.
+    const chemin = fileURLToPath(
+      new URL(
+        "../../../app/(dashboard)/dashboard/atelier/reception/_components/ReceptionVehicule.tsx",
+        import.meta.url,
+      ),
+    );
+    const source = readFileSync(chemin, "utf8");
+    const libelles = [...source.matchAll(/label="([^"]+)"/g)].map((m) => m[1]);
+
+    expect(libelles).toContain("Pannes déclarées");
+    expect(
+      libelles.filter((l) => /plainte/i.test(l)),
+      "aucun libellé « Plainte » ne doit exister dans le formulaire de réception",
+    ).toEqual([]);
+    // Et la saisie ne doit pas être dupliquée côté état.
+    expect(source).not.toMatch(/set\("reception",\s*"plainte"/);
+  });
+
+  it("la saisie « pannes declarees » alimente la colonne affichee « Plainte »", async () => {
     const caller = orRouter.createCaller(ctx());
     const r = await caller.receptionner({
       client: { nom: `Client ${NS}`, telephone: "690000042" },
@@ -119,7 +138,6 @@ describe("Réception : la plainte n'est pas la panne", () => {
       reception: {
         kilometrageEntree: 45_000,
         pannesDeclarees: PANNE,
-        plainte: PLAINTE,
         motEntree: "PANNE",
         priorite: "P3",
       },
@@ -128,33 +146,8 @@ describe("Réception : la plainte n'est pas la panne", () => {
 
     const row = await lire(orId);
     expect(row.pannes_declarees).toBe(PANNE);
-    expect(row.plainte).toBe(PLAINTE);
-    // Le piège exact du bug : la plainte copiée sur la panne.
-    expect(row.plainte).not.toBe(PANNE);
-  });
-
-  it("laisse la plainte vide quand le client n'en exprime aucune", async () => {
-    const caller = orRouter.createCaller(ctx());
-    const r = await caller.receptionner({
-      client: { nom: `Client ${NS} bis`, telephone: "690000043" },
-      vehicule: { immatriculation: `${NS.toUpperCase()}-IMM-02`, marque: "Peugeot", modele: "208", typeVehicule: "voiture" },
-      reception: {
-        kilometrageEntree: 12_000,
-        pannesDeclarees: "Disque avant raye",
-        motEntree: "PANNE",
-        priorite: "P3",
-      },
-    });
-
-    const row = await lire(r.id);
-    expect(row.pannes_declarees).toBe("Disque avant raye");
-    // Aucune plainte n'a ete declaree : la colonne doit rester vide, pas se
-    // remplir avec la panne. Un dossier sans reclamation doit le dire.
-    expect(row.plainte).toBeNull();
-
-    await db.execute(sql`DELETE FROM lignes_ordre_reparation WHERE ordre_id = ${r.id}`);
-    await db.execute(sql`DELETE FROM ordres_reparation WHERE id = ${r.id}`);
-    await db.execute(sql`DELETE FROM vehicules WHERE immatriculation = ${`${NS.toUpperCase()}-IMM-02`}`);
-    await db.execute(sql`DELETE FROM clients WHERE nom = ${`Client ${NS} bis`}`);
+    // Les écrans qui affichent « Plainte » (fiche dossier, planning, alertes,
+    // parc) doivent montrer ce que le client a réellement déclaré.
+    expect(row.plainte).toBe(PANNE);
   });
 });

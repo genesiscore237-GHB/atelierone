@@ -477,16 +477,15 @@ export function ReceptionVehicule() {
               la section 5 « Constats & check-list outillage ». Deux blocs qui
               décrivaient le même constat obligeaient l'agent à choisir où écrire.
 
-              La zone « Plainte » est en revanche RESTAURÉE. Elle avait été
-              retirée au motif que « le serveur reporte déjà la plainte sur les
-              pannes déclarées » — mais c'est précisément le défaut : le serveur
-              ne reportait rien, il REMPLAÇAIT la plainte par les pannes. Sur ce
-              formulaire (le principal), aucune réclamation client n'était donc
-              enregistrée, et la fiche du dossier affichait les pannes sous
-              l'intitulé « Plainte ». Une réclamation commerciale n'est pas un
-              état technique : « facturé 30 % au-dessus du devis » et « voyant
-              moteur » ne se confondent pas, et un client peut venir se
-              plaindre SANS panne. */}
+              Il n'y a QU'UN SEUL champ : « Pannes déclarées ». Ce que le client
+              déclare en déposant son véhicule EST sa plainte — « le moteur
+              clignote », « ça vibre depuis la reprise ». Ajouter une zone
+              « Plainte du client » à côté creates deux endroits pour le même
+              énoncé, et l'agent doit choisir lequel est le vrai. Le serveur
+              reporte donc la déclaration sur la colonne historique `plainte`,
+              qui alimente la fiche dossier, le planning, les alertes et le
+              parc — tous les écrans displaying « Plainte » désignent donc ce
+              que le client a effectivement déclaré. */}
         </div>
 
         <div className="space-y-5 xl:col-span-2">
@@ -535,27 +534,13 @@ export function ReceptionVehicule() {
           {/* 5 — Check-list outillage */}
           <Section title="5 · Constats & check-list outillage">
             {/* LOT U3 (E9, RD7) — l'ancienne section 6 est ABSORBÉE ici :
-                « Pannes déclarées » (obligatoire), « Plainte du client » et
-                « Observations » remontent en tête du bloc constats : deux
-                blocs qui décrivent le même constat obligeaient l'agent à
-                choisir où écrire. La zone « Plainte » n'est PAS une doublure
-                de « Pannes » : l'une porte l'état technique constaté, l'autre
-                la réclamation du client. */}
+                « Pannes déclarées » (obligatoire) et « Observations » remontent
+                en tête du bloc constats : deux blocs qui décrivent le même
+                constat obligeaient l'agent à choisir où écrire. Une seule zone
+                de saisie, pour un seul concept. */}
             <div className="space-y-4">
               <Field label="Pannes déclarées" required error={errors.pannesDeclarees} anchor="pannesDeclarees">
                 <textarea value={r.pannesDeclarees ?? ""} onChange={(e) => set("reception", "pannesDeclarees", e.target.value)} rows={3} className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" placeholder="Voyant moteur allumé, bruit à l'accélération…" />
-              </Field>
-              <Field
-                label="Plainte du client"
-                hint="Facultatif — ce dont le client se plaint, distinct de la panne"
-              >
-                <textarea
-                  value={r.plainte ?? ""}
-                  onChange={(e) => set("reception", "plainte", e.target.value)}
-                  rows={2}
-                  className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary"
-                  placeholder="Facturé au-dessus du devis, rayure apparue après la reprise, panne revenue…"
-                />
               </Field>
               <Field label="Observations" hint="Facultatif — remarques du déposant, délai souhaité, contraintes…">
                 <textarea value={r.observationsReception ?? ""} onChange={(e) => set("reception", "observationsReception", e.target.value)} rows={2} className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" placeholder="Client pressé, remarques…" />
