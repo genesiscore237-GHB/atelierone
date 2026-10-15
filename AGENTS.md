@@ -57,11 +57,19 @@ jamais.
 Un hook `pre-push` fait cette vérification **avant** que le code n'arrive :
 
 ```bash
-pnpm hooks:install        # une fois par clone — .git/hooks n'est pas versionné
+pnpm hooks:install        # une fois par clone — installe scripts/git-hooks/
 ```
+
+L'installateur pointe `core.hooksPath` sur `scripts/git-hooks/`, **versionné**,
+plutôt que sur `.git/hooks`. Deux raisons : `.git/hooks` disparaît au premier
+clone (l'équipe croirait la garantie intacte alors qu'elle n'existe que sur une
+machine), et sur Windows un hook écrit par PowerShell n'a pas le bit
+d'exécutable — git le saute **silencieusement**. Vérifiable par `GIT_TRACE=1` :
+un push qui n'affiche aucune invocation de hook ne l'a pas exécuté.
 
 Sur un push visant `main`, le hook enchaîne `db:sync` (additif et idempotent)
 puis `db:check` contre la production. **Une dérive bloquante annule le push.**
+Comptez ~2 min sur un push vers `main` ; une branche de travail sort aussitôt.
 
 - **Pousser une branche de travail ne touche rien** : le hook sort aussitôt.
 - **Un hook maison déjà présent n'est pas écrasé** : l'installateur le signale

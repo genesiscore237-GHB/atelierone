@@ -27,19 +27,34 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FICHIER_ENV = resolve(ROOT, ".env");
 
-/** Vrai si le push vise `main`. Sans argument, on suppose un push manuel. */
+/**
+ * Vrai si le push vise `main`.
+ *
+ * ATTENTION au contrat de git : un hook `pre-push` reçoit la liste des
+ * RÉFÉRENCES sur STDIN, et non dans ses arguments — argv ne contient que le
+ * nom du dépôt distant et son URL. Lire argv revient donc à ne jamais voir la
+ * branche : le hook sortait sans rien vérifier, en silence, sur chaque push.
+ * Format de stdin, une ligne par référence poussée :
+ *   <ref locale> SP <sha local> SP <ref distante> SP <sha distant> LF
+ */
 function cibleMain() {
-  const args = process.argv.slice(2);
-  const refs = args.filter((a) => /\s[0-9a-f]{40}\s/.test(a) || a.includes("refs/heads/"));
-  if (refs.length === 0) return args.includes("main") || args.includes("origin main");
-  return refs.some((l) => l.trim().endsWith("refs/heads/main"));
+  let stdin = "";
+  try {
+    stdin = readFileSync(0, "utf8");
+  } catch {
+    // Pas de stdin (lancement manuel) : on ne peut rien prouver.
+    return false;
+  }
+  const lignes = stdin.split("\n").filter(Boolean);
+  if (lignes.length === 0) return false;
+  return lignes.some((l) => l.split(" ")[0] === "refs/heads/main");
 }
 
 /** Variante « neon » de DATABASE_URL, présente et commentée dans le .env. */
