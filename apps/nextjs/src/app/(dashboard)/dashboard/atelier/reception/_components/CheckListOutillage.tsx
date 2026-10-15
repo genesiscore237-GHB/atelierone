@@ -15,6 +15,7 @@ import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { cn } from "~/lib/utils";
+import { slugifierElement, type ElementOutillage } from "~/lib/outillage";
 
 /**
  * LOT U3 (E9, RD7) + LOT O1/O2 — Check-list « Outillage & accessoires »
@@ -51,7 +52,7 @@ import { cn } from "~/lib/utils";
  * UX n°6 du AGENTS.md.
  */
 
-type Element = { cle: string; libelle: string; ordre: number };
+type Element = ElementOutillage;
 type Valeur = { present: boolean; observation: string };
 
 interface Props {
@@ -135,17 +136,10 @@ export function CheckListOutillage({
       return;
     }
     const prises = new Set(brouillon.map((i) => i.cle));
-    // Même algorithme que le serveur : la clé reste cohérente quoi qu'il arrive.
-    const base =
-      libelle
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "") // diacritiques : "Clé" -> "CLE"
-        .toUpperCase()
-        .replace(/[\u0300-\u036f]/g, "") // diacritiques : "Clé" -> "CLE"
-        .replace(/^_+|_+$/g, "")
-        .slice(0, 60) || "ELEMENT";
-    let cle = base;
-    for (let n = 2; prises.has(cle) && n < 200; n += 1) cle = `${base}_${n}`;
+    // Même implémentation que celle du serveur (`~/lib/outillage`), pas une
+    // copie : deux algorithmes de slugification finissent toujours par
+    // diverger, et le serveur refuserait alors la clé que l'écran a produite.
+    const cle = slugifierElement(libelle, prises);
 
     setBrouillon([...brouillon, { cle, libelle, ordre: (brouillon.length + 1) * 10 }]);
     setNouveau("");

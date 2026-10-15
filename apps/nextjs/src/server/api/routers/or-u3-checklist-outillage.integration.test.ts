@@ -135,7 +135,12 @@ describe("LOT U3 — check-list outillage + section 6 absorbée", () => {
     });
 
     const or = await lireOr(r.id);
-    const out = or.outillage ?? {};
+    // La colonne est un JSONB : on la relit avec le type du domaine plutôt
+    // qu'avec celui, très large, que renvoie la requête brute.
+    const out = (or.outillage ?? {}) as Record<
+      string,
+      { present: boolean; observation: string; libelle?: string }
+    >;
 
     // 1. Format : le dossier fige l'état de TOUTE la nomenclature de l'agence,
     //    pas seulement des éléments cochés. C'est le changement du lot O1 —

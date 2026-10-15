@@ -1,3 +1,19 @@
+## Vérification avant commit (obligatoire)
+
+`tsc` **ne suffit pas**. Il ne connaît pas la frontière client/serveur : un composant `"use client"` peut importer sans broncher un module qui tire `@atelierone/db` → `postgres` → `net`, `tls`, `fs`, `perf_hooks`. Le build Vercel échoue alors sur `Module not found: Can't resolve 'net'`, alors que tous les tests et le type-check sont verts.
+
+Avant chaque commit qui touche une page ou un composant :
+
+```
+pnpm --filter @atelierone/nextjs exec vitest run   # suite complète
+pnpm --filter @atelierone/nextjs exec tsc --noEmit -p tsconfig.json
+cd apps/nextjs && pnpm exec next build             # ← le seul qui voie la frontière
+```
+
+**Règle de module** : tout ce qu'un composant client doit importer vit dans `apps/nextjs/src/lib/` et n'importe **ni la base, ni quoi que ce soit de serveur**. La logique partagée est dupliquée entre client et serveur uniquement si elle est **pure** — c'est le cas de `~/server/lib/atelier-service.ts` et de `~/lib/outillage.ts`, importés sans risque par des composants client.
+
+`import type` vers un module serveur est sans danger : il est effacé à la compilation.
+
 ## Plan de travail (source de vérité)
 
 Le cahier des charges, le planning d'avancement et les décisions actées de l'**harmonisation du véhicule** sont tenus dans `docs/HARMONISATION-VEHICULE.md` :
