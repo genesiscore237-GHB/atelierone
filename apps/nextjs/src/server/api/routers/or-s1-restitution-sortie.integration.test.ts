@@ -209,11 +209,26 @@ async function fixtureParking(immat: string, avecLigneParking: boolean): Promise
  * Cycle réel et Transitionnel : EN_ATTENTE_DIAGNOSTIC → EN_COURS →
  * CONTROLE_QUALITE → PRET_A_LIVRER (toute transition must be valid).
  */
+/**
+ * Client unique du fichier, résolu par téléphone.
+ *
+ * Tous les dossiers de ce lot appartiennent au même client. Depuis qu'un
+ * doublon se signale au lieu de se créer en silence, le créer à chaque dossier
+ * est refusé — à raison. On le résout donc : la première réception le crée,
+ * les suivantes le retrouvent.
+ */
+const TEL_S1 = "690100888";
+
+async function clientDuLot(): Promise<{ id: number } | { nom: string; telephone: string }> {
+  const [row] = (await db.execute(sql`SELECT id FROM clients WHERE telephone = ${TEL_S1}`)) as unknown as Row[];
+  return row ? { id: Number(row.id) } : { nom: `Client ${NS}`, telephone: TEL_S1 };
+}
+
 async function dossierPretALivrer(immat: string, avecLigneParking: boolean) {
   const orCaller = orRouter.createCaller(ctxSuperadmin());
   const { vehiculeId } = await fixtureParking(immat, avecLigneParking);
   const r = await orCaller.receptionner({
-    client: { nom: `Client ${NS}`, telephone: "690100888" },
+    client: await clientDuLot(),
     vehicule: { id: vehiculeId, immatriculation: immat },
     reception: { kilometrageEntree: 10000, pannesDeclarees: "Freins" },
   });
@@ -323,7 +338,7 @@ describe("LOT S1 — restitution d'OR = vraie sortie du parking (E12, RD8)", () 
     // précédente n'est pas définitive.
     const orCaller = orRouter.createCaller(ctxSuperadmin());
     const r = await orCaller.receptionner({
-      client: { nom: `Client ${NS}`, telephone: "690100999" },
+      client: await clientDuLot(),
       vehicule: { id: vehiculeId, immatriculation: "S1RESTIT-003" },
       reception: { kilometrageEntree: 20000, pannesDeclarees: "Freins" },
     });
@@ -365,7 +380,7 @@ describe("LOT S1 — restitution d'OR = vraie sortie du parking (E12, RD8)", () 
     // doit ni échouer, ni réécrire un mouvement.
     const orCaller = orRouter.createCaller(ctxSuperadmin());
     const r = await orCaller.receptionner({
-      client: { nom: `Client ${NS}`, telephone: "690100777" },
+      client: await clientDuLot(),
       vehicule: { id: vehiculeId, immatriculation: "S1RESTIT-005" },
       reception: { kilometrageEntree: 30000, pannesDeclarees: "Freins" },
     });

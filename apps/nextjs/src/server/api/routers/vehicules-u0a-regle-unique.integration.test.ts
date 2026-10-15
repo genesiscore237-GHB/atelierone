@@ -149,11 +149,15 @@ describe("LOT U0a — règle véhicule unique sur les 3 écrans", () => {
     expect(r2.vehiculeReconcilie).toBe(true);
     expect(r2.id).toBe(r1.vehiculeId);
 
-    // 3ᵉ passe : la RÉCEPTION réutilise toujours.
+    // 3ᵉ passe : la RÉCEPTION réutilise toujours, avec le MÊME client.
     // Variante de saisie : espaces autour + casse différente — MÊME plaque
     // (RD1 conserve la ponctuation : « u0a parc 777 » ≠ « U0A-PARC-777 »).
+    //
+    // Le client est réutilisé, et non remplacé : le garage n'a pas le droit de
+    // changer le propriétaire d'un véhicule. Un second client sur la même
+    // plaque serait refusé — et il doit l'être.
     const r3 = await or.receptionner({
-      client: { nom: "Client U0a 2", telephone: "690100222" },
+      client: { id: r1.clientId },
       vehicule: { immatriculation: "  u0a-parc-777  " },
       reception: { kilometrageEntree: 2000, pannesDeclarees: "Freins" },
     });

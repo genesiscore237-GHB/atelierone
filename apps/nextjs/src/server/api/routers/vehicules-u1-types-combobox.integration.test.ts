@@ -113,6 +113,11 @@ async function retirerVehicules(): Promise<void> {
   await db.execute(
     sql`DELETE FROM vehicules WHERE immat_norm LIKE 'U1TYPES%' OR immatriculation LIKE 'U1TYPES%'`,
   );
+  // Le client du lot doit partir avec ses dossiers : laissé en place, il rend
+  // le test non rejouable — la seconde exécution se heurte à sa propre fixture
+  // et est refusée pour doublon, sans qu'aucune erreur ne pointe vers la vraie
+  // cause.
+  await db.execute(sql`DELETE FROM clients WHERE nom = 'Client LotU1'`);
 }
 
 /** Purge complète : véhicules + fixtures RBAC. */
@@ -187,7 +192,7 @@ describe("LOT U1 — type de véhicule en combobox (E7)", () => {
     const orCaller = orRouter.createCaller(ctxSuperadmin());
 
     const r = await orCaller.receptionner({
-      client: { nom: "Client LotU1", telephone: "690100777" },
+      client: { nom: "Client LotU1", telephone: "690400777" },
       vehicule: { immatriculation: "U1TYPES-003", typeVehicule: "benne_littere" },
       reception: { kilometrageEntree: 1000, pannesDeclarees: "Freins" },
     });

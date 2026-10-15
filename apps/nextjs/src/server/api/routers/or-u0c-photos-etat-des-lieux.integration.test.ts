@@ -113,10 +113,23 @@ async function retirer(): Promise<void> {
 }
 
 /** Réception simple avec photos d'entrée. */
+/**
+ * Client unique du fichier, résolu par téléphone.
+ *
+ * Les dossiers portent tous sur le même client de test. Depuis qu'un doublon
+ * se signale au lieu de se créer en silence, la créer à chaque dossier est
+ * refusé — à raison. On la résout donc.
+ */
+async function clientDuLot(): Promise<{ id: number } | { nom: string; telephone: string }> {
+  const [row] = (await db.execute(
+    sql`SELECT id FROM clients WHERE telephone = ${"690300555"}`,
+  )) as unknown as Row[];
+  return row ? { id: Number(row.id) } : { nom: "Client U0c", telephone: "690300555" };
+}
 async function receptionnerAvecPhotos(immat: string, photos: { categorie: string; url: string }[]) {
   const caller = orRouter.createCaller(ctxSuperadmin());
   const r = await caller.receptionner({
-    client: { nom: "Client U0c", telephone: "690100555" },
+    client: await clientDuLot(),
     vehicule: { immatriculation: immat, marque: "LotU0c" },
     reception: {
       kilometrageEntree: 1000,
@@ -151,7 +164,7 @@ describe("LOT U0c — état des lieux versionné par visite", () => {
     // Même véhicule, nouvelle intervention, aspect différent.
     const caller = orRouter.createCaller(ctxSuperadmin());
     const r2 = await caller.receptionner({
-      client: { nom: "Client U0c", telephone: "690100555" },
+      client: await clientDuLot(),
       vehicule: { immatriculation: "U0CPHOTOS-002", marque: "LotU0c" },
       reception: {
         kilometrageEntree: 2000,
@@ -184,7 +197,7 @@ describe("LOT U0c — état des lieux versionné par visite", () => {
 
     // Nouvelle visite : on reprend une face, on en prend une nouvelle.
     const r2 = await caller.receptionner({
-      client: { nom: "Client U0c", telephone: "690100555" },
+      client: await clientDuLot(),
       vehicule: { immatriculation: "U0CPHOTOS-003", marque: "LotU0c" },
       reception: {
         kilometrageEntree: 2000,
@@ -218,7 +231,7 @@ describe("LOT U0c — état des lieux versionné par visite", () => {
     const precedent = await caller.etatDesLieuPrecedent({ vehiculeId, avantOrId: 0 });
     // On crée une 2ᵉ visite entièrement reprise de la 1ʳᵉ.
     const r2 = await caller.receptionner({
-      client: { nom: "Client U0c", telephone: "690100555" },
+      client: await clientDuLot(),
       vehicule: { immatriculation: "U0CPHOTOS-003B", marque: "LotU0c" },
       reception: {
         kilometrageEntree: 2000,

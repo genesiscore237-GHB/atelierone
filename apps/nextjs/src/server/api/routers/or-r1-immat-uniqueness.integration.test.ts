@@ -21,7 +21,7 @@
  *     réassigné au nouveau client que si `reassignerClient: true` est envoyé
  *     (pas d'écrasement silencieux de la propriété).
  *  7. LOT R5 (E6) — `clients.suggestionsClients` regroupe les clients d'une
- *     agence partageant le même téléphone NORMALISÉ (« 690100001 » ≡
+ *     agence partageant le même téléphone NORMALISÉ (« 691100001 » ≡
  *     « +237 690 100 001 ») ; un numéro distinct ne produit aucun groupe.
  *  8. LOT R5 — `clients.fusionner` : le survivant garde ses données non
  *     vides (jamais d'écrasement), hérite des champs vides du doublon, et
@@ -124,7 +124,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   // Chaque test repart d'une base neutre : les fixtures R5 (clients C/D,
-  // téléphone 690100001) sont partagées entre tests 7-9 et faussaient les
+  // téléphone 691100001) sont partagées entre tests 7-9 et faussaient les
   // regroupements de suggestionsClients / doublonParTelephone. Seul le
   // données métier est purgée — le rôle/utilisateur (créés une fois dans
   // beforeAll) reste intact car ctxSuperadmin() dépend de userId.
@@ -258,7 +258,13 @@ describe("LOT R1 — unicité de la plaque par agence (immat_norm)", () => {
     });
 
     const or1 = await caller.receptionner(reception("LOTR1VEH01"));
-    const or2 = await caller.receptionner(reception("  lotr1veh01  "));
+    // 2ᵉ réception : MÊME client, plaque réécrit différemment («  lotr1veh01  »).
+    // On réutilise la fiche client : en créer une seconde pour le même
+    // propriétaire est précisément ce que le garage ne peut pas faire.
+    const or2 = await caller.receptionner({
+      ...reception("  lotr1veh01  "),
+      client: { id: or1.clientId },
+    });
 
     // Les deux OR pointent vers le MÊME véhicule (réutilisation, pas de doublon).
     expect(or1.vehiculeId).toBe(or2.vehiculeId);
@@ -275,13 +281,13 @@ describe("LOT R1 — unicité de la plaque par agence (immat_norm)", () => {
     expect(rows.length).toBe(1);
   });
 
-  it("6. RD4 — le propriétaire est conservé par défaut, réassigné si demandé", async () => {
+  it("6. le garage ne peut PAS changer le propriétaire d'un véhicule", async () => {
     const caller = orRouter.createCaller(ctxSuperadmin());
     const immat = "LOTR1VEH02";
 
     // 1ʳᵉ réception : véhicule créé, rattaché au client A.
     const orA = await caller.receptionner({
-      client: { nom: "Client A", telephone: "690000001" },
+      client: { nom: "Client A", telephone: "691000001" },
       vehicule: { immatriculation: immat },
       reception: { kilometrageEntree: 10000, pannesDeclarees: "Vidange" },
     });
@@ -289,30 +295,35 @@ describe("LOT R1 — unicité de la plaque par agence (immat_norm)", () => {
     const clientIdA = v.client_id as number;
     expect(clientIdA).toBeGreaterThan(0);
 
-    // 2ᵉ réception, même plaque, client B différent, SANS reassignerClient :
-    // le propriétaire historique (A) est conservé (pas d'écrasement silencieux).
-    const orB = await caller.receptionner({
-      client: { nom: "Client B", telephone: "690000002" },
-      vehicule: { immatriculation: immat },
-      reception: { kilometrageEntree: 11000, pannesDeclarees: "Freins" },
-    });
-    expect((orB as any).vehiculeReconcilie).toBe(true);
-    expect(orB.vehiculeId).toBe(orA.vehiculeId);
+    // 2ᵉ réception, même plaque, AUTRE client : la réception est REFUSÉE.
+    //
+    // Décision métier : le garage n'a pas le droit de changer le propriétaire
+    // d'un véhicule. Le comportement précédent — conserver l'ancien
+    // propriétaire en silence — était trompeur : l'agent croyait avoir
+    // enregistré la réception pour le client choisi, alors que le véhicule
+    // restait rattaché à l'ancien, sans aucun message.
+    await expect(
+      caller.receptionner({
+        client: { nom: "Client B", telephone: "691000002" },
+        vehicule: { immatriculation: immat },
+        reception: { kilometrageEntree: 11000, pannesDeclarees: "Freins" },
+      }),
+    ).rejects.toThrow(/propriétaire|proprietaire/i);
+
+    // Le véhicule est resté intact : ni détaché, ni réattribué.
     const v2 = await vehiculeByImmatNorm(immat);
     expect(v2.client_id).toBe(clientIdA);
 
-    // 3ᵉ réception, même plaque, client B, AVEC reassignerClient : le
-    // propriétaire est réassigné à B (changement explicite).
-    const orB2 = await caller.receptionner({
-      client: { nom: "Client B", telephone: "690000002" },
+    // 3ᵉ réception, même plaque, MÊME propriétaire : elle passe. Le véhicule
+    //    appartient toujours à A, et A ramène son véhicule une seconde fois.
+    const orA2 = await caller.receptionner({
+      client: { id: clientIdA },
       vehicule: { immatriculation: immat },
-      reassignerClient: true,
       reception: { kilometrageEntree: 12000, pannesDeclarees: "Alternateur" },
     });
-    expect(orB2.vehiculeId).toBe(orA.vehiculeId);
+    expect(orA2.vehiculeId).toBe(orA.vehiculeId);
     const v3 = await vehiculeByImmatNorm(immat);
-    expect(v3.client_id).not.toBe(clientIdA);
-    expect(v3.client_id).toBeGreaterThan(0);
+    expect(v3.client_id).toBe(clientIdA);
   });
 
   it("7. suggestionsClients regroupe les clients au même téléphone normalisé", async () => {
@@ -320,22 +331,25 @@ describe("LOT R1 — unicité de la plaque par agence (immat_norm)", () => {
     const clCaller = clientsRouter.createCaller(ctxSuperadmin());
     const immat = "LOTR1VEH03";
 
-    // Deux réceptions : mêmes plaques (réconciliées) mais clients distincts,
-    // saisis avec deux formats de numéro DIFFÉRENTS qui normalisent pareil.
+    // Deux clients DISTINCTS partageant le même téléphone normalisé, sur deux
+    // véhicules distincts : c'est le doublon que `suggestionsClients` doit
+    // remonter. La confirmation est exigée — sans elle, la réception refuse
+    // de créer une seconde fiche (règle : un doublon se signale, il ne se
+    // crée pas en silence).
     await orCaller.receptionner({
-      client: { nom: "Client C", telephone: "690100001" },
+      client: { nom: "Client C", telephone: "691100001" },
       vehicule: { immatriculation: immat },
       reception: { kilometrageEntree: 5000, pannesDeclarees: "Vidange" },
     });
     await orCaller.receptionner({
-      client: { nom: "Client D", telephone: "+237 690 100 001" },
-      vehicule: { immatriculation: immat },
-      reassignerClient: true,
+      client: { nom: "Client D", telephone: "+237 691 100 001" },
+      vehicule: { immatriculation: "LOTR1VEH08" },
+      confirmerClientDoublon: true,
       reception: { kilometrageEntree: 6000, pannesDeclarees: "Freins" },
     });
 
     const res = await clCaller.suggestionsClients();
-    const groupe = res.groupes.find((g) => g.telNorm === "690100001");
+    const groupe = res.groupes.find((g) => g.telNorm === "691100001");
     expect(groupe).toBeDefined();
     expect(groupe!.membres.length).toBeGreaterThanOrEqual(2);
     const noms = groupe!.membres.map((m) => m.nom).sort();
@@ -354,28 +368,36 @@ describe("LOT R1 — unicité de la plaque par agence (immat_norm)", () => {
     const immat = "LOTR1VEH04";
 
     // Deux clients distincts, même téléphone normalisé, formats différents.
+    // Véhicules distincts : on ne peut pas rattacher deux propriétaires
+    // différents au même véhicule, et la fusion est précisément l'outil prévu
+    // pour rapprocher ces deux fiches ensuite.
     const or1 = await orCaller.receptionner({
-      client: { nom: "Client C", telephone: "690100001", email: "c@lotr1.cm" },
+      client: { nom: "Client C", telephone: "691100001", email: "c@lotr1.cm" },
       vehicule: { immatriculation: immat },
       reception: { kilometrageEntree: 5000, pannesDeclarees: "Vidange" },
     });
     const or2 = await orCaller.receptionner({
-      client: { nom: "Client D", telephone: "+237 690 100 001", ville: "Douala" },
-      vehicule: { immatriculation: immat },
-      reassignerClient: true,
+      client: { nom: "Client D", telephone: "+237 691 100 001", ville: "Douala" },
+      vehicule: { immatriculation: "LOTR1VEH09" },
+      confirmerClientDoublon: true,
       reception: { kilometrageEntree: 6000, pannesDeclarees: "Freins" },
     });
 
     const v1 = await vehiculeByImmatNorm(immat);
-    const doublonId = v1.client_id as number;
+    // Client D a son PROPRE véhicule : on ne peut pas rattacher deux
+    // propriétaires au même véhicule. C'est la fiche de Client D qu'on
+    // récupère, pour la fusionner ensuite dans celle de Client C.
+    const vDoublon = await vehiculeByImmatNorm("LOTR1VEH09");
+    const doublonId = vDoublon.client_id as number;
     expect(doublonId).toBeGreaterThan(0);
+    expect(v1.client_id).not.toBe(doublonId);
 
     // Survivant = Client C (le plus ancien), doublon = Client D.
     const res = await clCaller.suggestionsClients();
-    const groupe = res.groupes.find((g) => g.telNorm === "690100001");
+    const groupe = res.groupes.find((g) => g.telNorm === "691100001");
     expect(groupe).toBeDefined();
     const survivantId = groupe!.survivant.id;
-    expect(survivantId).not.toBe(doublonId);
+    expect(survivantId).toBe(v1.client_id);
 
     // Le doublon porte la ville (champ que le survivant n'a pas).
     const avSurv = (await db.execute(
@@ -423,7 +445,7 @@ describe("LOT R1 — unicité de la plaque par agence (immat_norm)", () => {
 
     // Un client archivé n'apparaît plus dans les suggestions.
     const apres = await clCaller.suggestionsClients();
-    const gApres = apres.groupes.find((g) => g.telNorm === "690100001");
+    const gApres = apres.groupes.find((g) => g.telNorm === "691100001");
     expect(gApres).toBeUndefined();
   });
 
@@ -433,13 +455,13 @@ describe("LOT R1 — unicité de la plaque par agence (immat_norm)", () => {
     const immat = "LOTR1VEH05";
 
     await orCaller.receptionner({
-      client: { nom: "Client D", telephone: "690100001" },
+      client: { nom: "Client D", telephone: "691100001" },
       vehicule: { immatriculation: immat },
       reception: { kilometrageEntree: 7000, pannesDeclarees: "Alternateur" },
     });
 
     // Même numéro, format international → même client détecté (pas de doublon).
-    const res = await clCaller.doublonParTelephone({ telephone: "+237 690 100 001" });
+    const res = await clCaller.doublonParTelephone({ telephone: "+237 691 100 001" });
     expect(res.client).not.toBeNull();
     expect(res.client!.nom).toBe("Client D");
 

@@ -117,9 +117,11 @@ export async function resoudreOuCreerVehicule(
     /** Propriétaire demandé par l'écran. Appliqué seulement si le véhicule n'en a pas. */
     clientId?: number | null;
     /**
-     * RD4 — l'opérateur a coché « réassigner ce véhicule au nouveau client ».
-     * Seul cas où le propriétaire historique EST remplacé : décision humaine
-     * explicite, jamais déduite d'une simple saisie.
+     * @deprecated Le garage n'a PAS le droit de changer le propriétaire d'un
+     * véhicule (décision métier). Ce paramètre n'est plus honoré ; il reste
+     * accepté pour ne pas casser les appelants existants. Un changement de
+     * propriétaire lève désormais une erreur explicite. Passer par la
+     * procédure de cession de véhicule, hors garage.
      */
     reassignerClient?: boolean;
     statutImmobilisation?: string | null;
@@ -156,7 +158,25 @@ export async function resoudreOuCreerVehicule(
     const aAppliquer: Record<string, unknown> = { ...fiche };
     const aForcer: string[] = [];
     if (clientIdDemande != null) {
-      if (existant.clientId == null || (params.reassignerClient && existant.clientId !== clientIdDemande)) {
+      // Décision métier : le garage n'a PAS le droit de changer le
+      // propriétaire d'un véhicule. Ni en réception, ni en créant au garage,
+      // ni ailleurs.
+      //
+      // Le comportement précédent — conserver l'ancien propriétaire en silence
+      // si l'opérateur demandait le nouveau — était le pire des deux : la
+      // réception semblait enregistrée pour le client choisi, alors que le
+      // véhicule restait rattaché à l'ancien. Changer de propriétaire passe par
+      // la procédure de cession, hors garage.
+      if (existant.clientId != null && existant.clientId !== clientIdDemande) {
+        throw new Error(
+          `CHANGEMENT_DE_PROPRIETAIRE_REFUSE : ce véhicule est déjà rattaché à un ` +
+            `autre client. Le garage ne peut pas changer le propriétaire d'un véhicule ; ` +
+            `passez par la procédure de cession de véhicule.`,
+        );
+      }
+      if (existant.clientId == null) {
+        // Véhicule sans propriétaire : on le renseigne, c'est une donnée
+        // manquante qu'on complète, pas un transfert.
         aAppliquer.clientId = clientIdDemande;
         aForcer.push("clientId");
       }

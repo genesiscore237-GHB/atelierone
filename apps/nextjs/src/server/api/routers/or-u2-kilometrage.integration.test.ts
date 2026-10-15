@@ -109,11 +109,19 @@ async function retirer(): Promise<void> {
   userId = 0;
 }
 
+/** Client unique du fichier, résolu par téléphone (un doublon ne se crée pas en silence). */
+async function clientDuLotU2(): Promise<{ id: number } | { nom: string; telephone: string }> {
+  const [row] = (await db.execute(
+    sql`SELECT id FROM clients WHERE telephone = ${"690100900"}`,
+  )) as unknown as Row[];
+  return row ? { id: Number(row.id) } : { nom: "Client U2km", telephone: "690100900" };
+}
+
 /** Réception à km entrée donné, dossier mené jusqu'à « prêt à livrer ». */
 async function dossierPret(immat: string, kmEntree: number) {
   const caller = orRouter.createCaller(ctxSuperadmin());
   const r = await caller.receptionner({
-    client: { nom: "Client U2km", telephone: "690100900" },
+    client: await clientDuLotU2(),
     vehicule: { immatriculation: immat, marque: "LotU2" },
     reception: { kilometrageEntree: kmEntree, pannesDeclarees: "Freins" },
   });
@@ -199,7 +207,7 @@ describe("LOT U2 — kilométrage (E8, RD5)", () => {
   it("5. dossier sans km d'entrée (héritage) : pas de blocage injustifié", async () => {
     const caller = orRouter.createCaller(ctxSuperadmin());
     const r = await caller.receptionner({
-      client: { nom: "Client U2km", telephone: "690100900" },
+      client: await clientDuLotU2(),
       vehicule: { immatriculation: "U2KM-005", marque: "LotU2" },
       reception: { kilometrageEntree: 0, pannesDeclarees: "Freins" },
     });

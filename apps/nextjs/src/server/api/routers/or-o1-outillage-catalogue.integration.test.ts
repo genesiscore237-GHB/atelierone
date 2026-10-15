@@ -99,10 +99,19 @@ async function retirer(): Promise<void> {
   userId = 0;
 }
 
+/**
+ * Un client par dossier, avec un TÉLÉPHONE PROPRE.
+ *
+ * Tous ces dossiers partageaient le même numéro : depuis qu'un doublon client
+ * se signale au lieu de se créer en silence, le deuxième dossier était refusé
+ * — à raison, le numéro aurait réellement fleuri une fiche par dossier.
+ * Un téléphone distinct par immatriculation rend la fixture honnête.
+ */
 async function receptionnerAvec(immat: string, outillage: Record<string, unknown>) {
   const caller = orRouter.createCaller(ctxSuperadmin());
+  const suffixe = immat.replace(/[^0-9]/g, "").slice(-4).padStart(4, "0");
   const r = await caller.receptionner({
-    client: { nom: `Client O1OUT ${immat}`, telephone: "691998001" },
+    client: { nom: `Client O1OUT ${immat}`, telephone: `6919${suffixe}` },
     vehicule: { immatriculation: immat, marque: "Peugeot" },
     reception: { kilometrageEntree: 10000, pannesDeclarees: `O1OUT-${immat}`, outillage },
   });

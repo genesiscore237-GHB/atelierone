@@ -154,6 +154,45 @@ const genCodeClient = async (exec: typeof db | any): Promise<string> => {
   return genererCodeClient(n, now);
 };
 
+/**
+ * Le garage peut-il rattacher ce véhicule au client demandé ?
+ *
+ * Décision métier : le garage n'a PAS le droit de changer le propriétaire
+ * d'un véhicule. Un véhicule déjà rattaché à un client ne peut donc pas être
+ * réceptionné pour un autre.
+ *
+ * L'ancien comportement — conserver l'ancien propriétaire et poursuivre —
+ * était le plus dangereux des trois : la réception était enregistrée, l'agent
+ * repartait avec la confirmation que tout s'était bien passé, et le dossier
+ * portait en réalité un client qui n'était pas celui de la personne devant le
+ * comptoir. Aucune erreur n'était levée, rien n'était journalisé.
+ *
+ * Renseigner le propriétaire d'un véhicule qui n'en a pas n'est PAS un
+ * transfert : c'est compléter une donnée manquante, et c'est permis.
+ */
+const verifierProprietaireNonModifiable = async (
+  exec: typeof db | any,
+  vehiculeId: number,
+  clientIdDemandé: number | null,
+): Promise<void> => {
+  if (clientIdDemandé == null) return;
+  const [v] = await exec
+    .select({ clientId: vehicules.clientId, immatriculation: vehicules.immatriculation })
+    .from(vehicules)
+    .where(eq(vehicules.id, vehiculeId))
+    .limit(1);
+  if (!v) return;
+  if (v.clientId == null || v.clientId === clientIdDemandé) return;
+  throw new TRPCError({
+    code: "BAD_REQUEST",
+    message:
+      `Ce véhicule (${v.immatriculation}) est déjà rattaché à un autre client. ` +
+      `Le garage ne peut pas changer le propriétaire d'un véhicule : passez par la ` +
+      `procédure de cession. Si c'est bien le même client, sélectionnez sa fiche ` +
+      `existante au lieu d'en créer une seconde.`,
+  });
+};
+
 /** MVP : dossier fermé définitivement → plus aucune modification (diagnostic, devis, pièces, travaux, facture). */
 const verifierDossierOuvert = async (orId: number, agenceId: number): Promise<void> => {
   const [or] = await db
@@ -742,13 +781,22 @@ export const orRouter = createTRPCRouter({
     .input(z.object({
       client: z.object({
         id: z.number().int().optional(),
-        nom: z.string().min(1),
+        // `nom` devient facultatif : un véhicule peut arriver SANS propriétaire
+        // identifié. Il part alors « à wartier » (emplacement par défaut) et
+        // le dossier est ouvert sans client — l'agent n'invente pas de fiche
+        // pour décrire ce qu'il ne sait pas.
+        nom: z.string().min(1).optional(),
         prenom: z.string().optional(),
         telephone: z.string().optional(),
         email: z.string().optional(),
         adresse: z.string().optional(),
         ville: z.string().optional(),
       }),
+      // Décision métier : un doublon de client se signale et se CONFIRME, il ne
+      // se crée pas en silence. Sans cette confirmation explicite, un client
+      // régulier qui ramène un second véhicule obtient une deuxième fiche, et
+      // son historique se fracture en deux.
+      confirmerClientDoublon: z.boolean().default(false),
       vehicule: z.object({
         id: z.number().int().optional(),
         immatriculation: z.string().min(1),
@@ -770,10 +818,11 @@ export const orRouter = createTRPCRouter({
         poids: z.number().positive().optional(),
         dimensionsEstimees: z.boolean().optional(),
       }),
-      // RD4 — transparence : par défaut, un véhicule existant conserve son
-      // propriétaire historique. Le changement de client n'a lieu que si
-      // l'opérateur le demande explicitement (évite d'écraser la propriété).
-      reassignerClient: z.boolean().default(false),
+      // Décision métier : le garage n'a PAS le droit de changer le propriétaire
+      // d'un véhicule. La case « réassigner » a été retirée du contrat : elle
+      // proposait une action métier qui n'appartient pas au métier du garage.
+      // Un changement de propriétaire passe par la procédure de cession de
+      // véhicule, hors réception.
       chauffeur: z.object({ nom: z.string().optional(), telephone: z.string().optional() }).optional(),
       reception: z.object({
         dateReception: z.string().optional(),
@@ -808,12 +857,44 @@ export const orRouter = createTRPCRouter({
       return db.transaction(async (tx) => {
         const agenceId = ctx.user.agenceId;
 
-        // 1. Client (existant ou créé à la volée)
+        // ── 1. CLIENT ────────────────────────────────────────────────────────────
+        // Trois issues, et une seule politique :
+        //   a) un client est SÉLECTIONNÉ        → on l'emploie ;
+        //   b) aucun client, mais on sait de qui il s'agit → doublon
+        //      détecté par téléphone : on REFUSE de créer une seconde fiche et
+        //      on demande confirmation (matrice M3/M8) ;
+        //   c) aucun client identifié            → le véhicule part « à
+        //      wartier », le dossier est ouvert sans propriétaire. On n'invente
+        //      pas de fiche pour décrire ce qu'on ne sait pas.
         let clientId = input.client.id ?? null;
+        let clientSansProprietaire = false;
+
         if (clientId) {
           const [cli] = await tx.select({ id: clients.id }).from(clients).where(and(eq(clients.id, clientId), eq(clients.agenceId, agenceId))).limit(1);
           if (!cli) throw new TRPCError({ code: "BAD_REQUEST", message: "Client introuvable." });
+        } else if (!input.client.nom?.trim()) {
+          clientSansProprietaire = true;
         } else {
+          // (b) Doublon potentiel ? On le cherche AVANT de créer, pour ne pas
+          // produire une fiche qu'il faudra fusionner ensuite.
+          const tel = normaliserTelephone(input.client.telephone);
+          if (tel) {
+            const homonymes = await tx
+              .select({ id: clients.id, nom: clients.nom, telephone: clients.telephone })
+              .from(clients)
+              .where(and(eq(clients.agenceId, agenceId), sql`${clients.telephone} IS NOT NULL`));
+            const conflit = homonymes.filter((c) => normaliserTelephone(c.telephone) === tel);
+            if (conflit.length > 0 && !input.confirmerClientDoublon) {
+              throw new TRPCError({
+                code: "CONFLICT",
+                message:
+                  `Un client porte déjà ce téléphone : ${conflit[0]!.nom}. ` +
+                  `Confirmez-vous qu'il s'agit d'une personne DIFFÉRENTE ? ` +
+                  `Sinon, sélectionnez le client existant — sinon son historique sera coupé en deux.`,
+              });
+            }
+          }
+
           // Code client auto aligné sur la convention app (CLT-année-séquence) — P2-11
           // Séquence verrouillée + calculée en MAX : `count(*)+1` faisait
           // collision sur `clients_code_client_unique` en réception concurrente.
@@ -855,7 +936,13 @@ export const orRouter = createTRPCRouter({
         let vehiculeReconcilie = false;
 
         if (vehiculeId) {
-          // Véhicule explicitement choisi : on le renseigne sans écraser.
+          // Verrou de propriété (décision métier) : le garage n'a PAS le
+          // droit de changer le propriétaire d'un véhicule. Avant tout, on
+          // refuse explicitement — sinon `completerVehiculeSansEcrasement`
+          // conserverait l'ancien propriétaire en silence, et l'agent croirait
+          // avoir enregistré la réception pour le bon client.
+          await verifierProprietaireNonModifiable(tx, vehiculeId, clientId);
+
           await completerVehiculeSansEcrasement(tx, vehiculeId, {
             clientId,
             chauffeurNom: input.chauffeur?.nom?.trim() ?? null,
@@ -864,17 +951,13 @@ export const orRouter = createTRPCRouter({
           await tx.update(vehicules).set({ updatedAt: new Date() } as any).where(eq(vehicules.id, vehiculeId));
         } else {
           // R2/RD3/RD4 — réconciliation par plaque normalisée (« AB-123-CD » ≡
-          // « ab 123 cd ») : le véhicule existant est RÉUTILISÉ, ses données
-          // ne sont pas écrasées, et son propriétaire n'est changé que si
-          // l'opérateur l'a demandé (`reassignerClient`).
+          // « ab 123 cd ») : le véhicule existant est RÉUTILISÉ et ses données
+          // ne sont pas écrasées. Mêmes règles qu'au-dessus : le propriétaire
+          // historique est intouchable.
           const resolution = await resoudreOuCreerVehicule(tx, {
             agenceId,
             immatriculation: input.vehicule.immatriculation,
-            // RD4 : le client saisi n'est appliqué que si le véhicule n'a
-            // AUCUN propriétaire ; sinon le propriétaire historique reste,
-            // sauf réassignation EXPLICITE demandée par l'opérateur.
             clientId: clientId,
-            reassignerClient: input.reassignerClient,
             statutImmobilisation: "en_reception",
             fiche: {
               numeroChassis: input.vehicule.numeroChassis?.trim() || null,
@@ -926,7 +1009,13 @@ export const orRouter = createTRPCRouter({
           dateOuverture: new Date(),
           dateReception: input.reception.dateReception ? new Date(input.reception.dateReception) : new Date(),
           datePromesse: input.reception.datePromesse ?? null,
-          emplacement: input.reception.emplacement ?? "Réception",
+          // « À wartier » : sans client identifié, le véhicule n'entre pas en atelier
+          // sous un responsable — il attend. L'emplacement le dit, pour que
+          // l'écran d'accueil sache qu'il doit en rechercher un propriétaire
+          // au lieu de l'ouvrir à la réception.
+          emplacement:
+            input.reception.emplacement ??
+            (clientSansProprietaire ? "Wartier" : "Réception"),
           kilometrageEntree: input.reception.kilometrageEntree,
           kilometrageSortie: null,
           niveauCarburantEntree: input.reception.niveauCarburantEntree ?? null,
