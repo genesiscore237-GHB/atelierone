@@ -138,7 +138,18 @@ export const REPORT_MEASURES = {
   quantite: { key: "quantite", label: "Quantité vendue", type: "quantity", expr: sql`sum(${ventesLignes.quantite})` },
   cout: { key: "cout", label: "Coût", type: "currency", expr: sql`sum(${coutLigne})` },
   margeBrute: { key: "margeBrute", label: "Marge brute", type: "currency", expr: sql`sum(${margeLigne})` },
-  remises: { key: "remises", label: "Remises", type: "currency", expr: sql`sum(${ventes.remise})` },
+  // La remise est un montant d'EN-TÊTE de vente, mais cette mesure est agrégée
+  // dans une requête jointe sur `ventes_lignes` : un `sum(ventes.remise)` direct
+  // la comptait une fois par ligne, et l'erreur grossissait avec le nombre de
+  // lignes du ticket. On l'alloue donc au prorata du nombre de lignes de sa
+  // vente — la somme totale est exacte, et un regroupement par produit ou par
+  // catégorie répartit la remise entre ses lignes au lieu de la dupliquer.
+  remises: {
+    key: "remises",
+    label: "Remises",
+    type: "currency",
+    expr: sql`sum(${ventes.remise} / NULLIF((SELECT count(*) FROM ventes_lignes vl2 WHERE vl2.vente_id = ${ventes.id}), 0))`,
+  },
   pertes: { key: "pertes", label: "Pertes (ventes sous coût)", type: "currency", expr: sql`sum(case when ${ventesLignes.coutUnitaire} > ${ventesLignes.prixUnitaire} then ${ventesLignes.quantite} * (${ventesLignes.coutUnitaire} - ${ventesLignes.prixUnitaire}) else 0 end)` },
   nbTickets: { key: "nbTickets", label: "Nombre de tickets", type: "count", expr: sql`count(distinct ${ventes.id})` },
   nbClientsDistincts: { key: "nbClientsDistincts", label: "Clients distincts", type: "count", expr: sql`count(distinct ${ventes.clientId})` },

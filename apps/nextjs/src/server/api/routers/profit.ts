@@ -1,8 +1,10 @@
 import { z } from "zod";
+import { borneFin } from "~/lib/dates-periode";
 import { createTRPCRouter, financeProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
 import { ventes, ventesLignes, produits, retours, lignesRetour, depenses, pertesFinancieres, remboursementsFournisseurs, dettesFournisseurs, mouvementsCaisse } from "@atelierone/db";
 import { eq, and, gte, lte, sql, desc } from "drizzle-orm";
+import { conditionVenteRealisee } from "~/server/lib/sale-service";
 
 const coutLigne = sql`${ventesLignes.quantite} * COALESCE(${ventesLignes.coutUnitaire}, ${produits.prixAchat} * ${ventesLignes.facteurConversion}, 0)`;
 
@@ -14,19 +16,27 @@ export const profitRouter = createTRPCRouter({
     }))
     .query(async ({ ctx, input }) => {
       const agenceId = ctx.user.agenceId;
-      const filters = [eq(ventes.agenceId, agenceId), eq(ventes.statut, "termine")];
+      const filters = [eq(ventes.agenceId, agenceId), conditionVenteRealisee(ventes.statut)];
       if (input.dateDebut) filters.push(gte(ventes.createdAt, new Date(input.dateDebut)));
-      if (input.dateFin) filters.push(lte(ventes.createdAt, new Date(input.dateFin)));
+      if (input.dateFin) filters.push(lte(ventes.createdAt, borneFin(input.dateFin)));
 
       const [resume] = await db.select({
         ca: sql<number>`COALESCE(sum(${ventesLignes.totalLigne}), 0)`,
         cout: sql<number>`COALESCE(sum(${coutLigne}), 0)`,
-        remises: sql<number>`COALESCE(sum(${ventes.remise}), 0)`,
         nbVentes: sql<number>`count(distinct ${ventes.id})`,
       })
         .from(ventesLignes)
         .innerJoin(ventes, eq(ventesLignes.venteId, ventes.id))
         .innerJoin(produits, eq(ventesLignes.produitId, produits.id))
+        .where(and(...filters));
+
+      // La remise est un montant d'EN-TÊTE : sommée après la jointure sur
+      // `ventesLignes`, elle était comptée une fois par ligne de vente, et la
+      // marge nette divingait d'autant. Agrégée sur `ventes` seule.
+      const [remiseResume] = await db.select({
+        remises: sql<number>`COALESCE(sum(${ventes.remise}), 0)`,
+      })
+        .from(ventes)
         .where(and(...filters));
 
       const [retoursResume] = await db.select({
@@ -40,7 +50,7 @@ export const profitRouter = createTRPCRouter({
         .where(and(
           eq(ventes.agenceId, agenceId),
           input.dateDebut ? gte(ventes.createdAt, new Date(input.dateDebut)) : undefined,
-          input.dateFin ? lte(ventes.createdAt, new Date(input.dateFin)) : undefined,
+          input.dateFin ? lte(ventes.createdAt, borneFin(input.dateFin)) : undefined,
         ));
 
       // CA encaissé réel = montants reçus (montantPaye) − remboursements de retours
@@ -50,14 +60,14 @@ export const profitRouter = createTRPCRouter({
         .from(ventes)
         .where(and(
           eq(ventes.agenceId, agenceId),
-          eq(ventes.statut, "termine"),
+          conditionVenteRealisee(ventes.statut),
           input.dateDebut ? gte(ventes.createdAt, new Date(input.dateDebut)) : undefined,
-          input.dateFin ? lte(ventes.createdAt, new Date(input.dateFin)) : undefined,
+          input.dateFin ? lte(ventes.createdAt, borneFin(input.dateFin)) : undefined,
         ));
 
       const depenseFilters = [eq(depenses.agenceId, agenceId)];
       if (input.dateDebut) depenseFilters.push(gte(depenses.dateDepense, new Date(input.dateDebut)));
-      if (input.dateFin) depenseFilters.push(lte(depenses.dateDepense, new Date(input.dateFin)));
+      if (input.dateFin) depenseFilters.push(lte(depenses.dateDepense, borneFin(input.dateFin)));
 
       const [depensesResume] = await db.select({
         total: sql<number>`COALESCE(sum(${depenses.montant}::numeric), 0)`,
@@ -77,7 +87,7 @@ export const profitRouter = createTRPCRouter({
 
       const perteFilters = [eq(pertesFinancieres.agenceId, agenceId)];
       if (input.dateDebut) perteFilters.push(gte(pertesFinancieres.datePerte, new Date(input.dateDebut)));
-      if (input.dateFin) perteFilters.push(lte(pertesFinancieres.datePerte, new Date(input.dateFin)));
+      if (input.dateFin) perteFilters.push(lte(pertesFinancieres.datePerte, borneFin(input.dateFin)));
 
       const [pertesResume] = await db.select({
         total: sql<number>`COALESCE(sum(${pertesFinancieres.montantPerte}::numeric), 0)`,
@@ -107,7 +117,7 @@ export const profitRouter = createTRPCRouter({
           eq(pertesFinancieres.agenceId, agenceId),
           eq(pertesFinancieres.typePerte, "ECART_CAISSE"),
           input.dateDebut ? gte(pertesFinancieres.datePerte, new Date(input.dateDebut)) : undefined,
-          input.dateFin ? lte(pertesFinancieres.datePerte, new Date(input.dateFin)) : undefined,
+          input.dateFin ? lte(pertesFinancieres.datePerte, borneFin(input.dateFin)) : undefined,
         ));
 
       // Paiements fournisseurs : remboursements de dettes + paiements de factures fournisseur
@@ -119,7 +129,7 @@ export const profitRouter = createTRPCRouter({
         .where(and(
           eq(dettesFournisseurs.agenceId, agenceId),
           input.dateDebut ? gte(remboursementsFournisseurs.effectueLe, new Date(input.dateDebut)) : undefined,
-          input.dateFin ? lte(remboursementsFournisseurs.effectueLe, new Date(input.dateFin)) : undefined,
+          input.dateFin ? lte(remboursementsFournisseurs.effectueLe, borneFin(input.dateFin)) : undefined,
         ));
 
       const [paiementsFacturesResume] = await db.select({
@@ -130,12 +140,12 @@ export const profitRouter = createTRPCRouter({
           eq(mouvementsCaisse.type, "paiement_fournisseur"),
           eq(mouvementsCaisse.entiteType, "FACTURE_FOURNISSEUR"),
           input.dateDebut ? gte(mouvementsCaisse.createdAt, new Date(input.dateDebut)) : undefined,
-          input.dateFin ? lte(mouvementsCaisse.createdAt, new Date(input.dateFin)) : undefined,
+          input.dateFin ? lte(mouvementsCaisse.createdAt, borneFin(input.dateFin)) : undefined,
         ));
 
       const ca = Number(resume?.ca ?? 0);
       const cout = Number(resume?.cout ?? 0);
-      const remises = Number(resume?.remises ?? 0);
+      const remises = Number(remiseResume?.remises ?? 0);
       const margeBrute = ca - cout;
       const margeRetours = Number(retoursResume?.ca ?? 0) - Number(retoursResume?.cout ?? 0);
       const margeNet = margeBrute - remises - margeRetours;
@@ -193,9 +203,9 @@ export const profitRouter = createTRPCRouter({
         .innerJoin(produits, eq(ventesLignes.produitId, produits.id))
         .where(and(
           eq(ventes.agenceId, agenceId),
-          eq(ventes.statut, "termine"),
+          conditionVenteRealisee(ventes.statut),
           input.dateDebut ? gte(ventes.createdAt, new Date(input.dateDebut)) : undefined,
-          input.dateFin ? lte(ventes.createdAt, new Date(input.dateFin)) : undefined,
+          input.dateFin ? lte(ventes.createdAt, borneFin(input.dateFin)) : undefined,
         ))
         .groupBy(sql`to_char(${ventes.createdAt}, 'YYYY-MM')`);
 
@@ -207,7 +217,7 @@ export const profitRouter = createTRPCRouter({
         .where(and(
           eq(depenses.agenceId, agenceId),
           input.dateDebut ? gte(depenses.dateDepense, new Date(input.dateDebut)) : undefined,
-          input.dateFin ? lte(depenses.dateDepense, new Date(input.dateFin)) : undefined,
+          input.dateFin ? lte(depenses.dateDepense, borneFin(input.dateFin)) : undefined,
         ))
         .groupBy(sql`to_char(${depenses.dateDepense}, 'YYYY-MM')`);
 
@@ -219,7 +229,7 @@ export const profitRouter = createTRPCRouter({
         .where(and(
           eq(pertesFinancieres.agenceId, agenceId),
           input.dateDebut ? gte(pertesFinancieres.datePerte, new Date(input.dateDebut)) : undefined,
-          input.dateFin ? lte(pertesFinancieres.datePerte, new Date(input.dateFin)) : undefined,
+          input.dateFin ? lte(pertesFinancieres.datePerte, borneFin(input.dateFin)) : undefined,
         ))
         .groupBy(sql`to_char(${pertesFinancieres.datePerte}, 'YYYY-MM')`);
 
@@ -230,9 +240,9 @@ export const profitRouter = createTRPCRouter({
         .from(ventes)
         .where(and(
           eq(ventes.agenceId, agenceId),
-          eq(ventes.statut, "termine"),
+          conditionVenteRealisee(ventes.statut),
           input.dateDebut ? gte(ventes.createdAt, new Date(input.dateDebut)) : undefined,
-          input.dateFin ? lte(ventes.createdAt, new Date(input.dateFin)) : undefined,
+          input.dateFin ? lte(ventes.createdAt, borneFin(input.dateFin)) : undefined,
         ))
         .groupBy(sql`to_char(${ventes.createdAt}, 'YYYY-MM')`);
 
@@ -246,7 +256,7 @@ export const profitRouter = createTRPCRouter({
         .where(and(
           eq(ventes.agenceId, agenceId),
           input.dateDebut ? gte(ventes.createdAt, new Date(input.dateDebut)) : undefined,
-          input.dateFin ? lte(ventes.createdAt, new Date(input.dateFin)) : undefined,
+          input.dateFin ? lte(ventes.createdAt, borneFin(input.dateFin)) : undefined,
         ))
         .groupBy(sql`to_char(${ventes.createdAt}, 'YYYY-MM')`);
 

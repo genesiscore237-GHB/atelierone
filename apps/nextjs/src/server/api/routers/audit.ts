@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { borneFin } from "~/lib/dates-periode";
 import { createTRPCRouter, adminProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
 import { auditEvents, profiles } from "~/server/db/schema";
@@ -36,7 +37,7 @@ export const auditRouter = createTRPCRouter({
       if (input.entityType) whereConditions.push(eq(auditEvents.entityType, input.entityType));
       if (input.userId) whereConditions.push(eq(auditEvents.userId, Number(input.userId)));
       if (input.startDate) whereConditions.push(gte(auditEvents.createdAt, new Date(input.startDate)));
-      if (input.endDate) whereConditions.push(lte(auditEvents.createdAt, new Date(input.endDate)));
+      if (input.endDate) whereConditions.push(lte(auditEvents.createdAt, borneFin(input.endDate)));
 
       const events = await db
         .select()

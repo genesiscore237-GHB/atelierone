@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { borneFin } from "~/lib/dates-periode";
 import { createTRPCRouter, financeProcedure, requirePermissionProcedure } from "~/server/api/trpc";
 import { db, depenses, caisses, sessionsCaisse, mouvementsCaisse, ventes, clients, previsionsTresorerie, relances, dettesClients, paiements, pertesFinancieres } from "@atelierone/db";
 import { eq, and, desc, sql, gte, lte, inArray } from "drizzle-orm";
@@ -489,7 +490,7 @@ export const financeRouter = createTRPCRouter({
       const conditions = [eq(previsionsTresorerie.agenceId, agenceId)];
       if (input.statut) conditions.push(eq(previsionsTresorerie.statut, input.statut));
       if (input.dateDebut) conditions.push(gte(previsionsTresorerie.datePrevision, new Date(input.dateDebut)));
-      if (input.dateFin) conditions.push(lte(previsionsTresorerie.datePrevision, new Date(input.dateFin)));
+      if (input.dateFin) conditions.push(lte(previsionsTresorerie.datePrevision, borneFin(input.dateFin)));
 
       return db.select()
         .from(previsionsTresorerie)
@@ -547,7 +548,7 @@ export const financeRouter = createTRPCRouter({
       const agenceId = ctx.user.agenceId;
       const today = new Date();
       const start = input.dateDebut ? new Date(input.dateDebut) : new Date(today.getFullYear(), today.getMonth(), 1);
-      const end = input.dateFin ? new Date(input.dateFin) : new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      const end = input.dateFin ? borneFin(input.dateFin) : new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
       const previsions = await db.select()
         .from(previsionsTresorerie)

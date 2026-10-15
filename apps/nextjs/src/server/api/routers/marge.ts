@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { borneFin } from "~/lib/dates-periode";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
 import { ventes, ventesLignes, produits, retours, lignesRetour, utilisateurs, lots, stocksLots, fournisseurs, pertesFinancieres } from "@atelierone/db";
@@ -34,7 +35,7 @@ function periodeFilters(input: {
 }): SQL[] {
   const filters: SQL[] = [eq(ventes.agenceId, input.agenceId), eq(ventes.statut, "termine")];
   if (input.dateDebut) filters.push(gte(ventes.createdAt, new Date(input.dateDebut)));
-  if (input.dateFin) filters.push(lte(ventes.createdAt, new Date(input.dateFin)));
+  if (input.dateFin) filters.push(lte(ventes.createdAt, borneFin(input.dateFin)));
   if (input.typeProduit) filters.push(eq(produits.typeProduit, input.typeProduit));
   if (input.operateurId) filters.push(eq(ventes.operateurId, Number(input.operateurId)));
   return filters;
@@ -50,7 +51,6 @@ export const margeRouter = createTRPCRouter({
       const [resume] = await db.select({
         ca: sql<number>`COALESCE(sum(${ventesLignes.totalLigne}), 0)`,
         cout: sql<number>`COALESCE(sum(${coutLigne}), 0)`,
-        remises: sql<number>`COALESCE(sum(${ventes.remise}), 0)`,
         nbVentes: sql<number>`count(distinct ${ventes.id})`,
         pertes: sql<number>`COALESCE(sum(case when ${ventesLignes.coutUnitaire} > ${ventesLignes.prixUnitaire} then ${ventesLignes.quantite} * (${ventesLignes.coutUnitaire} - ${ventesLignes.prixUnitaire}) else 0 end), 0)`,
       })
@@ -58,6 +58,14 @@ export const margeRouter = createTRPCRouter({
       .innerJoin(ventes, eq(ventesLignes.venteId, ventes.id))
       .innerJoin(produits, eq(ventesLignes.produitId, produits.id))
       .where(and(...periodeFilters({ ...input, agenceId: ctx.user.agenceId })));
+
+      // Remise = en-tête de vente : sommée après jointure sur les lignes, elle
+      // était comptée une fois par ligne et la marge nette divingait d'autant.
+      const [remiseResume] = await db.select({
+        remises: sql<number>`COALESCE(sum(${ventes.remise}), 0)`,
+      })
+        .from(ventes)
+        .where(and(...periodeFilters({ ...input, agenceId: ctx.user.agenceId })));
 
       const [retoursResume] = await db.select({
         ca: sql<number>`COALESCE(sum(${lignesRetour.totalLigne}), 0)`,
@@ -71,12 +79,12 @@ export const margeRouter = createTRPCRouter({
       .where(and(
         eq(ventes.agenceId, ctx.user.agenceId),
         input.dateDebut ? gte(ventes.createdAt, new Date(input.dateDebut)) : undefined,
-        input.dateFin ? lte(ventes.createdAt, new Date(input.dateFin)) : undefined,
+        input.dateFin ? lte(ventes.createdAt, borneFin(input.dateFin)) : undefined,
       ));
 
       const ca = Number(resume?.ca ?? 0);
       const cout = Number(resume?.cout ?? 0);
-      const remises = Number(resume?.remises ?? 0);
+      const remises = Number(remiseResume?.remises ?? 0);
       const retoursCa = Number(retoursResume?.ca ?? 0);
       const retoursCout = Number(retoursResume?.cout ?? 0);
       const margeBrute = ca - cout;
@@ -530,7 +538,7 @@ export const margeRouter = createTRPCRouter({
       .where(and(
         eq(ventes.agenceId, ctx.user.agenceId),
         input.dateDebut ? gte(ventes.createdAt, new Date(input.dateDebut)) : undefined,
-        input.dateFin ? lte(ventes.createdAt, new Date(input.dateFin)) : undefined,
+        input.dateFin ? lte(ventes.createdAt, borneFin(input.dateFin)) : undefined,
       ))
       .groupBy(produits.id, produits.titre)
       .orderBy(desc(sql`sum(${lignesRetour.totalLigne} - ${lignesRetour.quantite} * COALESCE(${lignesRetour.coutUnitaire}, ${produits.prixAchat} * ${lignesRetour.facteurConversion}, 0))`));

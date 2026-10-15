@@ -1,6 +1,6 @@
 import { db } from "~/server/db";
 import { ventes, ventesLignes, produits, stocks, mouvementsStock, caisses, mouvementsCaisse, paiements, stocksUnites, sessionsCaisse, tarifs, clients, dettesClients, agences } from "@atelierone/db";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray, type SQL } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { ComptaService } from "./compta-service";
 import { getFacteurVersBase } from "./stock-engine";
@@ -8,6 +8,33 @@ import { sortirStockFIFO } from "./lot-service";
 import { calculerEcheance } from "./facturation-service";
 
 type Tx = Parameters<Parameters<(typeof db)["transaction"]>[0]>[0];
+
+/**
+ * Nomenclature des statuts de vente — source unique de vérité.
+ *
+ * Ces valeurs sont celles réellement ÉCRITES par ce service (`creerVente` →
+ * `termine`, `valider` → `valide`, conversion de préfacture → `valide`) et
+ * par `sales.annulerVente` → `annule`. Elles sont listées ici parce qu'elles
+ * étaient invisibles ailleurs : `analytics.ts` filtrait sur `"ACTIVE"`, une
+ * valeur qu'aucun chemin d'écriture ne produit. Résultat : chiffre d'affaires,
+ * panier moyen et analyse de marge renvoyaient zéro, en silence, sans aucune
+ * erreur visible.
+ *
+ * `STATUTS_VENTE_REALISEE` est le filtre à utiliser pour tout chiffre d'affaires :
+ * une préfacture n'est pas une vente, un brouillon n'est pas une vente, une
+ * vente annulée non plus. L'inclure (ou l'exclure) est une décision métier ;
+ * l'appliquer de deux façons différentes dans deux fichiers ne l'est pas.
+ */
+export const STATUTS_VENTE = ["brouillon", "pre_facture", "termine", "valide", "annule"] as const;
+export type StatutVente = (typeof STATUTS_VENTE)[number];
+
+/** Ventes qui comptent réellement dans le chiffre d'affaires. */
+export const STATUTS_VENTE_REALISEE = ["termine", "valide"] as const;
+
+/** Condition Drizzle : la vente est-elle comptabilisée dans les statistiques ? */
+export function conditionVenteRealisee(col: unknown): SQL | undefined {
+  return inArray(col as never, [...STATUTS_VENTE_REALISEE] as never);
+}
 
 export interface LigneVenteInput {
   produitId: number;

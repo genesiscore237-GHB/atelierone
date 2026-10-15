@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { borneFin } from "~/lib/dates-periode";
 import { createTRPCRouter, protectedProcedure, adminProcedure } from "~/server/api/trpc";
 import { db, utilisateurs, roles, permissions, rolePermissions, auditLogs, employes } from "@atelierone/db";
 import { eq, and, like, desc, count, asc, inArray, sql } from "drizzle-orm";
@@ -558,7 +559,7 @@ export const governanceRouter = createTRPCRouter({
         if (input.userId) conditions.push(eq(auditLogs.userId, Number(input.userId)));
         if (input.entityType) conditions.push(eq(auditLogs.entityType, input.entityType));
         if (input.startDate) conditions.push(sql`${auditLogs.createdAt} >= ${new Date(input.startDate)}`);
-        if (input.endDate) conditions.push(sql`${auditLogs.createdAt} <= ${new Date(input.endDate)}`);
+        if (input.endDate) conditions.push(sql`${auditLogs.createdAt} <= ${borneFin(input.endDate)}`);
 
         const offset = (input.page - 1) * input.limit;
 

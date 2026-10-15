@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { borneFin } from "~/lib/dates-periode";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { db, ventes, stocks, produits, clients, caisses, sessionsCaisse, ventesLignes, faitsVentesQuotidiens, faitsStockQuotidiens, faitsCaisseQuotidiens } from "@atelierone/db";
 import { eq, and, sql, lt, desc, type SQL } from "drizzle-orm";
@@ -95,7 +96,7 @@ export const dashboardRouter = createTRPCRouter({
       const agenceId = ctx.user.agenceId;
       const dateFilters: (SQL | undefined)[] = [];
       if (input?.dateDebut) dateFilters.push(sql`${ventes.createdAt} >= ${new Date(input.dateDebut)}`);
-      if (input?.dateFin) dateFilters.push(sql`${ventes.createdAt} <= ${new Date(input.dateFin)}`);
+      if (input?.dateFin) dateFilters.push(sql`${ventes.createdAt} <= ${borneFin(input.dateFin)}`);
 
       const baseWhere = and(eq(ventes.agenceId, agenceId), eq(ventes.statut, "termine"), ...dateFilters);
 
@@ -118,11 +119,27 @@ export const dashboardRouter = createTRPCRouter({
 
       const valeurStock = stockRows.reduce((s, r) => s + Number(r.quantite) * Number(r.prixVente), 0);
 
+      // Le DÉTAIL est plafonné à 50 lignes pour ne pas noyer le rendu… mais le
+      // COMPTE ne doit pas l'être : `nbAlertes: alertRows.length` affichait 50
+      // dès qu'il y avait plus de 50 alertes, et un tableau de bord qui annonce
+      // « 50 alertes de stock » alors qu'il y en a 73 conduit à en ignorer 23.
+      // C'est le cas typique du chiffre qui rassure au lieu d'alerter.
+      const conditionAlerte = and(
+        eq(stocks.agenceId, agenceId),
+        lt(stocks.quantite, produits.seuilAlerte),
+      );
+
+      const [nbAlertesRow] = await db
+        .select({ n: sql<number>`COUNT(*)` })
+        .from(stocks)
+        .innerJoin(produits, eq(stocks.produitId, produits.id))
+        .where(conditionAlerte);
+
       const alertRows = await db
         .select({ id: stocks.id, quantite: stocks.quantite, titre: produits.titre, seuilAlerte: produits.seuilAlerte, produitId: stocks.produitId })
         .from(stocks)
         .innerJoin(produits, eq(stocks.produitId, produits.id))
-        .where(and(eq(stocks.agenceId, agenceId), lt(stocks.quantite, produits.seuilAlerte)))
+        .where(conditionAlerte)
         .orderBy(produits.titre)
         .limit(50);
 
@@ -154,7 +171,7 @@ export const dashboardRouter = createTRPCRouter({
         prevDateFilters.push(sql`${ventes.createdAt} >= ${d}`);
       }
       if (input?.dateFin) {
-        const d = new Date(input.dateFin);
+        const d = borneFin(input.dateFin);
         d.setFullYear(d.getFullYear() - 1);
         prevDateFilters.push(sql`${ventes.createdAt} <= ${d}`);
       }
@@ -172,8 +189,9 @@ export const dashboardRouter = createTRPCRouter({
         caTotal: currentCa,
         nbProduitsVendus: Number(countData?.total ?? 0),
         valeurStock,
-        nbAlertes: alertRows.length,
-        alertesStock: alertRows.map(a => ({
+        nbAlertes: Number(nbAlertesRow?.n ?? 0),
+        alertesStockLongres: alertRows.length > 50,
+      alertesStock: alertRows.map(a => ({
           id: String(a.id),
           produitId: String(a.produitId),
           titre: a.titre ?? "",
@@ -268,7 +286,7 @@ export const dashboardRouter = createTRPCRouter({
       const conditions = [eq(faitsVentesQuotidiens.agenceId, agenceId)];
 
       if (input?.dateDebut) conditions.push(sql`${faitsVentesQuotidiens.date} >= ${new Date(input.dateDebut)}`);
-      if (input?.dateFin) conditions.push(sql`${faitsVentesQuotidiens.date} <= ${new Date(input.dateFin)}`);
+      if (input?.dateFin) conditions.push(sql`${faitsVentesQuotidiens.date} <= ${borneFin(input.dateFin)}`);
 
       const ventesQuotidiennes = await db.select()
         .from(faitsVentesQuotidiens)

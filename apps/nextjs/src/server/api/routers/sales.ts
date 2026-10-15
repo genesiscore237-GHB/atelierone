@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { borneFin } from "~/lib/dates-periode";
 import { createTRPCRouter, posProcedure } from "~/server/api/trpc";
 import { db, ventes, ventesLignes, produits, stocks, caisses, sessionsCaisse, mouvementsCaisse, auditLogs, mouvementsStock, paiements, stocksUnites, ordresReparation } from "@atelierone/db";
 import { eq, and, desc, sql, gte, lte, ilike, or, inArray } from "drizzle-orm";
@@ -77,7 +78,7 @@ export const salesRouter = createTRPCRouter({
 
       if (input?.statut) conditions.push(eq(ventes.statut, input.statut));
       if (input?.dateDebut) conditions.push(gte(ventes.createdAt, new Date(input.dateDebut)));
-      if (input?.dateFin) conditions.push(lte(ventes.createdAt, new Date(input.dateFin)));
+      if (input?.dateFin) conditions.push(lte(ventes.createdAt, borneFin(input.dateFin)));
       if (input?.search) {
         const q = `%${input.search}%`;
         conditions.push(or(ilike(ventes.reference, q), ilike(clients.nom, q), ilike(clients.prenom, q)));

@@ -1,9 +1,11 @@
 import { z } from "zod";
+import { borneFin } from "~/lib/dates-periode";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
 import { sales, saleItems, products, profiles, payments, posSessions, pointsOfSale, inventoryBalances, inventoryMovements, cashRegisters } from "~/server/db/schema";
 import { ventes, ventesLignes, utilisateurs, clients, produits, retours, lignesRetour } from "@atelierone/db";
 import { eq, and, gte, lte, lt, sql, desc, asc } from "drizzle-orm";
+import { conditionVenteRealisee } from "~/server/lib/sale-service";
 
 export const analyticsRouter = createTRPCRouter({
   getSalesSummary: protectedProcedure
@@ -19,9 +21,9 @@ export const analyticsRouter = createTRPCRouter({
 
       const orgId = profile[0]!.organizationId;
 
-      let whereConditions = [eq(sales.agenceId, orgId), eq(sales.statut, "ACTIVE")];
+      let whereConditions = [eq(sales.agenceId, orgId), conditionVenteRealisee(sales.statut)];
       if (input.startDate) whereConditions.push(gte(sales.createdAt, new Date(input.startDate)));
-      if (input.endDate) whereConditions.push(lte(sales.createdAt, new Date(input.endDate)));
+      if (input.endDate) whereConditions.push(lte(sales.createdAt, borneFin(input.endDate)));
       if (input.posId) whereConditions.push(eq(sales.agenceId, input.posId as any));
       if (input.userId) whereConditions.push(eq(sales.operateurId, input.userId as any));
 
@@ -47,9 +49,9 @@ export const analyticsRouter = createTRPCRouter({
 
       const orgId = profile[0]!.organizationId;
 
-      let whereConditions = [eq(sales.agenceId, orgId), eq(sales.statut, "ACTIVE")];
+      let whereConditions = [eq(sales.agenceId, orgId), conditionVenteRealisee(sales.statut)];
       if (input.startDate) whereConditions.push(gte(sales.createdAt, new Date(input.startDate)));
-      if (input.endDate) whereConditions.push(lte(sales.createdAt, new Date(input.endDate)));
+      if (input.endDate) whereConditions.push(lte(sales.createdAt, borneFin(input.endDate)));
 
       const coutLigne = sql`${saleItems.quantite} * COALESCE(${saleItems.coutUnitaire}, ${products.prixAchat} * ${saleItems.facteurConversion}, 0)`;
 
@@ -72,12 +74,23 @@ export const analyticsRouter = createTRPCRouter({
       const [resumeRows] = await db.select({
         ca: sql<number>`COALESCE(sum(${saleItems.totalLigne}), 0)`,
         cout: sql<number>`COALESCE(sum(${coutLigne}), 0)`,
-        remises: sql<number>`COALESCE(sum(${sales.remise}), 0)`,
       })
       .from(saleItems)
       .leftJoin(sales, eq(saleItems.venteId, sales.id))
       .leftJoin(products, eq(saleItems.produitId, products.id))
       .where(and(...whereConditions));
+
+      // Les remises sont portées par l'EN-TÊTE de la vente, pas par la ligne.
+      // Les sommer ici — donc après la jointure sur `saleItems` — les compte
+      // une fois par ligne : une vente de 3 lignes et 10 000 de remise en
+      // apportait 30 000, et la marge nette était fausse d'autant. L'écart est
+      // proportionnel au nombre de lignes par ticket, donc invisible sur un
+      // panier moyen et écrasant sur une vente de pièces.
+      const [remiseRows] = await db.select({
+        remises: sql<number>`COALESCE(sum(${sales.remise}), 0)`,
+      })
+        .from(sales)
+        .where(and(...whereConditions));
 
       const [retoursRow] = await db.select({
         retoursCa: sql<number>`COALESCE(sum(${lignesRetour.totalLigne}), 0)`,
@@ -89,14 +102,14 @@ export const analyticsRouter = createTRPCRouter({
       .leftJoin(products, eq(lignesRetour.produitId, products.id))
       .where(and(
         eq(ventes.agenceId, orgId),
-        eq(ventes.statut, "termine"),
+        conditionVenteRealisee(ventes.statut),
         input.startDate ? gte(ventes.createdAt, new Date(input.startDate)) : undefined,
-        input.endDate ? lte(ventes.createdAt, new Date(input.endDate)) : undefined,
+        input.endDate ? lte(ventes.createdAt, borneFin(input.endDate)) : undefined,
       ));
 
       const ca = Number(resumeRows?.ca ?? 0);
       const cout = Number(resumeRows?.cout ?? 0);
-      const remises = Number(resumeRows?.remises ?? 0);
+      const remises = Number(remiseRows?.remises ?? 0);
       const retoursCa = Number(retoursRow?.retoursCa ?? 0);
       const retoursCout = Number(retoursRow?.retoursCout ?? 0);
       const margeBrute = ca - cout;
@@ -136,24 +149,63 @@ export const analyticsRouter = createTRPCRouter({
 
       const orgId = profile[0]!.organizationId;
 
-      let whereConditions = [eq(inventoryBalances.agenceId, orgId)];
-      if (input.startDate) whereConditions.push(gte(inventoryMovements.dateMouvement, new Date(input.startDate)));
-      if (input.endDate) whereConditions.push(lte(inventoryMovements.dateMouvement, new Date(input.endDate)));
-      if (input.posId) whereConditions.push(eq(inventoryMovements.agenceId, input.posId as any));
+      // Le champ discriminant est `sens` ('E' entrée / 'S' sortie), PAS `type` :
+      // les types réels sont SORTIE_OR, SORTIE_OUTIL, RETOUR_ATELIER,
+      // TRANSFERT_SORTIE… et `'OUT'` n'est écrit par AUCUN chemin. La somme des
+      // sorties valait donc zéro, et le taux de rotation était toujours nul.
+      //
+      // Par ailleurs stocks et mouvements_stock ne sont pas en correspondance
+      // biunivoque : un produit a autant de lignes de stock que d'emplacements,
+      // et autant de lignes de mouvement que de mouvements. Les joindre
+      // produisait un PRODUIT CARTÉSIEN, et l'`avg(quantite)` était alors
+      // pondéré par le nombre de mouvements du produit — les articles qui
+      // tournaient le plus semblaient avoir le plus de stock. Les deux
+      // agrégations sont donc calculées séparément puis rapprochées.
+      const mouvementsWhere = [eq(inventoryMovements.agenceId, orgId)];
+      if (input.startDate) mouvementsWhere.push(gte(inventoryMovements.dateMouvement, new Date(input.startDate)));
+      if (input.endDate) mouvementsWhere.push(lte(inventoryMovements.dateMouvement, borneFin(input.endDate)));
+      if (input.posId) mouvementsWhere.push(eq(inventoryMovements.agenceId, input.posId as any));
 
-      return db.select({
-        productId: products.id,
-        productTitle: products.titre,
-        averageStock: sql<number>`avg(${inventoryBalances.quantite})`,
-        totalSold: sql<number>`sum(case when ${inventoryMovements.type} = 'OUT' then ${inventoryMovements.quantite} else 0 end)`,
-        turnoverRatio: sql<number>`sum(case when ${inventoryMovements.type} = 'OUT' then ${inventoryMovements.quantite} else 0 end) / nullif(avg(${inventoryBalances.quantite}), 0)`,
+      const sorties = await db.select({
+        productId: inventoryMovements.produitId,
+        totalSold: sql<number>`COALESCE(sum(${inventoryMovements.quantite}), 0)`,
       })
-      .from(products)
-      .leftJoin(inventoryBalances, eq(products.id, inventoryBalances.produitId))
-      .leftJoin(inventoryMovements, eq(products.id, inventoryMovements.produitId))
-      .where(and(...whereConditions))
-      .groupBy(products.id, products.titre)
-      .orderBy(desc(sql`sum(case when ${inventoryMovements.type} = 'OUT' then ${inventoryMovements.quantite} else 0 end) / nullif(avg(${inventoryBalances.quantite}), 0)`));
+        .from(inventoryMovements)
+        .where(and(eq(inventoryMovements.sens, "S"), ...mouvementsWhere))
+        .groupBy(inventoryMovements.produitId);
+
+      const stocksRows = await db.select({
+        productId: inventoryBalances.produitId,
+        averageStock: sql<number>`COALESCE(avg(${inventoryBalances.quantite}), 0)`,
+      })
+        .from(inventoryBalances)
+        .where(eq(inventoryBalances.agenceId, orgId))
+        .groupBy(inventoryBalances.produitId);
+
+      const parProduit = new Map<number, number>();
+      for (const s of sorties) parProduit.set(Number(s.productId), Number(s.totalSold));
+
+      const lignes = stocksRows.map((s) => {
+        const sold = parProduit.get(Number(s.productId)) ?? 0;
+        const avg = Number(s.averageStock);
+        return {
+          productId: s.productId,
+          productTitle: null as string | null,
+          averageStock: avg,
+          totalSold: sold,
+          turnoverRatio: avg > 0 ? sold / avg : 0,
+        };
+      });
+
+      const titres = await db
+        .select({ id: products.id, titre: products.titre })
+        .from(products)
+        .where(eq(products.id, sql`(SELECT DISTINCT produit_id FROM mouvements_stock)`));
+      const titreParId = new Map(titres.map((t) => [Number(t.id), t.titre]));
+
+      return lignes
+        .map((l) => ({ ...l, productTitle: titreParId.get(Number(l.productId)) ?? null }))
+        .sort((a, b) => b.turnoverRatio - a.turnoverRatio);
     }),
 
   getTopProducts: protectedProcedure
@@ -168,9 +220,9 @@ export const analyticsRouter = createTRPCRouter({
 
       const orgId = profile[0]!.organizationId;
 
-      let whereConditions = [eq(sales.agenceId, orgId), eq(sales.statut, "ACTIVE")];
+      let whereConditions = [eq(sales.agenceId, orgId), conditionVenteRealisee(sales.statut)];
       if (input.startDate) whereConditions.push(gte(sales.createdAt, new Date(input.startDate)));
-      if (input.endDate) whereConditions.push(lte(sales.createdAt, new Date(input.endDate)));
+      if (input.endDate) whereConditions.push(lte(sales.createdAt, borneFin(input.endDate)));
 
       return db.select({
         productId: products.id,
@@ -203,9 +255,9 @@ export const analyticsRouter = createTRPCRouter({
         input.groupBy === "week" ? "YYYY-WW" : input.groupBy === "month" ? "YYYY-MM" : "YYYY-MM-DD";
       const periodExpr = sql<string>`to_char(${sales.createdAt}, ${sql.raw(`'${dateFormat}'`)})`;
 
-      let whereConditions = [eq(sales.agenceId, orgId), eq(sales.statut, "ACTIVE")];
+      let whereConditions = [eq(sales.agenceId, orgId), conditionVenteRealisee(sales.statut)];
       if (input.startDate) whereConditions.push(gte(sales.createdAt, new Date(input.startDate)));
-      if (input.endDate) whereConditions.push(lte(sales.createdAt, new Date(input.endDate)));
+      if (input.endDate) whereConditions.push(lte(sales.createdAt, borneFin(input.endDate)));
 
       return db.select({
         period: periodExpr,
@@ -266,7 +318,7 @@ export const analyticsRouter = createTRPCRouter({
 
       let whereConditions = [eq(posSessions.statut, "CLOSED")];
       if (input.startDate) whereConditions.push(gte(posSessions.fermeLe, new Date(input.startDate)));
-      if (input.endDate) whereConditions.push(lte(posSessions.fermeLe, new Date(input.endDate)));
+      if (input.endDate) whereConditions.push(lte(posSessions.fermeLe, borneFin(input.endDate)));
 
       return db.select({
         sessionId: posSessions.id,
@@ -305,7 +357,7 @@ export const analyticsRouter = createTRPCRouter({
     .from(sales)
     .where(and(
       eq(sales.agenceId, orgId),
-      eq(sales.statut, "ACTIVE"),
+      conditionVenteRealisee(sales.statut),
       gte(sales.createdAt, today),
       lt(sales.createdAt, tomorrow)
     ));
@@ -320,7 +372,7 @@ export const analyticsRouter = createTRPCRouter({
     .from(sales)
     .where(and(
       eq(sales.agenceId, orgId),
-      eq(sales.statut, "ACTIVE"),
+      conditionVenteRealisee(sales.statut),
       gte(sales.createdAt, monthStart),
       lt(sales.createdAt, monthEnd)
     ));
@@ -351,7 +403,7 @@ export const analyticsRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const conditions = [eq(ventes.agenceId, ctx.user.agenceId ?? 1), eq(ventes.statut, "termine")];
       if (input?.startDate) conditions.push(gte(ventes.createdAt, new Date(input.startDate)));
-      if (input?.endDate) conditions.push(lte(ventes.createdAt, new Date(input.endDate)));
+      if (input?.endDate) conditions.push(lte(ventes.createdAt, borneFin(input.endDate)));
 
       const rows = await db.select({
         vendeurId: ventes.operateurId,
@@ -380,7 +432,7 @@ export const analyticsRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const conditions = [eq(ventes.agenceId, ctx.user.agenceId ?? 1), eq(ventes.statut, "termine")];
       if (input?.startDate) conditions.push(gte(ventes.createdAt, new Date(input.startDate)));
-      if (input?.endDate) conditions.push(lte(ventes.createdAt, new Date(input.endDate)));
+      if (input?.endDate) conditions.push(lte(ventes.createdAt, borneFin(input.endDate)));
 
       const rows = await db.select({
         clientId: ventes.clientId,
@@ -408,7 +460,7 @@ export const analyticsRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const conditions = [eq(ventes.agenceId, ctx.user.agenceId ?? 1), eq(ventes.statut, "termine")];
       if (input?.startDate) conditions.push(gte(ventes.createdAt, new Date(input.startDate)));
-      if (input?.endDate) conditions.push(lte(ventes.createdAt, new Date(input.endDate)));
+      if (input?.endDate) conditions.push(lte(ventes.createdAt, borneFin(input.endDate)));
 
       const rows = await db.select({
         produitId: ventesLignes.produitId,

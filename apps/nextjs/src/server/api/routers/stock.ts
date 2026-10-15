@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { borneFin } from "~/lib/dates-periode";
 import { createTRPCRouter, protectedProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
 import { db, stocks, produits, categories, unitesMesure, mouvementsStock, inventaires, inventairesSessions, deconditionnements, reconditionnements, emplacements, stocksUnites, stocksLots, produitUnites, ventesLignes, ventes, demandesCommande } from "@atelierone/db";
 import { eq, and, desc, sql, lt, lte, gte, isNotNull, isNull, count, sum, avg, asc, inArray } from "drizzle-orm";
@@ -324,7 +325,7 @@ export const stockRouter = createTRPCRouter({
       if (input.type) conditions.push(eq(mouvementsStock.type, input.type));
       if (input.types && input.types.length > 0) conditions.push(inArray(mouvementsStock.type, input.types));
       if (input.dateDebut) conditions.push(gte(mouvementsStock.dateMouvement, new Date(input.dateDebut)));
-      if (input.dateFin) conditions.push(lte(mouvementsStock.dateMouvement, new Date(input.dateFin)));
+      if (input.dateFin) conditions.push(lte(mouvementsStock.dateMouvement, borneFin(input.dateFin)));
 
       const rows = await db.select({
         id: mouvementsStock.id,

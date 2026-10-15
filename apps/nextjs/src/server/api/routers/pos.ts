@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { borneFin } from "~/lib/dates-periode";
 import { createTRPCRouter, posProcedure, stockProcedure, caisseProcedure, adminProcedure, requirePermissionProcedure } from "~/server/api/trpc";
 import { db, agences, ventes, ventesLignes, produits, stocks, clients, caisses, mouvementsCaisse, auditLogs, mouvementsStock, sessionsCaisse, paiements, caisseOperateurs, produitUnites, unitesMesure, utilisateurs } from "@atelierone/db";
 import { eq, and, or, ilike, desc, sql, gte, lte, inArray } from "drizzle-orm";
@@ -780,7 +781,7 @@ export const posRouter = createTRPCRouter({
         ));
       }
       if (input.dateDebut) conditions.push(gte(ventes.createdAt, new Date(input.dateDebut)));
-      if (input.dateFin) conditions.push(lte(ventes.createdAt, new Date(input.dateFin)));
+      if (input.dateFin) conditions.push(lte(ventes.createdAt, borneFin(input.dateFin)));
 
       const rows = await db.select({
         id: ventes.id,
