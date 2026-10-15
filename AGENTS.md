@@ -47,6 +47,34 @@ les migrations échoue sur `immatriculation NOT NULL`.
 - Les tests d'intégration tournent sur la base **locale** (`atelierone_erp_test`).
   `src/test/setup.ts` refuse toute base distante — garde-fou à ne jamais retirer.
 
+## Verrou de cohérence base (push vers `main`)
+
+La garantie « après un push et la migration, la production est le même que le
+local » ne tient que si elle est **vérifiée au moment du push**. Un contrôle
+postérieur ne la garantit qu'au moment où l'on pense à le lancer — donc
+jamais.
+
+Un hook `pre-push` fait cette vérification **avant** que le code n'arrive :
+
+```bash
+pnpm hooks:install        # une fois par clone — .git/hooks n'est pas versionné
+```
+
+Sur un push visant `main`, le hook enchaîne `db:sync` (additif et idempotent)
+puis `db:check` contre la production. **Une dérive bloquante annule le push.**
+
+- **Pousser une branche de travail ne touche rien** : le hook sort aussitôt.
+- **Un hook maison déjà présent n'est pas écrasé** : l'installateur le signale
+  et laisse la main.
+- **Contournement** : `NO_VERROU_BASE=1 git push origin main` — à n'utiliser
+  qu'en connaissance de cause.
+
+Pourquoi un hook local plutôt qu'une étape de CI : la CI ne peut écrire en
+production sans déposer les identifiants Neon dans les secrets GitHub, ce qui
+expose l'écriture en production à tout le dépôt et à toutes ses dépendances.
+Le hook échoue avant le push : du code qui refuse d'arriver est plus sûr que du
+code qu'il faut rattraper ensuite.
+
 ## Vérification avant commit (obligatoire)
 
 `tsc` **ne suffit pas**. Il ne connaît pas la frontière client/serveur : un composant `"use client"` peut importer sans broncher un module qui tire `@atelierone/db` → `postgres` → `net`, `tls`, `fs`, `perf_hooks`. Le build Vercel échoue alors sur `Module not found: Can't resolve 'net'`, alors que tous les tests et le type-check sont verts.

@@ -33,6 +33,7 @@
     "db:deploy:supabase": "node scripts/deploy.mjs supabase",
     "db:deploy:all": "node scripts/deploy.mjs all",
     "db:sync": "pnpm -F @atelierone/db db:sync",
+    "hooks:install": "node scripts/installer-hooks.mjs",
     "db:check": "pnpm -F @atelierone/db drift:check",
     "db:sync:reset": "node scripts/deploy.mjs sync",
     "db:verify": "pnpm -F @atelierone/db verify:data -- ../../DOC/import-atelierone",
