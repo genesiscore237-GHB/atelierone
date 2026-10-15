@@ -64,7 +64,7 @@
 | E10 | Validation visible : toast + scroll vers erreur ; tous les `*` réellement validés | Atteint | U4 ✅ |
 | E11 | DOM séquentiel ; caches invalidés après réception | Atteint | U5 ✅ |
 | E12 | Restitution OR libère le spot + écrit mouvement SORTIE | Atteint | S1 ✅ |
-| E13 | Alerte « véhicule déjà présent » si réception sur véhicule au garage | Atteint | S2 |
+| E13 | Alerte « véhicule déjà présent » si réception sur véhicule au garage | Atteint | S2 ✅ |
 | E14 | Scheduler d'alertes parking (exécution périodique) | Atteint | A1 |
 | E15 | `or.getAlertes` branché à une UI | Atteint | A2 |
 
@@ -106,7 +106,7 @@
 | **U4** | Validation visible | réception (UI) | ✅ |
 | **U5** | DOM séquentiel + caches | réception (UI) | ✅ |
 | **S1** | Sortie unifiée (restitution → spot) | or, parking | ✅ |
-| **S2** | Alerte véhicule déjà présent | réception (API) | ⬜ |
+| **S2** | Alerte véhicule déjà présent | réception (API) | ✅ |
 | **A1** | Scheduler alertes | parking | ⬜ |
 | **A2** | `or.getAlertes` UI | atelier | ⬜ |
 
@@ -228,4 +228,6 @@ mouvements) : ce n'est pas un doublon du parc, c'est un métier distinct.
 
 | 2026-10-14 | **U5 — DOM séquentiel + caches invalidés (E11, P2-3, P2-6)** | Livré. **DOM** : la section « État des lieux photographique » (anciennement 7, en tête de la colonne de droite… non, de la colonne de **gauche**) est déplacée après « Constats », et la validation renumérotée 7. L'ordre DOM est désormais **1 → 2 → 3 → 4 → 5 → 6 → 7**, contigu et cohérent avec la numérotation affichée. Conséquence concrète : la navigation au clavier (Tab) et la lecture d'écran suivent l'ordre annoncé au lieu de sauter 1,2,3,7 puis 4,5,8 ; le défilement automatique de U4 tombe aussi sur le bon champ sans correction. (Le décalage venait de U3 : la suppression de l'ancienne section 6 avait laissé la numérotation trouée.) **Caches** (P2-6) : `invaliderApresReception()` centralise la liste — la réception n'invalidait que `or.list` et `vehicules.list`, alors qu'elle écrit aussi le **registre parking** (projection de statut), le **KPI garage**, la liste des **types de véhicule** (un type libre peut avoir été ajouté), la **recherche réception**, la liste **clients** et les **suggestions de dédoublonnage**. Passé de 2 à **10** caches invalidés. Chaque entrée porte un **motif** écrit : le vrai risque n'est pas d'oublier une requête, c'est de l'oublier **silencieusement** — le motif rend l'ajout ultérieur explicite. Une route absente est ignorée sans erreur (la réception est DÉJÀ enregistrée : faire échouer le retour ferait croire à l'agent que l'enregistrement a échoué). Vérifié que les 10 routes existent bien dans les routeurs. **Tests** : `invalidation-reception.test.ts` (6 tests) — chaque invalidation annoncée est réellement appelée, les 5 caches oubliés sont présents, chaque entrée porte un motif, route absente et `utils` vide ne lèvent pas, pas de doublon. Vérifs : **6/6** verts, **922/922** sur la suite complète (58 fichiers), TSC 0 erreur, lint 0 erreur. |
 
-Lots **R1**–**R5**, **U1**–**U5**, **S1** et **U0a**–**U0d** livrés. Il reste **S2** (alerte « véhicule déjà présent » si réception sur véhicule au garage), **A1** (scheduler d'alertes parking) et **A2** (`or.getAlertes` branché à une UI).
+| 2026-10-15 | **S2 — alerte « véhicule déjà présent » (E13)** | Livré. **Endpoint `or.situationParking`** (lecture seule, aucune écriture) qui remonte trois situations **invisibles depuis le formulaire**, agrégées en une bannière unique affichée dès que la plaque identifie un véhicule, AVANT toute saisie : (a) **déjà présent au garage** — n° de registre, place, zone et statut (« aucune nouvelle place n'est nécessaire ») ; (b) **dossier déjà en cours** sur ce même véhicule — l'agent confirme qu'il s'agit bien d'une nouvelle intervention et non d'un oubli ; (c) **place fantôme** — ligne `SORTI` dont la place reste bloquée : impossible à créer depuis le code (corrigé en S1/P0-3) mais présent sur des données antérieures, donc **signalé plutôt que masqué**. Ton différencié : *info* pour le constat factuel, *warn* pour les deux états qui appellent une confirmation ou un signalement. Un véhicule `SORTI` n'est plus « présent » — la sortie S1 libère réellement, et un test le vérifie. **Tests** : `or-s2-alerte-vehicule-deja-present.integration.test.ts` (6 tests) — présence avec n° de registre et place, dossier en cours signalé, véhicule sorti non signalé, place fantôme détectée, véhicule inconnu sans alerte, et **la requête n'écrit rien** (nombre de dossiers identique après deux appels). Vérifs : **6/6** verts, **928/928** sur la suite complète (59 fichiers), TSC 0 erreur, lint 0 erreur (1 warning préexistant). |
+
+Lots **R1**–**R5**, **U1**–**U5**, **S1**, **S2** et **U0a**–**U0d** livrés. Il reste **A1** (scheduler d'alertes parking, RD9) et **A2** (`or.getAlertes` branché à une UI).

@@ -1676,6 +1676,121 @@ export const orRouter = createTRPCRouter({
    * exclusivement des prises RÉELLES (jamais des reprises) : la référence doit
    * être un état constaté, pas une copie de copie.
    */
+  // ─── LOT S2 (E13) — Situation parking d'un véhicule réceptionné ───────────
+
+  /**
+   * Où en est ce véhicule dans le registre parking ?
+   *
+   * Trois situations méritent d'être dites à l'agent AVANT qu'il enregistre,
+   * parce que chacune est invisible depuis le formulaire :
+   *
+   *  1. `dejaPresent` — le véhicule occupe déjà une place au garage. Ce n'est
+   *     pas une erreur (un véhicule revient pour une nouvelle intervention),
+   *     mais l'agent doit le savoir : il n'a pas à.expecter une place libre,
+   *     et « il arrive » appliquée à un véhicule déjà là ressemble à une
+   *     double saisie.
+   *  2. `dossierOuvert` — un dossier est DÉJÀ en cours sur ce véhicule.
+   *     Ouvrir un second dossier en parallèle sur le même véhicule est
+   *     rarement voulu ; l'agent peut confirmer que c'est bien une nouvelle
+   *     intervention (et non une oubli).
+   *  3. `placeFantome` — la place est encore bloquée/réservée pour ce véhicule
+   *     alors que sa ligne est `SORTI`. C'est la famille de bugs corrigée en
+   *     S1 (P0-3) : elle ne peut plus être créée par le code, mais elle peut
+   *     exister sur des données antérieures. On la signale plutôt que de la
+   *     masquer.
+   *
+   * Aucune écriture : cette requête ne modifie rien, elle informe.
+   */
+  situationParking: requirePermissionProcedure("or.consulter")
+    .input(z.object({ vehiculeId: z.number().int().nullable() }))
+    .query(async ({ ctx, input }) => {
+      const vide = {
+        vehiculeId: input.vehiculeId ?? null,
+        dejaPresent: false,
+        placeFantome: false,
+        dossierOuvert: false,
+        ligne: null as null | {
+          parkingId: number;
+          numRegistre: number | null;
+          statut: string | null;
+          spotId: number | null;
+          spotCode: string | null;
+          zoneNom: string | null;
+          siteNom: string | null;
+        },
+        dossier: null as null | { id: number; numero: string | null; statut: string | null },
+      };
+      if (!input.vehiculeId) return vide;
+
+      const lignes = (await db.execute(sql`
+        SELECT pv.id            AS parking_id,
+               pv.num_registre  AS num_registre,
+               pv.statut        AS statut,
+               pv.spot_id       AS spot_id,
+               s.code           AS spot_code,
+               z.nom            AS zone_nom,
+               si.nom           AS site_nom
+        FROM parking_vehicles pv
+        LEFT JOIN parking_spots s  ON s.id  = pv.spot_id
+        LEFT JOIN parking_zones z  ON z.id  = pv.zone_id
+        LEFT JOIN parking_sites si  ON si.id = pv.site_id
+        WHERE pv.vehicule_id = ${input.vehiculeId}
+          AND pv.agence_id = ${ctx.user.agenceId}
+        ORDER BY pv.id
+        LIMIT 1`)) as unknown as {
+          parking_id: number;
+          num_registre: number | null;
+          statut: string | null;
+          spot_id: number | null;
+          spot_code: string | null;
+          zone_nom: string | null;
+          site_nom: string | null;
+        }[];
+      const l = lignes[0];
+
+      // Dossier en cours sur ce véhicule (LIVRE et ferme_definitif exclus).
+      const dossiers = (await db.execute(sql`
+        SELECT o.id, o.numero, o.statut
+        FROM ordres_reparation o
+        WHERE o.vehicule_id = ${input.vehiculeId}
+          AND o.agence_id = ${ctx.user.agenceId}
+          AND o.statut NOT IN ('LIVRE', 'ANNULE', 'ferme_definitif')
+        ORDER BY o.id DESC
+        LIMIT 1`)) as unknown as { id: number; numero: string | null; statut: string | null }[];
+      const d = dossiers[0];
+
+      const sorti = l?.statut === "SORTI";
+
+      // Place fantôme : le véhicule est sorti mais sa place lui reste attribuée.
+      let placeFantome = false;
+      if (sorti && l?.spot_id) {
+        const spots = (await db.execute(sql`
+          SELECT (bloque OR reserve_pour = ${input.vehiculeId}) AS bloque_pour
+          FROM parking_spots WHERE id = ${l.spot_id}`)) as unknown as { bloque_pour: boolean }[];
+        placeFantome = !!spots[0]?.bloque_pour;
+      }
+
+      return {
+        vehiculeId: input.vehiculeId,
+        dejaPresent: !!l && !sorti,
+        placeFantome,
+        dossierOuvert: !!d,
+        ligne: l
+          ? {
+              parkingId: Number(l.parking_id),
+              numRegistre: l.num_registre != null ? Number(l.num_registre) : null,
+              statut: l.statut,
+              spotId: l.spot_id != null ? Number(l.spot_id) : null,
+              spotCode: l.spot_code,
+              zoneNom: l.zone_nom,
+              siteNom: l.site_nom,
+            }
+          : null,
+        dossier: d ? { id: Number(d.id), numero: d.numero, statut: d.statut } : null,
+      };
+    }),
+
+  // ─── LOT S2 — Alerte « véhicule déjà présent » ────────────────────────────
   etatDesLieuPrecedent: requirePermissionProcedure("or.consulter")
     .input(z.object({ vehiculeId: z.number().int().nullable(), avantOrId: z.number().int().default(0) }))
     .query(async ({ input }) => {

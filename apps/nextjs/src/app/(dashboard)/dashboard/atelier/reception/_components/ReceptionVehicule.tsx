@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Search, Plus, Loader2, CheckCircle2, X } from "lucide-react";
+import { Search, Plus, Loader2, CheckCircle2, X, TriangleAlert } from "lucide-react";
 import { api } from "~/trpc/react";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -143,20 +143,55 @@ export function ReceptionVehicule() {
   // rencontrés par l'agence + saisie libre).
 
   // LOT U0c — état des lieux photographique versionné par visite.
-  // Remplace l'ancienne liste plate (`reception.photos: string[]`) qui :
-  //  - ne savait pas de face il s'agissait ;
-  //  - jetait en SILENCE toute photo de plus de 2 Mo (P2-5) ;
-  //  - plantait la réception côté serveur (colonnes inexistantes, voir or-router).
   const [photosEtatDesLieu, setPhotosEtatDesLieu] = useState<PhotoUI[]>([]);
 
-  // Reprise intelligente : si le véhicule a déjà un état des lieux constaté,
-  // on le propose comme référence pour ne re-photographier que ce qui change.
+  // La saisie de la plaque identifie le véhicule : c'est ce qui alimente la
+  // reprise d'état des lieux (U0c) et l'alerte parking (S2).
   const immatRecherchee = (f.vehicule.immatriculation ?? "").trim();
   const vehiculeRecherche = api.or.rechercherReception.useQuery(
     { q: immatRecherchee },
     { enabled: immatRecherchee.length >= 2 }
   );
   const vehiculeIdConnu = (vehiculeRecherche.data?.vehicules?.[0] as { id?: number } | undefined)?.id ?? null;
+
+  // LOT S2 (E13) — où en est ce véhicule au garage ? (lecture seule)
+  const situationParking = api.or.situationParking.useQuery(
+    { vehiculeId: vehiculeIdConnu },
+    { enabled: vehiculeIdConnu != null }
+  );
+
+  // LOT S2 (E13) — trois situations invisibles depuis le formulaire,
+  // agrégées en une bannière unique.
+  const parking = situationParking.data;
+  const alertesParking: { ton: "info" | "warn"; texte: string }[] = [];
+  if (parking?.dejaPresent && parking.ligne) {
+    const ou = parking.ligne.spotCode
+      ? `, place ${parking.ligne.spotCode}${parking.ligne.zoneNom ? ` (${parking.ligne.zoneNom})` : ""}`
+      : ", non positionné";
+    alertesParking.push({
+      ton: "info",
+      texte:
+        `Ce véhicule est déjà enregistré au garage` +
+        `${parking.ligne.numRegistre != null ? ` sous le n° ${parking.ligne.numRegistre}` : ""}` +
+        `${ou} — statut « ${parking.ligne.statut ?? "—"} ». Aucune nouvelle place n'est nécessaire.`,
+    });
+  }
+  if (parking?.dossierOuvert && parking.dossier) {
+    alertesParking.push({
+      ton: "warn",
+      texte:
+        `Un dossier est DÉJÀ en cours sur ce véhicule (${parking.dossier.numero ?? "sans numéro"}, ` +
+        `statut « ${parking.dossier.statut ?? "—"} »). Confirmez qu'il s'agit bien d'une nouvelle intervention.`,
+    });
+  }
+  if (parking?.placeFantome) {
+    alertesParking.push({
+      ton: "warn",
+      texte:
+        `Sa place de parking est encore bloquée alors que le véhicule est sorti du registre : ` +
+        `place fantôme. Signalez-la au responsable du garage.`,
+    });
+  }
 
   // LOT U2 (RD5) — dernier kilométrage connu : celui de la fiche si le
   // véhicule a été chargé, sinon celui trouvé par la saisie de la plaque.
@@ -167,6 +202,8 @@ export function ReceptionVehicule() {
     const km = trouve?.kilometrage;
     return km != null && km > 0 ? Number(km) : null;
   })();
+
+  // LOT U0c — état des lieux de la visite précédente (pour la reprise).
   const etatDesLieuPrecedent = api.or.etatDesLieuPrecedent.useQuery(
     { vehiculeId: vehiculeIdConnu, avantOrId: 0 },
     { enabled: vehiculeIdConnu != null }
@@ -294,6 +331,25 @@ export function ReceptionVehicule() {
           <Button size="sm" variant="outline" className="mt-2 gap-1 text-xs" onClick={() => { setModeCreation(true); setResultats(null); }}>
             <Plus size={12} /> Créer un nouveau véhicule + client
           </Button>
+        </div>
+      )}
+      {/* LOT S2 (E13) — alerte « véhicule déjà présent » : visible dès que la
+          plaque identifie un véhicule connu, AVANT toute saisie. */}
+      {alertesParking.length > 0 && (
+        <div className="space-y-2">
+          {alertesParking.map((a) => (
+            <p
+              key={a.ton}
+              className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-xs ${
+                a.ton === "warn"
+                  ? "border-warning/40 bg-warning/10 text-foreground"
+                  : "border-primary/30 bg-primary/5 text-foreground"
+              }`}
+            >
+              <TriangleAlert size={14} className={`mt-px shrink-0 ${a.ton === "warn" ? "text-warning" : "text-primary"}`} />
+              <span>{a.texte}</span>
+            </p>
+          ))}
         </div>
       )}
       {modeCreation && (
