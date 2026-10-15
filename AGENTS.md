@@ -1,3 +1,52 @@
+## Base de données : une seule chaîne, sans intervention manuelle
+
+**La production est Neon**, base `atelierone_erp` (`neondb` est vide). Ce n'est
+pas Supabase : les scripts qui cherchent `pooler.supabase.com` ne visent rien.
+
+```
+pnpm db:sync      # migrations + socle RBAC + données dérivées du parking
+pnpm db:check     # compare la base courante à la référence et affiche la dérive
+```
+
+`db:sync` enchaîne cinq étapes **dans un ordre figé**, chacune idempotente :
+migrations SQL → socle sécurité → clients parking → véhicules parking →
+rattachement. L'ordre n'est pas décoratif : le socle applied avant les
+migrations échoue sur une colonne absente, la reconstruction des données avant
+les migrations échoue sur `immatriculation NOT NULL`.
+
+**Règles non négociables**
+
+- **Jamais `drizzle-kit migrate`.** Il rejoue `0000` en premier, suppose une base
+  vide que ces migrations ne supportent pas, et se fie au journal — dont les
+  timestamps furent non croissants jusqu'à `0011`, ce qui le faisait ignorer six
+  migrations en silence. Utiliser `migrate:sql`, qui lit l'ordre du journal,
+  applique chaque fichier dans sa transaction et **enregistre** le résultat.
+- **Toute nouvelle permission se définit dans `security-socle.ts`**, jamais dans
+  un script de migration. Deux listes concurrentes pour la même règle ont déjà
+  produit une dérive permanente entre le local et la production.
+- **Toute nouvelle migration SQL doit être idempotente** (`IF NOT EXISTS`,
+  `DROP … IF EXISTS` avant `CREATE`, ou `DO $$`). Seules `0000`–`0003` font
+  exception : elles créent le socle et ne sont pas rejouables par construction —
+  `migrate:sql` les marque alors comme déjà appliquées, et le signale.
+- **Ne jamais exécuter `db:sync:reset`** sur une base contenant de la donnée.
+  Cette commande réinitialise le schéma (`DROP`/`CREATE`). Elle existe pour
+  reconstruire une base locale vierge.
+
+**Avant de conclure qu'un travail est terminé**, `pnpm db:check` doit renvoyer
+`PARFAIT` ou ne signaler que des écarts de données d'exploitation attendus.
+`audit_logs` diffère toujours : chaque base a son propre historique.
+
+**Écarts de production à connaître**
+
+- L'endpoint **pooler** de Neon ouvre les sessions avec un `search_path` vide ;
+  l'endpoint **direct** (celui de l'application) a `search_path = "$user", public`.
+  Un script branché sur le pooler doit qualifier `public.`, sinon il échoue en
+  `relation does not exist` sur une base parfaitement saine.
+- Aucun script ne peut forcer `ssl: false` : Neon l'exige. Utiliser `sslPourUrl()`
+  de `env-guard.ts`, qui doit rester aligné avec `packages/db/src/client.ts`.
+- Les tests d'intégration tournent sur la base **locale** (`atelierone_erp_test`).
+  `src/test/setup.ts` refuse toute base distante — garde-fou à ne jamais retirer.
+
 ## Vérification avant commit (obligatoire)
 
 `tsc` **ne suffit pas**. Il ne connaît pas la frontière client/serveur : un composant `"use client"` peut importer sans broncher un module qui tire `@atelierone/db` → `postgres` → `net`, `tls`, `fs`, `perf_hooks`. Le build Vercel échoue alors sur `Module not found: Can't resolve 'net'`, alors que tous les tests et le type-check sont verts.

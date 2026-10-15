@@ -32,7 +32,9 @@
     "db:deploy": "node scripts/deploy.mjs local",
     "db:deploy:supabase": "node scripts/deploy.mjs supabase",
     "db:deploy:all": "node scripts/deploy.mjs all",
-    "db:sync": "node scripts/deploy.mjs sync",
+    "db:sync": "pnpm -F @atelierone/db db:sync",
+    "db:check": "pnpm -F @atelierone/db drift:check",
+    "db:sync:reset": "node scripts/deploy.mjs sync",
     "db:verify": "pnpm -F @atelierone/db verify:data -- ../../DOC/import-atelierone",
     "db:extract": "node scripts/extract-atelierone-papeterie.mjs"
   },
