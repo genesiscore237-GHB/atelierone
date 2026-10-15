@@ -65,7 +65,7 @@
 | E11 | DOM séquentiel ; caches invalidés après réception | Atteint | U5 ✅ |
 | E12 | Restitution OR libère le spot + écrit mouvement SORTIE | Atteint | S1 ✅ |
 | E13 | Alerte « véhicule déjà présent » si réception sur véhicule au garage | Atteint | S2 ✅ |
-| E14 | Scheduler d'alertes parking (exécution périodique) | Atteint | A1 |
+| E14 | Scheduler d'alertes parking (exécution périodique) | Atteint | A1 ✅ |
 | E15 | `or.getAlertes` branché à une UI | Atteint | A2 |
 
 ---
@@ -107,7 +107,7 @@
 | **U5** | DOM séquentiel + caches | réception (UI) | ✅ |
 | **S1** | Sortie unifiée (restitution → spot) | or, parking | ✅ |
 | **S2** | Alerte véhicule déjà présent | réception (API) | ✅ |
-| **A1** | Scheduler alertes | parking | ⬜ |
+| **A1** | Scheduler alertes | parking | ✅ |
 | **A2** | `or.getAlertes` UI | atelier | ⬜ |
 
 ### U0 — Unification des trois créations de véhicule (décision utilisateur, 2026-10-14)
@@ -230,4 +230,6 @@ mouvements) : ce n'est pas un doublon du parc, c'est un métier distinct.
 
 | 2026-10-15 | **S2 — alerte « véhicule déjà présent » (E13)** | Livré. **Endpoint `or.situationParking`** (lecture seule, aucune écriture) qui remonte trois situations **invisibles depuis le formulaire**, agrégées en une bannière unique affichée dès que la plaque identifie un véhicule, AVANT toute saisie : (a) **déjà présent au garage** — n° de registre, place, zone et statut (« aucune nouvelle place n'est nécessaire ») ; (b) **dossier déjà en cours** sur ce même véhicule — l'agent confirme qu'il s'agit bien d'une nouvelle intervention et non d'un oubli ; (c) **place fantôme** — ligne `SORTI` dont la place reste bloquée : impossible à créer depuis le code (corrigé en S1/P0-3) mais présent sur des données antérieures, donc **signalé plutôt que masqué**. Ton différencié : *info* pour le constat factuel, *warn* pour les deux états qui appellent une confirmation ou un signalement. Un véhicule `SORTI` n'est plus « présent » — la sortie S1 libère réellement, et un test le vérifie. **Tests** : `or-s2-alerte-vehicule-deja-present.integration.test.ts` (6 tests) — présence avec n° de registre et place, dossier en cours signalé, véhicule sorti non signalé, place fantôme détectée, véhicule inconnu sans alerte, et **la requête n'écrit rien** (nombre de dossiers identique après deux appels). Vérifs : **6/6** verts, **928/928** sur la suite complète (59 fichiers), TSC 0 erreur, lint 0 erreur (1 warning préexistant). |
 
-Lots **R1**–**R5**, **U1**–**U5**, **S1**, **S2** et **U0a**–**U0d** livrés. Il reste **A1** (scheduler d'alertes parking, RD9) et **A2** (`or.getAlertes` branché à une UI).
+| 2026-10-15 | **A1 — scheduler d'alertes parking (E14, RD9, P1-3)** | Livré. **Service `server/lib/parking-alertes-scheduler.ts`** : le cœur de l'analyse (`analyserParkingAlertes`) est factorisé hors du routeur et ne prend qu'un `agenceId` — il ne dépend donc d'**aucun** `ctx` tRPC. Conséquence directe : le bouton manuel et le tour automatique appellent **exactement le même code** et ne peuvent pas diverger (leçon de U0a). `garage.analyser` délègue désormais au service ; il ne subsiste qu'un wrapper passant `clotureePar: userId` (le tour automatique passe `null`). **Scheduler** (`ensureAlertesScheduler`) conforme à RD9 : **lazy** (rien ne tourne tant que le parking n'est pas utilisé), **une seule fois par process**, `setInterval` configurable (**60 min** par défaut, plancher 1 min). **Trois garde-fous** qui sont le vrai contenu de ce lot : (a) une exception dans le timer ne doit **jamais** remonter — non surveillée, elle tuerait le process Node ; tout est journalisé et le cycle continue ; (b) **pas de recouvrement** — un tour plus lent que la période est sauté, pas empilé (sinon une base saturée fait croître la charge) ; (c) **aucun timer inutile** — sans agence connue, on ne démarre pas. Le repli **bouton manuel reste disponible** : en déploiement serverless, le process peut être tué entre deux requêtes, et le scheduler n'est jamais bloquant pour la disponibilité. **Tests** : `garage-a1-scheduler-alertes.integration.test.ts` (6 tests) — ouverture sans contexte utilisateur (`cloturee_par` NULL), **idempotence** (un 2ᵉ passage ne recrée rien : le scheduler repasse toutes les heures, la table ne doit pas grossir), parité bouton/scheduler, démarrage unique (2ᵉ appel renvoie `false`), aucune agence → aucun timer, seuils bornés. Vérifs : **6/6** verts, **934/934** sur la suite complète (60 fichiers), TSC 0 erreur, lint 0 erreur. |
+
+Lots **R1**–**R5**, **U1**–**U5**, **S1**, **S2**, **A1** et **U0a**–**U0d** livrés. Il ne reste que **A2** (`or.getAlertes` branché à une UI).

@@ -59,6 +59,11 @@ import {
   type VehiculeAlertable,
 } from "~/server/lib/parking-alerts";
 import {
+  analyserParkingAlertes,
+  ensureAlertesScheduler,
+  chargerConfig,
+} from "~/server/lib/parking-alertes-scheduler";
+import {
   synchroniserIdentiteCanonique,
   projeterImmoDepuisParking,
   sortirVehiculeParking,
@@ -92,48 +97,10 @@ const photoSchema = z.object({
   categorie: z.string().trim().max(50),
 });
 
-type VehiculeAlertableRow = Pick<
-  typeof parkingVehicles.$inferSelect,
-  | "id" | "numRegistre" | "statut" | "marque" | "modele" | "immatriculation"
-  | "clientNom" | "dateEntree" | "dateDerniereAction" | "dateDevis"
-  | "dateCommande" | "dateFinTravaux" | "dateDerniereRelance" | "createdAt"
->;
-
-function vehiculeAlertable(v: VehiculeAlertableRow): VehiculeAlertable {
-  return {
-    id: v.id,
-    numRegistre: v.numRegistre,
-    statut: v.statut,
-    marque: v.marque,
-    modele: v.modele,
-    immatriculation: v.immatriculation,
-    clientNom: v.clientNom,
-    dateEntree: v.dateEntree,
-    dateDerniereAction: v.dateDerniereAction,
-    dateDevis: v.dateDevis,
-    dateCommande: v.dateCommande,
-    dateFinTravaux: v.dateFinTravaux,
-    dateDerniereRelance: v.dateDerniereRelance,
-    createdAt: v.createdAt,
-  };
-}
-
-async function chargerConfig(agenceId: number): Promise<ParkingRuleConfig> {
-  const [cfg] = await db
-    .select()
-    .from(parkingConfigs)
-    .where(eq(parkingConfigs.agenceId, agenceId))
-    .limit(1);
-  if (!cfg) return { ...DEFAULT_PARKING_CONFIG_SEUILS };
-  return {
-    seuilSansEvolutionJours: cfg.seuilSansEvolutionJours ?? DEFAULT_PARKING_CONFIG_SEUILS.seuilSansEvolutionJours,
-    seuilImmobilisationLongueJours: cfg.seuilImmobilisationLongueJours ?? DEFAULT_PARKING_CONFIG_SEUILS.seuilImmobilisationLongueJours,
-    seuilAttenteClientJours: cfg.seuilAttenteClientJours ?? DEFAULT_PARKING_CONFIG_SEUILS.seuilAttenteClientJours,
-    seuilAttentePieceJours: cfg.seuilAttentePieceJours ?? DEFAULT_PARKING_CONFIG_SEUILS.seuilAttentePieceJours,
-    seuilPretSortieJour: cfg.seuilPretSortieJour ?? DEFAULT_PARKING_CONFIG_SEUILS.seuilPretSortieJour,
-    seuilTransfertJours: cfg.seuilTransfertJours ?? DEFAULT_PARKING_CONFIG_SEUILS.seuilTransfertJours,
-  };
-}
+// LOT A1 — le calcul d'alertes (config + `vehiculeAlertable` + boucle
+// ouverture/clôture) est désormais dans `~/server/lib/parking-alertes-scheduler`
+// pour être partagé avec le scheduler : le bouton et le tour automatique
+// appellent le même code.
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -1689,86 +1656,25 @@ spots: spots.map((s) => {
       };
     }),
 
-  analyser: requirePermissionProcedure("parking.alertes.gerer")
+analyser: requirePermissionProcedure("parking.alertes.gerer")
     .input(z.object({ vehicleId: z.number().optional() }).default({}))
     .mutation(async ({ ctx, input }) => {
-      const agenceId = ctx.user.agenceId;
-      const cfg = await chargerConfig(agenceId);
+      // LOT A1 (E14) — le calcul est factorisé dans
+      // `analyserParkingAlertes` (sans contexte utilisateur) : le bouton et le
+      // scheduler appellent EXACTEMENT le même code, donc ils ne peuvent pas
+      // diverger. Seule l'origine diffère (`clotureePar` = l'agent ici, null
+      // pour un tour automatique).
+      //
+      // Démarrage différé du scheduler (lazy, une fois par process) : rien ne
+      // tourne tant que le parking n'est pas utilisé.
+      void ensureAlertesScheduler().catch(() => undefined);
 
-      const conditions = [eq(parkingVehicles.agenceId, agenceId)];
-      if (input.vehicleId) conditions.push(eq(parkingVehicles.id, input.vehicleId));
-      // Colonnes ciblees : computeParkingAlerts ne lit que VehiculeAlertableRow.
-      const vehicules = await db
-        .select({
-          id: parkingVehicles.id,
-          numRegistre: parkingVehicles.numRegistre,
-          statut: parkingVehicles.statut,
-          marque: parkingVehicles.marque,
-          modele: parkingVehicles.modele,
-          immatriculation: parkingVehicles.immatriculation,
-          clientNom: parkingVehicles.clientNom,
-          dateEntree: parkingVehicles.dateEntree,
-          dateDerniereAction: parkingVehicles.dateDerniereAction,
-          dateDevis: parkingVehicles.dateDevis,
-          dateCommande: parkingVehicles.dateCommande,
-          dateFinTravaux: parkingVehicles.dateFinTravaux,
-          dateDerniereRelance: parkingVehicles.dateDerniereRelance,
-          createdAt: parkingVehicles.createdAt,
-        })
-        .from(parkingVehicles)
-        .where(and(...conditions));
-
-      const now = new Date();
-      const vehiculeIds = vehicules.map((v) => v.id);
-      const ouvertes = vehiculeIds.length > 0
-        ? await db
-            .select()
-            .from(parkingAlerts)
-            .where(and(
-              eq(parkingAlerts.agenceId, agenceId),
-              eq(parkingAlerts.statut, "OUVERTE"),
-              inArray(parkingAlerts.vehicleId, vehiculeIds),
-            ))
-        : [];
-
-      const ouvertesKey = new Set(ouvertes.map((a) => `${a.vehicleId}:${a.code}`));
-      const activesParVehicle = new Map<number, Set<string>>();
-      let crees = 0;
-
-      for (const v of vehicules) {
-        let actifs = activesParVehicle.get(v.id) ?? new Set<string>();
-        const drafts = computeParkingAlerts(vehiculeAlertable(v), cfg, now);
-        for (const draft of drafts) {
-          actifs.add(draft.code);
-          if (ouvertesKey.has(`${v.id}:${draft.code}`)) continue;
-          await db.insert(parkingAlerts).values({
-            agenceId,
-            vehicleId: v.id,
-            code: draft.code,
-            niveau: draft.niveau,
-            message: draft.message,
-            criteres: draft.criteres,
-            statut: "OUVERTE",
-            declencheeLe: now,
-          } as any);
-          crees++;
-        }
-        activesParVehicle.set(v.id, actifs);
-      }
-
-      let cloturees = 0;
-      for (const a of ouvertes) {
-        const actifs = activesParVehicle.get(a.vehicleId);
-        if (!actifs) continue;
-        if (actifs.has(a.code)) continue;
-        await db
-          .update(parkingAlerts)
-          .set({ statut: "CLOTUREE", clotureeLe: now, clotureePar: Number(ctx.user.id) } as any)
-          .where(eq(parkingAlerts.id, a.id));
-        cloturees++;
-      }
-
-      return { vehiculesAnalyses: vehicules.length, creees: crees, cloturees };
+      return db.transaction(async (tx) =>
+        analyserParkingAlertes(tx, ctx.user.agenceId, {
+          vehicleId: input.vehicleId,
+          clotureePar: Number(ctx.user.id),
+        }),
+      );
     }),
 
   fermerAlerte: requirePermissionProcedure("parking.alertes.gerer")
@@ -1822,7 +1728,7 @@ spots: spots.map((s) => {
     )
     .mutation(async ({ ctx, input }) => {
       const agenceId = ctx.user.agenceId;
-      const current = await chargerConfig(agenceId);
+      const current = await chargerConfig(db, agenceId);
       const values = {
         agenceId,
         seuilSansEvolutionJours: input.seuilSansEvolutionJours ?? current.seuilSansEvolutionJours,
