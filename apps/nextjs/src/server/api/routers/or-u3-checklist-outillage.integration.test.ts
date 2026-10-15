@@ -85,14 +85,18 @@ beforeEach(retirerDonnees);
 afterAll(retirer);
 
 async function retirerDonnees(): Promise<void> {
-  const vehs = (await db.execute(
-    sql`SELECT id FROM vehicules WHERE immat_norm LIKE 'U3CHECK%' OR immatriculation LIKE 'U3CHECK%'`,
-  )) as unknown as Row[];
-  for (const v of vehs) {
-    await db.execute(sql`DELETE FROM ordres_reparation WHERE vehicule_id = ${v.id}`);
-  }
-  await db.execute(sql`DELETE FROM vehicules WHERE immat_norm LIKE 'U3CHECK%' OR immatriculation LIKE 'U3CHECK%'`);
-  await db.execute(sql`DELETE FROM clients WHERE nom = 'Client U3check'`);
+  // Les deux jeux de plaques doivent être couverts : un dossier laissé derrière
+  // garde son `or_historique` (supprimé en cascade) ET ses lignes d'historique,
+  // qui référencent l'utilisateur — dont la suppression viole alors la clé
+  // étrangère `or_historique_change_par_utilisateurs_id_fk` et fait échouer le
+  // teardown, donc les fichiers de test suivants de la même suite.
+  const MOT = sql`(
+      immat_norm LIKE 'U3CHECK%' OR immatriculation LIKE 'U3CHECK%'
+      OR immat_norm LIKE 'U3PLAIMTE%' OR immatriculation LIKE 'U3PLAIMTE%')`;
+  await db.execute(sql`DELETE FROM ordres_reparation WHERE vehicule_id IN
+                       (SELECT id FROM vehicules WHERE ${MOT})`);
+  await db.execute(sql`DELETE FROM vehicules WHERE ${MOT}`);
+  await db.execute(sql`DELETE FROM clients WHERE nom LIKE 'Client U3%'`);
   await db.execute(
     sql`DELETE FROM audit_logs WHERE user_id IN (SELECT id FROM utilisateurs WHERE email = ${USER_EMAIL})`,
   );
@@ -183,8 +187,32 @@ describe("LOT U3 — check-list outillage + section 6 absorbée", () => {
     expect(or.pannes_declarees).toBe("Bruit à l’accélération");
     expect(or.observations_reception).toBe("Refuse l’attente, veut repartir demain");
 
-    // 5. La plainte, dont la zone de texte a été supprimée du formulaire,
-    // reste alimentée par les pannes déclarées.
-    expect(or.plainte).toBe("Bruit à l’accélération");
+// 5. La plainte reste DISTINTE des pannes.
+    //    Ce test affirmait autrefois `or.plainte === pannes_declarees` — la
+    //    plainte était alimentée par les pannes parce que le formulaire n'en
+    //    proposait qu'une. C'était faux : une réclamation client (« facturé au
+    //   -dessus du devis ») n'est pas un état technique, et le dossier
+    //    affichait les pannes sous l'intitulé « Plainte ». Aucune plainte
+    //    déclarée -> colonne vide.
+    expect(or.plainte).toBeNull();
+  });
+
+  it("5-bis. une plainte déclarée est conservée telle quelle", async () => {
+    const caller = orRouter.createCaller(ctxSuperadmin());
+    const r = await caller.receptionner({
+      client: { nom: "Client U3plainte", telephone: "690100701" },
+      vehicule: { immatriculation: "U3PLAIMTE-003", marque: "LotU3" },
+      reception: {
+        kilometrageEntree: 3000,
+        pannesDeclarees: "Bruit au freinage",
+        plainte: "Facture 30 % au-dessus du devis",
+        outillage: {},
+      },
+    });
+
+    const or = await lireOr(r.id);
+    expect(or.pannes_declarees).toBe("Bruit au freinage");
+    expect(or.plainte).toBe("Facture 30 % au-dessus du devis");
+    expect(or.plainte).not.toBe(or.pannes_declarees);
   });
 });

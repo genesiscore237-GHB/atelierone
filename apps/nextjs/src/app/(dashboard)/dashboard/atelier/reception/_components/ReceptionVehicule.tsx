@@ -472,13 +472,21 @@ export function ReceptionVehicule() {
             </div>
           </Section>
 
-          {/* 6 — Pannes & observations */}
-          {/* LOT U3 (E9, RD7) — l'ancienne section 6 « Pannes déclarées &
-              observations » est SUPPRIMÉE : son contenu est remonté en tête de
+          {/* 6 — Pannes, plainte & observations */}
+          {/* La section 6 reste SUPPRIMÉE : son contenu est remonté en tête de
               la section 5 « Constats & check-list outillage ». Deux blocs qui
-              décrivaient le même constat à deux endroits obligeaient l'agent à
-              choisir où écrire. La 3ᵉ zone de texte (plainte) disparaît aussi :
-              le serveur reporte déjà la plainte sur les pannes déclarées. */}
+              décrivaient le même constat obligeaient l'agent à choisir où écrire.
+
+              La zone « Plainte » est en revanche RESTAURÉE. Elle avait été
+              retirée au motif que « le serveur reporte déjà la plainte sur les
+              pannes déclarées » — mais c'est précisément le défaut : le serveur
+              ne reportait rien, il REMPLAÇAIT la plainte par les pannes. Sur ce
+              formulaire (le principal), aucune réclamation client n'était donc
+              enregistrée, et la fiche du dossier affichait les pannes sous
+              l'intitulé « Plainte ». Une réclamation commerciale n'est pas un
+              état technique : « facturé 30 % au-dessus du devis » et « voyant
+              moteur » ne se confondent pas, et un client peut venir se
+              plaindre SANS panne. */}
         </div>
 
         <div className="space-y-5 xl:col-span-2">
@@ -527,13 +535,27 @@ export function ReceptionVehicule() {
           {/* 5 — Check-list outillage */}
           <Section title="5 · Constats & check-list outillage">
             {/* LOT U3 (E9, RD7) — l'ancienne section 6 est ABSORBÉE ici :
-                « Pannes déclarées » (obligatoire) et « Observations » remontent
-                en tête du bloc constats. La 3ᵉ zone de texte
-                (« travaux demandés / plainte ») était redondante : le serveur
-                reporte déjà la plainte sur les pannes déclarées. */}
+                « Pannes déclarées » (obligatoire), « Plainte du client » et
+                « Observations » remontent en tête du bloc constats : deux
+                blocs qui décrivent le même constat obligeaient l'agent à
+                choisir où écrire. La zone « Plainte » n'est PAS une doublure
+                de « Pannes » : l'une porte l'état technique constaté, l'autre
+                la réclamation du client. */}
             <div className="space-y-4">
               <Field label="Pannes déclarées" required error={errors.pannesDeclarees} anchor="pannesDeclarees">
                 <textarea value={r.pannesDeclarees ?? ""} onChange={(e) => set("reception", "pannesDeclarees", e.target.value)} rows={3} className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" placeholder="Voyant moteur allumé, bruit à l'accélération…" />
+              </Field>
+              <Field
+                label="Plainte du client"
+                hint="Facultatif — ce dont le client se plaint, distinct de la panne"
+              >
+                <textarea
+                  value={r.plainte ?? ""}
+                  onChange={(e) => set("reception", "plainte", e.target.value)}
+                  rows={2}
+                  className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary"
+                  placeholder="Facturé au-dessus du devis, rayure apparue après la reprise, panne revenue…"
+                />
               </Field>
               <Field label="Observations" hint="Facultatif — remarques du déposant, délai souhaité, contraintes…">
                 <textarea value={r.observationsReception ?? ""} onChange={(e) => set("reception", "observationsReception", e.target.value)} rows={2} className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" placeholder="Client pressé, remarques…" />

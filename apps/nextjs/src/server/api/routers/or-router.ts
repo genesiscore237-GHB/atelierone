@@ -907,7 +907,17 @@ export const orRouter = createTRPCRouter({
           numero,
           vehiculeId,
           clientId,
-          plainte: input.reception.plainte ?? input.reception.pannesDeclarees,
+          // `plainte` (ce dont le client se plaint) et `pannes_declarees` (l'état
+          // technique constaté) sont DEUX objets distincts, et la table les
+          // porte séparément. Les confondre — `?? pannesDeclarees` — était
+          // défensif en apparence, mais faux en réalité : l'écran de réception
+          // ne propose que les pannes, donc la plainte registrée sur un dossier
+          // était TOUJOURS un copié-collage des pannes. Le commercial qui lit
+          // « Plainte » sur la fiche d'un dossier lisait la liste des pannes, et
+          // une réclamation client n'était jamais conservée. Un client qui vient
+          // contester une facture, sans panne, n'a rien à déclarer dans le champ
+          // technique : la plainte doit alors rester vide.
+          plainte: input.reception.plainte ?? null,
           diagnostic: null,
           motEntree: input.reception.motEntree,
           priorite: input.reception.priorite,
