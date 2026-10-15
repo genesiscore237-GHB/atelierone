@@ -1,4 +1,4 @@
-﻿/**
+/**
  * LOT U4 (E10) â€” Validation de la rÃ©ception.
  *
  * Tests unitaires des rÃ¨gles pures (`~/lib/validation-reception`). Ils ne
@@ -33,13 +33,12 @@ describe("LOT U4 â€” validation de la rÃ©ception (E10)", () => {
   });
 
   it("2. P2-4 â€” chaque champ marquÃ© d'un astÃ©risque est RÃ‰ELLEMENT contrÃ´lÃ©", () => {
-    // Les 9 champs exigÃ©s par l'interface. Avant ce lot, Â« marque Â», Â« type Â»
+    // Les champs exigÃ©s par l'interface. Avant ce lot, Â« marque Â», Â« type Â»
     // et Â« tÃ©lÃ©phone Â» ne l'Ã©taient pas.
     const champsExiges: [string, () => DonneesReception][] = [
       ["immatriculation", () => ({ ...complet(), vehicule: { marque: "X", typeVehicule: "voiture" } })],
       ["marque", () => ({ ...complet(), vehicule: { immatriculation: "AB-123-CD", typeVehicule: "voiture" } })],
       ["typeVehicule", () => ({ ...complet(), vehicule: { immatriculation: "AB-123-CD", marque: "X" } })],
-      ["clientNom", () => ({ ...complet(), client: { telephone: "690000000" } })],
       ["clientTelephone", () => ({ ...complet(), client: { nom: "Dupont" } })],
       [
         "kilometrageEntree",
@@ -80,12 +79,25 @@ describe("LOT U4 â€” validation de la rÃ©ception (E10)", () => {
   });
 
   it("6. l'ORDRE des erreurs suit l'ordre du formulaire", () => {
-    // C'est ce qui permet de dÃ©filer vers la VRAIE premiÃ¨re erreur.
+    // C'est ce qui permet de défiler vers la VRAIE première erreur.
     const vide: DonneesReception = {};
     const cles = Object.keys(validerReception(vide));
     expect(cles[0]).toBe("immatriculation");
     expect(cles).toContain("marque");
-    expect(cles).toContain("clientNom");
+    // `clientNom` n'est plus contrôlé : sans client, le véhicule part à
+    // wartier. Le téléphone ne l'est qu'APRÈS un nom saisi.
+    expect(cles).not.toContain("clientNom");
+  });
+
+  it("6-bis. un nom sans telephone est signale, aucun nom ne l'est", () => {
+    const sansClient = complet();
+    sansClient.client = {};
+    expect(validerReception(sansClient).clientNom).toBeUndefined();
+    expect(validerReception(sansClient).clientTelephone).toBeUndefined();
+
+    const nomSansTel = complet();
+    nomSansTel.client = { nom: "Dupont" };
+    expect(validerReception(nomSansTel).clientTelephone).toBeTruthy();
   });
 
   it("7. rÃ¨gles de format â€” tolÃ©rantes sur les saisies lÃ©gitimes", () => {

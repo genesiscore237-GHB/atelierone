@@ -104,7 +104,16 @@ export function ReceptionVehicule() {
       setResultats(null);
       setVehiculeClientOrigine(null);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => {
+      // Un refus de doublon n'est pas une panne : c'est une question à poser.
+      // Rendre le bandeau de choix, sinon l'agent a masqué l'avertissement en
+      // choisissant « nouveau client », reçoit un refus, et n'a plus devant lui
+      // que le moyen de le comprendre.
+      if ((e as { data?: { code?: string } })?.data?.code === "CONFLICT") {
+        setTelDoublonEcarte(null);
+      }
+      toast.error(e.message);
+    },
   });
 
   const chargerVehicule = (v: any) => {
@@ -274,9 +283,12 @@ export function ReceptionVehicule() {
     );
     receptionner.mutate({
       client: { ...f.client, nom: f.client.nom?.trim(), telephone: f.client.telephone?.trim() || undefined },
-      // RD4 — réassignation du propriétaire : uniquement si l'opérateur a
-      // coché la case de confirmation (jamais d'écrasement silencieux).
-      reassignerClient: ownerChangeDemande && !!f.reception.reassignerClient,
+      // Le serveur refuse de créer une fiche quand un client porte déjà ce
+      // téléphone, et réclame une confirmation explicite. L'agent l'a déjà
+      // donnée en cliquant « Continuer avec un nouveau client » : on la
+      // transmet, faute de quoi le formulaire refuserait sa propre décision.
+      confirmerClientDoublon: telDoublonEcarte === telNormalise,
+  
       vehicule: { ...f.vehicule, immatriculation: f.vehicule.immatriculation.trim(), marque: f.vehicule.marque?.trim() || undefined, modele: f.vehicule.modele?.trim() || undefined, annee: f.vehicule.annee != null && f.vehicule.annee !== "" ? Number(f.vehicule.annee) : undefined, kilometrage: f.vehicule.kilometrage != null && f.vehicule.kilometrage !== "" ? Number(f.vehicule.kilometrage) : undefined, longueur: numOuUndef(f.vehicule.longueur), largeur: numOuUndef(f.vehicule.largeur), hauteur: numOuUndef(f.vehicule.hauteur), poids: numOuUndef(f.vehicule.poids), dimensionsEstimees: !!f.vehicule.dimensionsEstimees },
       chauffeur: { nom: f.chauffeur.nom?.trim() || undefined, telephone: f.chauffeur.telephone?.trim() || undefined },
       reception: {
@@ -396,13 +408,24 @@ export function ReceptionVehicule() {
           {/* 2 — Client */}
           <Section title="2 · Client / Propriétaire">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="Nom / Raison sociale" required error={errors.clientNom} anchor="clientNom">
+              <Field
+                label="Nom / Raison sociale"
+                required={!!f.client.telephone?.trim() || !!f.client.id}
+                error={errors.clientNom}
+                anchor="clientNom"
+                hint="Laisser vide si le propriétaire n'est pas identifié : le véhicule part à wartier"
+              >
                 <Input value={f.client.nom ?? ""} onChange={(e) => set("client", "nom", e.target.value)} placeholder="Dupont, GPJ Trans…" />
               </Field>
               <Field label="Prénom">
                 <Input value={f.client.prenom ?? ""} onChange={(e) => set("client", "prenom", e.target.value)} />
               </Field>
-              <Field label="Téléphone principal" required error={errors.clientTelephone} anchor="clientTelephone">
+              <Field
+                label="Téléphone principal"
+                required={!!f.client.nom?.trim()}
+                error={errors.clientTelephone}
+                anchor="clientTelephone"
+              >
                 <Input value={f.client.telephone ?? ""} onChange={(e) => set("client", "telephone", e.target.value)} placeholder="06 12 34 56 78" />
               </Field>
               <Field label="Email" error={errors.clientEmail} anchor="clientEmail">
@@ -437,24 +460,24 @@ export function ReceptionVehicule() {
                 </p>
               </div>
             )}
-            {/* RD4 — transparence : le véhicule chargé a un propriétaire et le
-                client saisi est différent → confirmation explicite requise. */}
+            {/* Le garage n'a PAS le droit de changer le propriétaire d'un
+                véhicule. On ne propose donc plus la case « réassigner » : elle
+                offrait une action métier qui n'appartient pas au garage, et
+                l'agent repartait avec l'impression d'avoir enregistré la
+                réception pour le client choisi alors que le véhicule restait
+                rattaché à l'ancien. La règle est expliquée, pas imposée
+                silencieusement : l'écran dit pourquoi le dossier sera refusé,
+                et quoi faire à la place. */}
             {ownerChangeDemande && (
-              <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs">
-                <p className="font-medium text-warning">
-                  Ce véhicule est déjà lié au propriétaire « {vehiculeClientOrigine?.nom ?? "inconnu"} ».
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs">
+                <p className="font-medium text-destructive">
+                  Ce véhicule appartient déjà à « {vehiculeClientOrigine?.nom ?? "un autre client"} ».
                 </p>
-                <label className="mt-2 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={!!f.reception.reassignerClient}
-                    onChange={(e) => set("reception", "reassignerClient", e.target.checked)}
-                    className="size-4 accent-primary"
-                  />
-                  Réassigner ce véhicule au nouveau client (remplace le propriétaire actuel)
-                </label>
                 <p className="mt-1 text-muted-foreground">
-                  Sans cette case, le véhicule conserve son propriétaire d'origine.
+                  Le garage ne peut pas changer le propriétaire d&apos;un véhicule : la
+                  réception sera refusée. Si c&apos;est bien votre client, sélectionnez sa
+                  fiche existante ci-dessus. Sinon, c'est un changement de propriété — passez par la
+                  procédure de cession de véhicule.
                 </p>
               </div>
             )}

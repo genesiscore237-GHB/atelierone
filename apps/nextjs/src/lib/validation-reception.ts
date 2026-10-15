@@ -95,13 +95,19 @@ export function validerReception(d: DonneesReception): Erreurs {
   }
 
   // ── Client ──
-  if (!c.nom?.trim()) {
-    e.clientNom = "Client / propriétaire requis";
-  }
+  // Le client est facultatif : un véhicule peut arriver sans propriétaire
+  // identifié, il part alors « à wartier ». On n'invente pas une fiche pour
+  // décrire ce qu'on ne sait pas — ni en base, ni dans un message d'erreur
+  // qui exigerait un nom qu'on n'a pas.
+  //
+  // Dès qu'un nom est saisi, en revanche, le téléphone est exigé : une fiche
+  // client sans numéro n'est pas retrouvable, et c'est le moyen de rappel
+  // principal du garage.
+  const clientSaisi = !!c.nom?.trim();
 
-  if (!c.telephone?.trim()) {
+  if (clientSaisi && !c.telephone?.trim()) {
     e.clientTelephone = "Téléphone requis";
-  } else if (!telephoneSaisissable(c.telephone)) {
+  } else if (c.telephone?.trim() && !telephoneSaisissable(c.telephone)) {
     e.clientTelephone = "Téléphone incomplet (6 chiffres minimum)";
   }
 

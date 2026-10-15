@@ -109,6 +109,19 @@ const reception = async (immat: string, extra: Record<string, unknown> = {}) => 
   ...extra,
 });
 
+/**
+ * Comptage PORTÉ AU PÉRIMÈTRE du test, pas à toute la base : les fichiers de
+ * test partagent la même base et s'exécutent en parallèle. Un `count(*)`
+ * global change dès qu'un AUTRE fichier crée un client, et l'échec pointe
+ * alors vers le mauvais fichier — ou pire, vers un défaut inexistant.
+ */
+const compterCeLot = async () => {
+  const r = (await db.execute(
+    sql`SELECT count(*)::int AS n FROM clients
+        WHERE telephone IN (${TEL_A}, ${TEL_B}, ${TEL_NEUF})`,
+  )) as unknown as Row[];
+  return Number((r[0] as any).n);
+};
 describe("Matrice de réception — les 9 combinaisons", () => {
   beforeAll(async () => {
     await db.execute(sql`
@@ -157,7 +170,7 @@ describe("Matrice de réception — les 9 combinaisons", () => {
   // ── M1 ────────────────────────────────────────────────────────────────
   it("M1 — vehicule nouveau + client NEUF : les deux fiches sont creees", async () => {
     const caller = orRouter.createCaller(ctx());
-    const avant = await db.execute(sql`SELECT count(*)::int AS n FROM clients`);
+    const avant = await compterCeLot();
 
     const r = await caller.receptionner({
       client: { nom: "Client Neuf", telephone: "695000009" },
@@ -169,8 +182,8 @@ describe("Matrice de réception — les 9 combinaisons", () => {
     expect(r.clientId).toBeGreaterThan(0);
     const v = await vehiculeParImmat("MXVEH01");
     expect(Number(v!.client_id)).toBe(r.clientId);
-    const apres = await db.execute(sql`SELECT count(*)::int AS n FROM clients`);
-    expect(Number((apres[0] as any).n)).toBe(Number((avant[0] as any).n) + 1);
+    const apres = await compterCeLot();
+    expect(apres).toBe(avant + 1);
   });
 
   // ── M2 ────────────────────────────────────────────────────────────────
@@ -178,22 +191,22 @@ describe("Matrice de réception — les 9 combinaisons", () => {
     const caller = orRouter.createCaller(ctx());
     const existant = await clientParTel(TEL_A);
 
-    const avant = await db.execute(sql`SELECT count(*)::int AS n FROM clients`);
+    const avant = await compterCeLot();
     const r = await caller.receptionner({
       client: { id: Number(existant!.id) },
       vehicule: { immatriculation: "MXVEH02" },
       reception: { kilometrageEntree: 11_000, pannesDeclarees: "Test M2" },
     });
-    const apres = await db.execute(sql`SELECT count(*)::int AS n FROM clients`);
+    const apres = await compterCeLot();
 
     expect(r.clientId).toBe(Number(existant!.id));
-    expect(Number((apres[0] as any).n)).toBe(Number((avant[0] as any).n));
+    expect(apres).toBe(avant);
   });
 
   // ── M3 : la confirmation exigée ────────────────────────────────────────
   it("M3 — client reconnu mais NON selectionne : la reception est refusee et exige une confirmation", async () => {
     const caller = orRouter.createCaller(ctx());
-    const avant = await db.execute(sql`SELECT count(*)::int AS n FROM clients`);
+    const avant = await compterCeLot();
 
     await expect(
       caller.receptionner({
@@ -204,8 +217,8 @@ describe("Matrice de réception — les 9 combinaisons", () => {
     ).rejects.toThrow(/Confirmez-vous|CONFLICT/i);
 
     // Aucune fiche créée : c'est le but de la confirmation.
-    const apres = await db.execute(sql`SELECT count(*)::int AS n FROM clients`);
-    expect(Number((apres[0] as any).n)).toBe(Number((avant[0] as any).n));
+    const apres = await compterCeLot();
+    expect(apres).toBe(avant);
   });
 
   it("M3-bis — après confirmation explicite, la seconde fiche est creee", async () => {
