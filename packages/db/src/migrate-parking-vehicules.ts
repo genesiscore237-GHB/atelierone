@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { requireLocalOrForced } from "./env-guard";
+import { requireLocalOrForced, sslPourUrl } from "./env-guard";
 import postgres from "postgres";
 
 requireLocalOrForced("lien parking_vehicles -> vehicules (migrate-parking-vehicules.ts)");
@@ -25,7 +25,7 @@ requireLocalOrForced("lien parking_vehicles -> vehicules (migrate-parking-vehicu
  *         (invoqué par db:test-setup après le seed parking)
  */
 (async () => {
-  const db = postgres(process.env.DATABASE_URL!, { ssl: false, prepare: false, max: 1 });
+  const db = postgres(process.env.DATABASE_URL!, { ssl: sslPourUrl(process.env.DATABASE_URL!), prepare: false, max: 1 });
   console.log("=== LOT 1 — parking_vehicles.vehicule_id -> vehicules ===");
 
   const NORM = (col: string) =>
