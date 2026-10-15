@@ -212,26 +212,57 @@ Constat : **zéro cache serveur**, KPI recalculés à chaque appel, `/dashboard/
 
 ---
 
-## 5bis. Constat critique découvert le 2026-10-15 — la base de production est en retard de migration
+## 5bis. Base de production — diagnostic corrigé et migration exécutée le 2026-10-15
 
-Diagnostic en lecture seule de `atelierone_erp` (168 dossiers ouverts sur 90 jours : base réellement utilisée).
+> **Correction d'une erreur de diagnostic.** La section ci-dessous affirming « aucune donnée de test dans la production » était **fausse**. Le diagnostic s'appuyait sur 8 marqueurs de noms (`%test%`, `%demo%`…) et concluait à tort « 0 signature ». La production contenait en réalité **la totalité** de sa population client/véhicule en données de test. Leçon retenue : un marqueur négatif n'est pas une preuve d'absence ; il faut aussi **vérifier ce qui ressemble à de la donnée réelle**.
 
-**Ce qui va bien** : aucune donnée de test dans la production. **Zéro** signature détectée sur les 8 marqueurs connus. Aucune purge n'y est justifiée, et aucune n'a été faite.
+### La base de production
 
-**Ce qui va mal** : **9 objets attendus par le code manquent dans la base.**
+Neon, endpoint pooler `ep-small-dust-b2dmk7r4-pooler.c-6.eu-central-1.aws.neon.tech`, base **`atelierone_erp`**.
+Le projet expose deux bases : **`neondb` est vide** (aucune table) — c'est bien `atelierone_erp` qui porte les données.
 
-| Objet manquant | Conséquence |
-|---|---|
-| `vehicules.immat_norm` | Toute la résolution de véhicule (R1, U0a) lève `column does not exist` |
-| `clients.clients_doublonnes` | Le dédoublonnage client (R5) est inopérant |
-| `or_photos.categorie` / `.visite` / `.reprise_de` | L'état des lieux versionné (U0c) est inutilisable |
-| `parking_configs`, `parking_sites`, `parking_zones`, `parking_spots` vides | Le module parking n'est pas configuré du tout |
+**Piège d'accès** : l'endpoint *pooler* ouvre les sessions avec un **`search_path` vide**, alors que l'endpoint *direct* (celui qu'utilise l'application via Vercel) a `search_path = "$user", public`. Toute requête non qualifiée échoue en `relation does not exist` via le pooler alors que la base est parfaitement saine. Ce n'est pas un défaut de production : c'est un piège pour les scripts d'exploitation, qui doivent qualifier `public.`.
 
-**Pourquoi ce n'a pas explosé tout de suite** : `drizzle.__drizzle_migrations` contient 5 entrées, et les 4 migrations livrées par les lots précédents (`0004`–`0007`) n'y figurent pas. L'erreur n'apparaît qu'au clic sur « Enregistrer » — c'est-à-dire au moment où quelqu'un travaille.
+### Migrations appliquées
 
-**Ce que je n'ai pas fait, et pourquoi** : je n'ai lancé aucune migration sur la production. Appliquer `0004` crée un index unique sur les plaques normalisées : si la production contient des doublons de plaque (265 véhicules, dont 60 sans client), l'index **échoue** et la migration laisse la base dans un état intermédiaire. C'est une opération sur des données réelles ; elle mérite un **diagnostic préalable** (`SELECT immatriculation, count(*) ... HAVING count(*) > 1`) et votre accord.
+La production était en retard de **9 objets** : non seulement `0004`–`0009` n'y étaient pas, mais même `0001`–`0003` (`parking_vehicles.vehicule_id`, table `parking_transfers`). Le journal `drizzle.__drizzle_migrations` ne portait qu'**une** entrée, alors que `0006`–`0009` ont des `when` **antérieurs** à `0000` — un `drizzle-kit migrate` aurait donc voulu rejouer l'intégralité du schéma.
 
-**C'est une opération qui precede P0.** Tant que la base ne sait pas lire les colonnes que le code lui demande, corriger la logique métier ne rend aucun service.
+**`drizzle-kit migrate` était donc interdit ici.** Les migrations ont été appliquées en SQL direct, dans l'ordre `0001`→`0009`, après backup CSV des 6 tables touchées et **préflight** : 0 doublon de plaque normalisée, donc l'index unique de `0004` était sans risque.
+
+| État | Avant | Après |
+|---|---|---|
+| `vehicules.immat_norm` | absent | présent, **222 backfills**, 0 violation d'unicité |
+| `clients.clients_doublonnes` | absent | présent |
+| `atelier_parametres.outillage_catalogue` | absent | présent |
+| `parking_vehicles.vehicule_id` | absent | présent |
+| `parking_transfers` | absent | présente |
+| `chk_*` (nomenclatures de statut) | absent | **3 contraintes, puis `VALIDATE`** |
+
+Les deux causes d'erreur vues sur Vercel — `clients_doublonnes` et `outillage_catalogue` — sont levées.
+
+### Pollution : la production entière était une base de test
+
+| Table | Volume | Nature |
+|---|---|---|
+| `clients` | 151 | **100 % test/démo** — « Test Core », « Cycle », « Sync », lorem ipsum (« Consequat Magnam ut ») |
+| `vehicules` | 223 | **100 % démo** — `LT-PARC-01`, `CM-1011-AB`… série synthétique, `CM-DEMO-*` |
+| `ordres_reparation` | 168 | 100 % rattachés à ces clients/véhicules |
+| `ventes` | 56 | 100 % sur clients de test |
+| **`parking_vehicles`** | **54** | **SEULE DONNÉE MÉTIER RÉELLE** — plaques CE/CA/LT/SU, 32 noms de clients camerounais |
+
+Les **32 noms clients réels** (Nations Unies, AFOP, MINEE, Mutuelle Réunie, IMPÔTS, Personnel SUDCAM…) n'existaient **que comme texte libre** dans `parking_vehicles.client_nom` : ils étaient **absents de la table `clients`**. C'est la cause racine du problème « l'Atelier ne trouve pas les véhicules du parking » : les 54 lignes ont `vehicule_id = NULL`.
+
+La pollution est **historique** (dernière écriture test : 2026-09-09). Le garde-fou `src/test/setup.ts`, qui refuse toute base distante, a été posé le 2026-10-05 : **aucune fuite depuis**.
+
+### Purge exécutée
+
+Sur accord explicite, et après **suspension temporaire** du trigger `trg_append_only_mouvements_stock` (contrôle de gouvernance bloquant la suppression ; réactivé et prouvé opérationnel dans la session même).
+
+Ordre de suppression obtenu par **fermeture transitive du graphe FK** (57 tables) puis boucle convergente : l'ordre correct n'est pas déductible d'un simple tri, les tables racines devant partir après leurs enfants.
+
+**Préservé** : `parking_vehicles` (54), `produits` (319), `employes` (38), `utilisateurs` (11), `agences` (2), `stocks` (135), et les **354 mouvements de stock de catalogue** (seuls ceux liés à un dossier/véhicule ont été supprimés).
+
+**Effet secondaire** : les 2 lignes hors nomenclature qui bloquaient la validation (`en_recreation`, `facture`) ont disparu avec la purge. Les trois `CHECK` ont pu être **`VALIDATE`** — ils sont désormais `convalidated = true`, donc réellement protecteurs.
 
 ---
 
@@ -239,11 +270,13 @@ Diagnostic en lecture seule de `atelierone_erp` (168 dossiers ouverts sur 90 jou
 
 | Date | Lot | Contenu |
 |---|---|---|
-| 2026-10-15 | Cadre | Audit des 5 domaines (listes véhicules, cycle de vie, restitution, alertes/relances, statistiques) + diagnostic des données de test. 7 défauts bloquants identifiés. Cahier des charges reformulé : 11 exigences vérifiables (X1–X11), 6 phases, 7 décisions, 8 refus explicites. **En attente de validation.** |
+| 2026-10-15 | Cadre | Audit des 5 domaines (listes véhicules, cycle de vie, restitution, alertes/relances, statistiques) + diagnostic des données de test. 7 défauts bloquants identifiés. Cahier des charges reformulé : 11 exigences vérifiables (X1–X11), 6 phases, 7 décisions, 8 refus explicites. **Validé.** |
+| 2026-10-15 | **P0.5 — Migration de la production (Neon `atelierone_erp`)** | Base de production identifiée : Neon, base `atelierone_erp` (`neondb` est vide). Elle était en retard de **9 objets**, et même `0001`–`0003` n'y étaient pas. `drizzle-kit migrate` était **interdit** : le journal ne portait qu'une entrée et les `when` de `0006`–`0009` sont antérieurs à `0000`, donc drizzle aurait rejoué tout le schéma. Migrations appliquées en **SQL direct**, `0001`→`0009`, après backup CSV et préflight (0 doublon de plaque). `immat_norm` backfillée sur 222 véhicules, 0 violation d'unicité. Les 2 erreurs Vercel (`clients_doublonnes`, `outillage_catalogue`) sont levées. **Piège d'accès** : l'endpoint pooler ouvre les sessions avec `search_path` **vide**, l'endpoint direct non — un script non qualifié échoue en `relation does not exist` sur une base saine. |
+| 2026-10-15 | **P5.3 — Purge de la pollution test en production** | Le diagnostic P5.2 (« 0 signature de test ») était **faux** : il reposait sur 8 marqueurs de noms. La production contenait **100 % de ses clients et véhicules** en données de test (151 / 223), plus 168 dossiers et 56 ventes. Seule donnée réelle : les 54 lignes `parking_vehicles` (plaques CE/CA/LT/SU, 32 noms clients camerounais) — dont les 32 noms clients étaient **absents de la table `clients`**, ce qui explique que l'Atelier ne retrouvait rien. Pollution **historique** (dernière écriture 2026-09-09) : le garde-fou `src/test/setup.ts` posé le 2026-10-05 empêche toute récidive. Purge exécutée après accord explicite, trigger `append-only` suspendu puis réactivé et **prouvé opérationnel**. Ordre de suppression obtenu par fermeture transitive du graphe FK (57 tables) + boucle convergente. Préservés : parking, catalogue produits, employés, 354 mouvements de stock de catalogue. Effet secondaire : les 2 lignes hors nomenclature ayant disparu, les 3 `CHECK` de `0009` ont pu être **`VALIDATE`** (`convalidated = true`). |
 | 2026-10-15 | **P0.1 — Le statut du véhicule est DÉRIVÉ, plus écrit** | `vehicules.statut_immobilisation` était une colonne dénormalisée écrite à la main par 10 points d'entrée, dont la machine d'états n'en couvrait qu'**un**. Nouveau service `statut-vehicule.ts` : le statut est déduit du dossier d'atelier ouvert, à défaut du registre parking, à défaut du repli. La colonne reste en base comme **cache**, jamais lue comme une vérité. Les 6 désynchronisations refermées : sortie garage sans toucher au canonique, transfert rebattant un dossier en cours en « en réception », dossier `ANNULE`/`ferme_definitif` laissant le véhicule figé « en réparation » à jamais, double écriture réception, `sorti → en_reception` contourné, statut `NULL` qui auto-dégradait la garde en « tout est permis ». **Effet le plus visible** : `PRET_A_LIVRER` → `terminee_attente_paiement`, ce qui **rétablit la chaîne d'alerte** — un véhicule prêt depuis 30 jours ne produisait aucune alerte, et sa place restait immobilisée en silence. **Garde métier ajoutée** : `garage.sortie` refuse un véhicule dont un dossier est ouvert, message à l'appui. `changerStatut` reste possible (seul moyen de poser « transféré », « contentieux », « client non venu ») mais ne peut plus contredire un dossier ouvert, et exige un motif hors flux. 7 tests d'intégration + 5 unitaires. |
 | 2026-10-15 | **P0.4 — Contraintes de nomenclature sur les statuts** | Migration `0009` : `CHECK` sur `vehicules.statut_immobilisation`, `lignes_ordre_reparation.statut`, `ordres_reparation.statut`. Ajoutées en `NOT VALID` — elles s'appliquent sans bloquer sur des données existantes hors nomenclature, et `RAISE NOTICE` rapporte le nombre de lignes concernées. Filet de sécurité sous les validations applicatives : une contrainte dit « non », elle ne dit pas pourquoi ; elle garantit qu'aucun chemin — script de maintenance, import, console — n'introduise un statut que le code ne saura pas interpréter. **Contrôle en production (lecture seule)** : 1 véhicule (`en_recreation`) et 1 dossier (`statut='facture'`) sont hors nomenclature. Ils ne bloquent pas la migration et **demandent un arbitrage** : corriger, ou admettre que ces valeurs sont des états métier réels et les ajouter à la nomenclature. |
 | 2026-10-15 | **P5.1 — Purge de la base de test** | `pnpm purge:test` créé : dry-run par défaut, purge au niveau **ligne** (jamais `TRUNCATE`), liste `PROTEGE` de 16 tables, exclusion explicite des 10 rôles socles. **713 lignes purgées** (441 journal RH, 110 clients fixtures, 64 permissions, 24 comptes, 20 rôles, 33 sites/zones/spots S2ALERTE, 1 synthèse de présence). **Socle vérifié intact avant/après** : 84 permissions, 10 rôles socles, 12 cibles KPI, 1 config parking, 2 sites / 24 zones / 104 spots. Un premier passage a échoué sur les rôles (contrainte FK : `utilisateurs.role_id`) — l'ordre de suppression est structurel, pas cosmétique ; réordonné et rejoué. Tests toujours verts après purge : **942/942**. |
-| 2026-10-15 | **P5.2 — Diagnostic de la production** | `pnpm diagnose:data` créé, **lecture seule garantie par la base** (`SET default_transaction_read_only = on`) et non par la bonne intention du code. Résultat : **0 signature de donnée de test** — la production est propre, **aucune purge n'y est justifiée**. **En revanche 9 objets manquent** : les migrations `0004`, `0005`, `0006` ne sont pas appliquées sur `atelierone_erp` (`vehicules.immat_norm`, `clients.clients_doublonnes`, `or_photos.categorie/visite/reprise_de`) et le module parking n'est **pas configuré** (0 site, 0 zone, 0 spot, 0 config). Voir §5bis — c'est le constat le plus grave du plan. |
+| 2026-10-15 | **P5.2 — Diagnostic de la production** ⚠️ *infirmé par P5.3* | `pnpm diagnose:data` créé, **lecture seule garantie par la base** (`SET default_transaction_read_only = on`) et non par la bonne intention du code. Résultat annoncé : **0 signature de donnée de test**. **Ce diagnostic était faux** — voir P5.3 : la production était integralement composée de donnees de test. Les 9 objets manquants, eux, etaient corrects. Voir §5bis. |
 | 2026-10-15 | **Correction — frontière client/serveur (build Vercel)** | ReceptionTab.tsx (composant client) importait OUTILLAGE_PAR_DEFAUT depuis ~/server/lib/outillage-catalogue, qui touche @atelierone/db → postgres → 
 et/	ls/s/perf_hooks. 	sc ne voyait rien : **seul 
 ext build voit la frontière**. Découpage : la partie PURE (nomenclature par défaut, types, schémas Zod, slugification) part dans ~/lib/outillage.ts, importable par les deux côtés ; le module serveur ne garde que l'accès base et ré-exporte. Au passage, la slugification était **dupliquée** dans le composant client — deux implémentations d'un même algorithme finissent toujours par diverger, et le serveur aurait refusé la clé que l'écran avait produite. Règle gravée dans AGENTS.md. |
