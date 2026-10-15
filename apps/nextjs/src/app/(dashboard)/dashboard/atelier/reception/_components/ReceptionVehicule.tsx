@@ -9,6 +9,7 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { FormulaireVehicule } from "~/components/vehicule/FormulaireVehicule";
+import { useOrPermissions } from "../../../ordres-reparation/_hooks/useOrPermissions";
 import {
   validerReception,
   messageResume,
@@ -63,6 +64,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export function ReceptionVehicule() {
   const utils = api.useUtils();
+  // Permissions sincères : sans `or.modifier`, `or.receptionner` refusera
+  // l'enregistrement. Mieux vaut le dire AVANT que l'agent remplisse tout
+  // un formulaire pour découvrir l'erreur au clic final (règle UX n°6).
+  const { flags } = useOrPermissions();
+  const peutReceptionner = flags.canReception;
   const [q, setQ] = useState("");
   const [resultats, setResultats] = useState<{ vehicules: any[]; clients: any[] } | null>(null);
   const [modeCreation, setModeCreation] = useState(false);
@@ -545,6 +551,7 @@ export function ReceptionVehicule() {
                   observations={outillageNotes}
                   onToggle={(cle, present) => set("reception", "outillage", { ...(f.reception.outillage ?? {}), [cle]: present })}
                   onObservation={(cle, texte) => setOutillageNotes({ ...outillageNotes, [cle]: texte })}
+                  desactive={!peutReceptionner}
                 />
               </div>
             </div>

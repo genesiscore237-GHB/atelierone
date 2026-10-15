@@ -191,6 +191,67 @@ const TRANSITIONS_ATELIER: Record<string, string[]> = {
   ferme_definitif: [],
 };
 
+/**
+ * Statuts TERMINAUX d'un dossier d'atelier — un dossier dans l'un de ces états
+ * ne peut plus être modifié ni compte comme « en cours ».
+ *
+ * Source unique de vérité. Existait en dur à quatre endroits différents avec
+ * `CLOTURE` comme valeur :
+ *   - `or.rechercheVehicules`   : `NOT IN ('LIVRE','ANNULE','CLOTURE')`
+ *   - `vehicules.get` orCourant : `IN ('LIVRE','ANNULE','CLOTURE')`
+ *   - `vehicules.get` orTermine  : `["LIVRE","ANNULE","CLOTURE"]`
+ *   - `clients.getActivite`     : `const TERMINES = ["LIVRE","ANNULE","CLOTURE"]`
+ *
+ * Or la valeur réelle est `ferme_definitif` (`TRANSITIONS_ATELIER` ci-dessus) :
+ * `CLOTURE` est le statut d'un RETOUR FOURNISSEUR, pas d'un dossier. Un
+ * dossier `ferme_definitif` n'était donc reconnu terminal par aucun de ces
+ * quatre sites — il s'affichait « en cours » et restait modifiable alors
+ * qu'il est supposed être gelé définitivement.
+ *
+ * Aucun test ne l'avait détecté : le statut était écrit et relu par le même
+ * code faux, donc cohérent avec lui-même.
+ */
+export const STATUTS_OR_TERMINAUX = ["LIVRE", "ANNULE", "ferme_definitif"] as const;
+
+/** Le dossier est-il clos ? Plus aucune modification de fond n'est permise. */
+export function dossierEstTermine(statut: string | null | undefined): boolean {
+  return !!statut && (STATUTS_OR_TERMINAUX as readonly string[]).includes(statut);
+}
+
+/** Statuts d'une ligne de travaux. Source unique. */
+export const STATUTS_LIGNE = ["a_faire", "en_cours", "fait", "valide"] as const;
+export type StatutLigne = (typeof STATUTS_LIGNE)[number];
+
+/**
+ * Une ligne est « réglée » quand elle est faite ou validée.
+ *
+ * `valide` est le seul état qui autorise la facturation : `fait` dit que le
+ * technicien a terminé, `valide` que le chef d'atelier a vérifié.
+ */
+export function ligneEstReglee(statut: string | null | undefined): boolean {
+  return statut === "fait" || statut === "valide";
+}
+
+/** Libellés affichés d'un statut de ligne de travaux. */
+export const STATUTS_LIGNE_LIBELLES: Record<string, string> = {
+  a_faire: "À faire",
+  en_cours: "En cours",
+  fait: "Fait",
+  valide: "Validé",
+};
+
+/** Cycle de vie d'une ligne de travaux, appliqué serveur ET client. */
+const TRANSITIONS_LIGNE: Record<string, string[]> = {
+  a_faire: ["en_cours", "fait"],
+  en_cours: ["fait", "a_faire"],
+  fait: ["valide", "en_cours"],
+  valide: ["en_cours"],
+};
+
+export function transitionLigneValide(de: string, vers: string): boolean {
+  return (TRANSITIONS_LIGNE[de] ?? []).includes(vers);
+}
+
 /** Cycle du rapport de diagnostic (technicien → chef d'atelier). */
 export const STATUTS_RAPPORT_DIAGNOSTIC = ["BROUILLON", "SOUMIS", "VALIDE", "RETOURNE"] as const;
 

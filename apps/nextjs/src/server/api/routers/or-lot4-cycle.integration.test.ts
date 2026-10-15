@@ -219,6 +219,37 @@ describe("Lot 4 — cycle OR complet (réception → clôture définitive)", () 
     expect(await lireStatutOR()).toBe("CONTROLE_QUALITE");
   });
 
+  it("6b. les travaux sont terminés AVANT le contrôle qualité (LOT P0.3)", async () => {
+    // Avant le lot P0.3, ce contrôle qualité passait avec des lignes en
+    // `a_faire` : le contrôle n'en regardait aucune. Il suffisait donc à
+    // valider la QC pour rendre un dossier avec du travail non fait
+    // restituable. La garde `lignesNonReglees` referme ce chemin — et ce
+    // test doit désormais terminer le travail avant de contrôler.
+    const lignes = (await db.execute(
+      sql`SELECT id, statut FROM lignes_ordre_reparation WHERE ordre_id = ${orId}`,
+    )) as unknown as Row[];
+    expect(lignes.length).toBeGreaterThan(0);
+
+    // Tant que le travail n'est pas fait, le contrôle qualité est refusé.
+    const caller = orRouter.createCaller(ctxSuperadmin());
+    const refus = await caller
+      .validerControleQualite({
+        orId,
+        checklist: [{ libelle: "LOT4 conformité", ok: true }],
+        resultat: "VALIDE",
+      })
+      .then(() => "AUCUN")
+      .catch((e: { code?: string }) => e.code ?? "AUTRE");
+    expect(refus).toBe("BAD_REQUEST");
+
+    // Une fois les travaux faits, il passe.
+    for (const l of lignes) {
+      await db.execute(
+        sql`UPDATE lignes_ordre_reparation SET statut = 'fait' WHERE id = ${Number(l.id)}`,
+      );
+    }
+  });
+
   it("7. QC validé : PRET_A_LIVRER", async () => {
     const caller = orRouter.createCaller(ctxSuperadmin());
     const r = await caller.validerControleQualite({

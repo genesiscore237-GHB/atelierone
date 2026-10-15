@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
+import { OUTILLAGE_PAR_DEFAUT } from "~/server/lib/outillage-catalogue";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
@@ -31,26 +32,44 @@ const TYPE_INTERVENTION_LABELS: Record<string, string> = {
   ENTRETIEN: "Entretien",
   CARROSSERIE: "Carrosserie",
 };
-const OUTILLAGE_ITEMS = [
-  { key: "cric", label: "Cric" },
-  { key: "triangle", label: "Triangle" },
-  { key: "roueSecours", label: "Roue de secours" },
-  { key: "extincteur", label: "Extincteur" },
-  { key: "documents", label: "Documents véhicule" },
-];
+/**
+ * Réponses d'outillage d'un dossier.
+ *
+ * AVANT : cet écran reconstruisait un objet à partir de SA propre liste de
+ * 5 clés en `camelCase` — `cric`, `roueSecours`, `extincteur` — alors que la
+ * réception écrit 18 clés en majuscules (`CRIC`, `ROUE DE SECOURS`…). Les
+ * deux visaient la même colonne JSONB sans qu'aucune clé ne se recouvre, et
+ * `save()` envoyait le tout en remplacement intégral.
+ *
+ * Conséquence réelle et silencieuse : ouvrir cet onglet puis cliquer sur
+ * « Enregistrer la réception » effaçait les 18 réponses du dossier. Aucune
+ * confirmation, aucun message, aucune trace.
+ *
+ * On part donc de ce qui est DÉJÀ enregistré, on complète avec le catalogue de
+ * l'agence, et on ne touche jamais aux clés inconnues.
+ */
+type OutillageForm = Record<string, { present: boolean; observation: string }>;
 
-type OutillageForm = Record<string, { present: boolean; observation: string } | string>;
-
-function outillageInitial(or: any): OutillageForm {
+function outillageInitial(
+  or: any,
+  catalogue: { cle: string; libelle: string; ordre: number }[],
+): OutillageForm {
+  const brut = (or.outillage ?? {}) as Record<string, { present?: boolean; observation?: string }>;
   const base: OutillageForm = {};
-  for (const item of OUTILLAGE_ITEMS) {
-    const v = or.outillage?.[item.key];
-    base[item.key] = {
-      present: v?.present === true,
-      observation: v?.observation ?? "",
-    };
+
+  for (const item of catalogue) {
+    const v = brut[item.cle];
+    base[item.cle] = { present: v?.present === true, observation: v?.observation ?? "" };
   }
-  base["autres"] = or.outillage?.autres ?? "";
+
+  // Éléments retirés du catalogue mais déjà cochés : ils restent. Les
+  // supprimer ici, c'est les effacer à la sauvegarde.
+  const connus = new Set(catalogue.map((i) => i.cle));
+  for (const [cle, v] of Object.entries(brut)) {
+    if (connus.has(cle) || !v || typeof v !== "object") continue;
+    base[cle] = { present: v.present === true, observation: v.observation ?? "" };
+  }
+
   return base;
 }
 
@@ -63,6 +82,11 @@ export function ReceptionTab({ or }: { or: any }) {
   const [saving, setSaving] = useState(false);
 
   const id = Number(or.id);
+
+  // Catalogue de l'agence : MÊME source que la réception. C'est lui qui décide
+  // de la liste affichée ici, donc les deux écrans ne peuvent plus diverger.
+  const catalogue = api.or.getCatalogueOutillage.useQuery();
+  const catalogueOuDefaut = catalogue.data?.items ?? OUTILLAGE_PAR_DEFAUT;
 
   const figee =
     !!or.rapportDiagnostic && ["SOUMIS", "VALIDE"].includes(or.rapportDiagnostic.statut);
@@ -84,7 +108,7 @@ export function ReceptionTab({ or }: { or: any }) {
     validationVerbale: or.validationVerbale ?? false,
     pannesDeclarees: or.pannesDeclarees ?? "",
     observationsReception: or.observationsReception ?? "",
-    outillage: outillageInitial(or),
+    outillage: outillageInitial(or, catalogueOuDefaut),
   }));
 
   useEffect(() => {
@@ -103,7 +127,7 @@ export function ReceptionTab({ or }: { or: any }) {
       validationVerbale: or.validationVerbale ?? false,
       pannesDeclarees: or.pannesDeclarees ?? "",
       observationsReception: or.observationsReception ?? "",
-      outillage: outillageInitial(or),
+    outillage: outillageInitial(or, catalogueOuDefaut),
     });
   }, [or.id]);
 
@@ -365,23 +389,27 @@ export function ReceptionTab({ or }: { or: any }) {
           <Car size={15} className="text-primary" /> État des lieux d'entrée
         </h3>
         <div className="grid gap-2 sm:grid-cols-2">
-          {OUTILLAGE_ITEMS.map((item) => {
-            const v = form.outillage[item.key] as { present: boolean; observation: string };
+          {Object.keys(form.outillage).map((cle) => {
+            const libelle =
+              catalogueOuDefaut.find((i) => i.cle === cle)?.libelle ??
+              (or.outillage?.[cle]?.libelle as string | undefined) ??
+              cle;
+            const v = form.outillage[cle] as { present: boolean; observation: string };
             return (
-              <div key={item.key} className="rounded-lg border border-border bg-background p-2.5">
+              <div key={cle} className="rounded-lg border border-border bg-background p-2.5">
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <input
                     type="checkbox"
                     checked={v?.present ?? false}
-                    onChange={(e) => setOutillage(item.key, { present: e.target.checked })}
+                    onChange={(e) => setOutillage(cle, { present: e.target.checked })}
                     disabled={!editable}
                     className="size-4"
                   />
-                  {item.label}
+                  {libelle}
                 </label>
                 <input
                   value={v?.observation ?? ""}
-                  onChange={(e) => setOutillage(item.key, { observation: e.target.value })}
+                  onChange={(e) => setOutillage(cle, { observation: e.target.value })}
                   placeholder="Observation"
                   className="mt-1.5 w-full rounded-md border border-border bg-background px-2 py-1 text-xs"
                   disabled={!editable}
@@ -389,16 +417,35 @@ export function ReceptionTab({ or }: { or: any }) {
               </div>
             );
           })}
-          <div className="rounded-lg border border-border bg-background p-2.5">
-            <Label className="text-xs text-muted-foreground">Autres accessoires</Label>
-            <Input
-              value={(form.outillage["autres"] as string) ?? ""}
-              onChange={(e) => setForm({ ...form, outillage: { ...form.outillage, autres: e.target.value } })}
-              placeholder="Ex : autoradio, bâche…"
-              className="mt-1"
-              disabled={!editable}
-            />
-          </div>
+          {(() => {
+            // `AUTRES` est une entrée de la nomenclature comme les autres.
+            // L'ancien bloc « Autres accessoires » écrivait une clé minuscule
+            // `autres` de type CHAÎNE dans le même objet que des objets : deux
+            // formats et deux emplacements pour le même fait.
+            const cle = "AUTRES" in form.outillage ? "AUTRES" : "autres" in form.outillage ? "autres" : null;
+            if (!cle) return null;
+            return (
+              <div className="rounded-lg border border-border bg-background p-2.5">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input
+                    type="checkbox"
+                    checked={form.outillage[cle]?.present ?? false}
+                    onChange={(e) => setOutillage(cle, { present: e.target.checked })}
+                    disabled={!editable}
+                    className="size-4"
+                  />
+                  Autres accessoires
+                </label>
+                <Input
+                  value={form.outillage[cle]?.observation ?? ""}
+                  onChange={(e) => setOutillage(cle, { observation: e.target.value })}
+                  placeholder="Ex : autoradio, bâche…"
+                  className="mt-1.5"
+                  disabled={!editable}
+                />
+              </div>
+            );
+          })()}
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <div>

@@ -31,6 +31,7 @@ import {
   type TypeClient,
 } from "~/server/lib/client-service";
 import { verrouillerSequence, prochaineSequence } from "~/server/lib/facturation-service";
+import { STATUTS_OR_TERMINAUX } from "~/server/lib/atelier-service";
 
 /** MODULE CLIENTS — fiche 360°, types, statuts, contacts, adresses, interactions. */
 export const clientsRouter = createTRPCRouter({
@@ -619,7 +620,12 @@ export const clientsRouter = createTRPCRouter({
         margeParVente.set(l.venteId, (margeParVente.get(l.venteId) ?? 0) + (revenu - cout));
       }
 
-      const TERMINES = ["LIVRE", "ANNULE", "CLOTURE"] as const;
+      // Source unique : `STATUTS_OR_TERMINAUX` (atelier-service). La valeur
+      // en dur `CLOTURE` qui figurait ici est le statut d'un RETOUR
+      // FOURNISSEUR — elle ne correspond jamais à un dossier, si bien qu'un
+      // dossier `ferme_definitif` était compté comme « en cours » dans
+      // l'historique du client.
+      const TERMINES = STATUTS_OR_TERMINAUX;
       const orsParVehicule = new Map<number, typeof ors>();
       for (const o of ors) {
         const list = orsParVehicule.get(o.vehiculeId) ?? [];

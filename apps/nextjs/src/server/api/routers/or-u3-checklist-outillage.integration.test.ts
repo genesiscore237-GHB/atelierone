@@ -137,15 +137,27 @@ describe("LOT U3 — check-list outillage + section 6 absorbée", () => {
     const or = await lireOr(r.id);
     const out = or.outillage ?? {};
 
-    // 1. Format exact : deux clés, rien de plus.
-    expect(Object.keys(out).sort()).toEqual(["CRIC", "NATTES", "ROUE DE SECOURS"]);
-    expect(out.CRIC).toEqual({ present: true, observation: "Clé 17" });
+    // 1. Format : le dossier fige l'état de TOUTE la nomenclature de l'agence,
+    //    pas seulement des éléments cochés. C'est le changement du lot O1 —
+    //    et ce qui distingue « absent du véhicule » (`present: false`) de
+    //    « jamais regardé » (clé absente).
+    const { items } = await caller.getCatalogueOutillage();
+    expect(Object.keys(out).sort()).toEqual(items.map((i) => i.cle).sort());
 
-    // 2. Chaque observation est celle de SON élément (pas de mélange).
+    // 2. Chaque observation est celle de SON élément (pas de mélange), et le
+    //    libellé est figé au moment de la saisie.
+    expect(out.CRIC.present).toBe(true);
+    expect(out.CRIC.observation).toBe("Clé 17");
+    expect(out.CRIC.libelle).toBe("CRIC");
     expect(out["ROUE DE SECOURS"].observation).toBe("Sous le coffre");
 
     // 3. Une observation non cochée est conservée.
-    expect(out.NATTES).toEqual({ present: false, observation: "Jante de secours en cave" });
+    expect(out.NATTES.present).toBe(false);
+    expect(out.NATTES.observation).toBe("Jante de secours en cave");
+
+    // 4. Les éléments non cochés sont bien présents, à `false`.
+    expect(out.TRIANGLE.present).toBe(false);
+    expect(out.TRIANGLE.observation).toBe("");
   });
 
   it("4-5. pannes, observations de réception et plainte reportée", async () => {

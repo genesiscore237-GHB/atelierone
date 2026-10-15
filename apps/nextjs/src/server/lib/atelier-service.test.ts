@@ -13,6 +13,8 @@ import {
   devisSoumissible,
   statutDemandePieces,
   transitionRetourFournisseurValide,
+  STATUTS_OR_TERMINAUX,
+  dossierEstTermine,
 } from "./atelier-service";
 
 describe("Parc V2 — priorités (matrice fichier client)", () => {
@@ -179,5 +181,59 @@ describe("Cycle d'atelier — demandes de pièces et retours fournisseur", () =>
     expect(transitionRetourFournisseurValide("REMPLACE", "CLOTURE")).toBe(true);
     expect(transitionRetourFournisseurValide("RETOURNE", "BROUILLON")).toBe(false);
     expect(transitionRetourFournisseurValide("CLOTURE", "REMPLACE")).toBe(false);
+  });
+
+  // ─── LOT P0.2 — les statuts terminaux, source unique ────────────────────────
+  //
+  // Quatre requêtes serveur utilisaient la valeur `CLOTURE` pour désigner la
+  // fin d'un dossier. Or `CLOTURE` est le statut d'un RETOUR FOURNISSEUR :
+  // la valeur réelle du dossier clos est `ferme_definitif`. Aucun des quatre
+  // sites ne reconnaissait donc un dossier définitivement clôturé — il
+  // s'affichait « en cours » et restait modifiable.
+  //
+  // Ce test échouait sur l'ancien code, qui ne définit ni la constante ni le
+  // prédicat — et dont les quatre requêtes se trompaient de la même façon,
+  // donc de façon mutuellement cohérente.
+
+  describe("statuts terminaux d'un dossier", () => {
+    it("`ferme_definitif` EST terminal — c'était le trou", () => {
+      expect(dossierEstTermine("ferme_definitif")).toBe(true);
+      expect(STATUTS_OR_TERMINAUX).toContain("ferme_definitif");
+    });
+
+    it("`LIVRE` et `ANNULE` restent terminaux", () => {
+      expect(dossierEstTermine("LIVRE")).toBe(true);
+      expect(dossierEstTermine("ANNULE")).toBe(true);
+    });
+
+    it("les statuts actifs ne sont PAS terminaux", () => {
+      for (const s of [
+        "EN_ATTENTE_DIAGNOSTIC",
+        "EN_COURS",
+        "EN_ATTENTE_PIECES",
+        "EN_ATTENTE_VALIDATION",
+        "CONTROLE_QUALITE",
+        "PRET_A_LIVRER",
+        "BLOQUE",
+      ]) {
+        expect(dossierEstTermine(s)).toBe(false);
+      }
+    });
+
+    it("`CLOTURE` n'est PAS un statut de dossier — c'est celui d'un retour fournisseur", () => {
+      // Garde-fou explicite : si quelqu'un réintroduit `CLOTURE` dans la liste
+      // des terminaux, ce test tombe.
+      expect(STATUTS_OR_TERMINAUX as readonly string[]).not.toContain("CLOTURE");
+      expect(dossierEstTermine("CLOTURE")).toBe(false);
+    });
+
+    it("un statut inconnu ou nul ne vaut pas « terminé »", () => {
+      // Vrai avant, faux après : c'était précisément ce qui faisait passer un
+      // dossier `ferme_definitif` pour « en cours » dans les quatre requêtes.
+      expect(dossierEstTermine(null)).toBe(false);
+      expect(dossierEstTermine(undefined)).toBe(false);
+      expect(dossierEstTermine("")).toBe(false);
+      expect(dossierEstTermine("INVENTE")).toBe(false);
+    });
   });
 });

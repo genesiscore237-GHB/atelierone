@@ -5,6 +5,7 @@ import {
   ordresReparation,
   lignesOrdreReparation,
   interventionsTechniciens,
+  auditLogs,
   vehicules,
   clients,
   produits,
@@ -76,9 +77,23 @@ import {
   statutDemandePieces,
   transitionRetourFournisseurValide,
   chargeTechnicien,
+  STATUTS_OR_TERMINAUX,
+  STATUTS_LIGNE,
+  STATUTS_LIGNE_LIBELLES,
+  transitionLigneValide,
 } from "~/server/lib/atelier-service";
-import { genererCodeClient } from "~/server/lib/client-service";
+import { lignesNonReglees, messageTravauxNonTermines } from "~/server/lib/gardes-travaux";
+import {
+  lireCatalogue,
+  ecrireCatalogue,
+  zCatalogueOutillage,
+  normaliserOutillage,
+  zOutillage,
+  controlerCatalogue,
+  type ElementOutillage,
+} from "~/server/lib/outillage-catalogue";
 import { sortirPourOR, enregistrerMouvement } from "~/server/lib/stock-engine";
+import { genererCodeClient } from "~/server/lib/client-service";
 
 /** E1 — notification atelier (helper interne). */
 async function notifierAtelier(
@@ -255,7 +270,7 @@ export const orRouter = createTRPCRouter({
           .from(ordresReparation)
           .where(and(
             inArray(ordresReparation.vehiculeId, ids),
-            sql`${ordresReparation.statut} NOT IN ('LIVRE', 'ANNULE', 'CLOTURE')`,
+            sql`${ordresReparation.statut} NOT IN ('LIVRE','ANNULE','ferme_definitif')`,
           ))
           .orderBy(desc(ordresReparation.dateOuverture));
         for (const o of orRows) {
@@ -740,7 +755,11 @@ export const orRouter = createTRPCRouter({
         observationsReception: z.string().optional(),
         motEntree: z.string().default("PANNE"),
         plainte: z.string().optional(),
-        outillage: z.record(z.any()).optional(),
+// LOT O1 — `z.record(z.any())` acceptait n'importe quelle cle et quelle
+      // valeur, y compris un blob qui ne ressemble a rien. La reponse d'un
+      // agent a une forme : presence, observation, et le libelle fige au
+      // moment de la saisie.
+      outillage: zOutillage.optional(),
         photos: z.array(z.object({ categorie: z.string().max(50).default("AUTRE"), url: z.string() })).optional(),
         // Photos recopiées de l'état des lieux de la visite PRÉCÉDENTE (U0c) :
         // tracées via `reprise_de`, elles n'effacent rien et se substituent
@@ -874,7 +893,13 @@ export const orRouter = createTRPCRouter({
           pannesDeclarees: input.reception.pannesDeclarees,
           observationsReception: input.reception.observationsReception ?? null,
           receptionnisteId: Number(ctx.user.id),
-          outillage: input.reception.outillage ?? null,
+          // LOT O1 — le libellé est FIGÉ ici, côté serveur, à partir de la
+          // nomenclature de l'agence. Le faire côté client laisserait la
+          // garantie à la bonne volonté de chaque écran : il suffirait qu'un
+          // autre formulaire envoie `outillage` sans libellé pour qu'un
+          // dossier archivé perde ce que l'agent avait coché. Ici, quelle que
+          // soit l'origine de l'écriture, la réponse est complète.
+          outillage: await normaliserOutillage(await lireCatalogue(tx, ctx.user.agenceId), input.reception.outillage),
           typeIntervention: input.reception.typeIntervention,
           lieuDepannage: input.reception.lieuDepannage ?? null,
           signatureDeposant: input.reception.signatureDeposant ?? null,
@@ -1309,6 +1334,22 @@ export const orRouter = createTRPCRouter({
         if (input.resultat === "VALIDE" && nonConformes.length > 0) {
           throw new TRPCError({ code: "BAD_REQUEST", message: `Impossible de valider : ${nonConformes.length} point(s) non conforme(s).` });
         }
+
+        // LOT P0.3 — on ne valide la qualité d'un véhicule dont les travaux ne
+        // sont pas terminés. Sans cette garde, le contrôle qualité servait de
+        // chemin de contournement : il suffisait à valider une QC sur un dossier
+        // dont toutes les lignes étaient en `a_faire` pour le rendre
+        // restituable. Le contrôle qualité vérifie la conformité d'un travail
+        // terminé ; il ne doit pas valider un travail non fait.
+        if (input.resultat === "VALIDE") {
+          const nonReglees = await lignesNonReglees(tx, input.orId);
+          if (nonReglees.length) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Contrôle qualité impossible : ${nonReglees.length} travaux ne sont pas terminés.\n${messageTravauxNonTermines(nonReglees)}\n\nTerminez-les avant de valider la conformité du véhicule.`,
+            });
+          }
+        }
         await tx.insert(orControlesQualite).values({
           orId: input.orId,
           checklist: input.checklist,
@@ -1434,11 +1475,24 @@ export const orRouter = createTRPCRouter({
           const commentaire = (input.commentaireException ?? input.observations ?? "").trim();
           if (commentaire.length < 3) throw new TRPCError({ code: "BAD_REQUEST", message: "Commentaire obligatoire pour justifier la sortie exceptionnelle." });
         } else {
-          // Sortie ordinaire : travaux terminés + QC validé + facture émise + facture soldée
-          if (or.statut !== "PRET_A_LIVRER") {
+          // Sortie ordinaire : travaux RÉELLEMENT terminés + QC validé +
+          // facture émise + facture soldée.
+          //
+          // La garde ne se contente plus du statut du dossier : elle compte
+          // les lignes de travaux qui ne sont ni faites ni validées, et
+          // celles qui sont bloquées. Le message nomme les fautives — « travaux
+          // non terminés » sans détail obligeait l'agent à deviner lesquels.
+if (or.statut !== "PRET_A_LIVRER") {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: `Travaux non terminés (statut : ${STATUT_LABELS[or.statut ?? ""] ?? or.statut}). Passez par la sortie exceptionnelle (motif obligatoire) si le véhicule doit sortir ainsi.`,
+              message: `Dossier non prêt (statut : ${STATUT_LABELS[or.statut ?? ""] ?? or.statut}). Passez par la sortie exceptionnelle (motif obligatoire) si le véhicule doit sortir ainsi.`,
+            });
+          }
+          const nonReglees = await lignesNonReglees(tx, input.orId);
+          if (nonReglees.length) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Travaux non terminés — ${nonReglees.length} ligne(s) bloquent la restitution :\n${messageTravauxNonTermines(nonReglees)}\n\nTerminez ou débloquez-les, ou utilisez la sortie exceptionnelle tracée.`,
             });
           }
           const [qc] = await tx
@@ -1918,7 +1972,11 @@ export const orRouter = createTRPCRouter({
       niveauCarburantEntree: z.string().optional(),
       pannesDeclarees: z.string().optional(),
       observationsReception: z.string().optional(),
-      outillage: z.record(z.any()).optional(),
+// LOT O1 — `z.record(z.any())` acceptait n'importe quelle cle et quelle
+      // valeur, y compris un blob qui ne ressemble a rien. La reponse d'un
+      // agent a une forme : presence, observation, et le libelle fige au
+      // moment de la saisie.
+      outillage: zOutillage.optional(),
       typeIntervention: z.string().optional(),
       lieuDepannage: z.string().nullable().optional(),
       clientAttendSurPlace: z.boolean().optional(),
@@ -1985,7 +2043,11 @@ export const orRouter = createTRPCRouter({
       id: z.number().int(),
       quantite: z.number().min(0.01).optional(),
       prixUnitaire: z.number().min(0).optional(),
-      statut: z.string().optional(),
+      // LOT P0.3 — `z.string()` acceptait n'importe quelle chaîne : on
+      // pouvait écrire « fait_ou_pas » dans une ligne de travaux sans que
+      // rien ne bronche. Un statut de travail est une valeur de nomenclature,
+      // pas du texte libre.
+      statut: z.enum(STATUTS_LIGNE).optional(),
       technicienId: z.number().int().nullable().optional(),
       bloque: z.boolean().optional(),
       raisonBlocageLigne: z.string().optional(),
@@ -1994,12 +2056,27 @@ export const orRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const { id, ...rest } = input;
       const [ligne] = await db
-        .select({ ordreId: lignesOrdreReparation.ordreId, libelle: lignesOrdreReparation.libelle })
+        .select({ ordreId: lignesOrdreReparation.ordreId, libelle: lignesOrdreReparation.libelle, statut: lignesOrdreReparation.statut })
         .from(lignesOrdreReparation)
         .where(eq(lignesOrdreReparation.id, id))
         .limit(1);
       if (!ligne) throw new TRPCError({ code: "BAD_REQUEST", message: "Ligne introuvable." });
       await verifierDossierOuvert(ligne.ordreId, ctx.user.agenceId);
+
+      // LOT P0.3 — cycle de vie de la ligne appliqué côté serveur.
+      //
+      // L'énumération garantit que le statut est une valeur connue ; cette
+      // garde garantit qu'on ne peut pas sauter d'un état à l'autre. Elle
+      // autorise en revanche le retour en arrière (`fait` → `en_cours`) :
+      // corriger une ligne marquée faite à tort est un besoin réel, pas une
+      // erreur de saisie. Refuser cela obligerait l'agent à rouvrir le dossier.
+      if (input.statut && ligne.statut && !transitionLigneValide(ligne.statut, input.statut)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Transition impossible pour « ${ligne.libelle} » : ${STATUTS_LIGNE_LIBELLES[ligne.statut] ?? ligne.statut} → ${STATUTS_LIGNE_LIBELLES[input.statut] ?? input.statut}.`,
+        });
+      }
+
       await db.update(lignesOrdreReparation).set(rest as any).where(eq(lignesOrdreReparation.id, id));
       // Audit : modification de ligne tracée (qui, quand, quoi)
       await db.insert(orHistorique).values({
@@ -2671,6 +2748,64 @@ export const orRouter = createTRPCRouter({
     }),
 
   // ─── Paramètres du module (seuils, listes, texte accusé) ───
+
+  // ─── LOT O2 — nomenclature « Outillage & accessoires » de l'agence ──────────
+  //
+  // La liste était une constante codée en dur dans le composant React. Elle
+  // devient une donnée : chaque agence a la sienne, et les agents peuvent y
+  // ajouter, renommer, réordonner ou retirer un élément.
+  //
+  // L'écriture est un remplacement atomique de la liste entière plutôt que
+  // trois mutations distinctes. Une check-list est un tout cohérent : la
+  // laisser dans un état intermédiaire « élément ajouté mais pas encore
+  // rangé » n'aide personne, et trois allers-retours réseau pour une renumérotation
+  // ouvrent une fenêtre de conflit entre deux agents.
+  getCatalogueOutillage: requirePermissionProcedure("or.consulter")
+    .query(async ({ ctx }) => {
+      const items = await lireCatalogue(db, ctx.user.agenceId);
+      return { items, defaut: !items.length };
+    }),
+
+  updateCatalogueOutillage: requirePermissionProcedure("or.modifier")
+    .input(z.object({ items: zCatalogueOutillage }))
+    .mutation(async ({ ctx, input }) => {
+      // Le schéma valide déjà la forme à l'exécution ; le cast ne sert qu'à
+      // calmer l'inférence de sortie de Zod, qui déclare les clés du tableau
+      // comme optionnelles alors que le schéma les rend obligatoires.
+      const items = input.items as ElementOutillage[];
+
+      // La clé d'un élément existant est immuable : c'est elle qui relie le
+      // catalogue aux réponses déjà enregistrées dans les dossiers. On
+      // n'autorise que l'ajout, le renommage, le réordonnancement et le
+      // retrait — pas la réécriture d'une clé.
+      const avant = await lireCatalogue(db, ctx.user.agenceId);
+      const connues = new Set(avant.map((i) => i.cle));
+      const introduites = items.filter((i) => !connues.has(i.cle));
+
+      try {
+        controlerCatalogue(items);
+      } catch (e) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: (e as Error).message });
+      }
+
+      await ecrireCatalogue(db, ctx.user.agenceId, items);
+
+      // Journal d'audit, et NON `or_historique` : cette table porte une clé
+      // étrangère vers `ordres_reparation`, et un changement de nomenclature
+      // n'appartient à aucun dossier. Les y écrire à la main (.. orId 0)
+      // ferait échouer la mutation sur la contrainte — ce que le premier jet
+      // de ce code faisait.
+      await db.insert(auditLogs).values({
+        userId: Number(ctx.user.id),
+        action: "update",
+        entityType: "atelier_parametres",
+        entityId: null,
+        details: `Nomenclature outillage : ${avant.length} → ${items.length} élément(s) (${introduites.length} ajouté(s), ${Math.max(0, avant.length - items.length)} retiré(s)).`,
+      } as any);
+
+      return { success: true, total: items.length, ajoutes: introduites.length };
+    }),
+
   getParametresAtelier: requirePermissionProcedure("or.consulter")
     .query(async ({ ctx }) => {
       const [p] = await db.select().from(atelierParametres).where(eq(atelierParametres.agenceId, ctx.user.agenceId)).limit(1);

@@ -57,6 +57,13 @@
       "when": 1763020000000,
       "tag": "0007_or_photos_restrict",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1763030000000,
+      "tag": "0008_outillage_catalogue",
+      "breakpoints": true
     }
   ]
 }

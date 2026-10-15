@@ -70,6 +70,21 @@ export const atelierParametres = pgTable("atelier_parametres", {
   seuilSavJours: integer("seuil_sav_jours").default(30), // fenêtre détection retour SAV (specs V2)
   emplacements: text("emplacements").default('["Réception","Parc A","Parc B","Pont 1","Pont 2","Carrosserie","Diagnostic"]'),
   raisonsBlocage: text("raisons_blocage").default('["Pièces manquantes","Validation client","Diagnostic incomplet","Attente expertise","Manque technicien","Outillage","Autre"]'),
+  /**
+   * LOT O2 — NOMENCLATURE « OUTILLAGE & ACCESSOIRES » DE L'AGENCE.
+   *
+   * Stockée en JSON : `[{ cle, libelle, ordre }]`. `cle` est une identité
+   * immuable ; `libelle` est l'affichage ; `ordre` est le rang dans la liste.
+   *
+   * La colonne est NULL tant que l'agence n'a pas personnalisé sa liste : les
+   * Managers lisent alors la nomenclature par défaut. Configurer le catalogue ne
+   * doit jamais être une étape obligatoire pour faire tourner l'atelier.
+   *
+   * Supprimer un élément de cette liste ne touche pas aux dossiers déjà
+   * remplis : les réponses passées conservent leur libellé figé dans
+   * `ordres_reparation.outillage`.
+   */
+  outillageCatalogue: text("outillage_catalogue"),
   texteAccuseReception: text("texte_accuse_reception").default("Nous accusons réception de votre véhicule {IMMATRICULATION} sous l'ordre {OR}. Restitution promise : {PROMESSE}."),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

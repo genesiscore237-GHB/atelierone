@@ -26,6 +26,7 @@ import {
 } from "@atelierone/db";
 import { eq, and, desc, sql, or, ilike } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import { dossierEstTermine } from "~/server/lib/atelier-service";
 import {
   transitionStatutVehiculeValide,
   STATUTS_IMMOBILISATION,
@@ -206,7 +207,7 @@ export const vehiculesRouter = createTRPCRouter({
         })
         .from(ordresReparation)
         .where(eq(ordresReparation.vehiculeId, input.id))
-        .orderBy(sql`CASE WHEN ${ordresReparation.statut} IN ('LIVRE','ANNULE','CLOTURE') THEN 1 ELSE 0 END`, desc(ordresReparation.dateOuverture))
+        .orderBy(sql`CASE WHEN ${ordresReparation.statut} IN ('LIVRE','ANNULE','ferme_definitif') THEN 1 ELSE 0 END`, desc(ordresReparation.dateOuverture))
         .limit(1);
 
       let responsable: { id: number; nom: string; prenom: string | null } | null = null;
@@ -442,7 +443,7 @@ export const vehiculesRouter = createTRPCRouter({
         .where(and(eq(contratsMaintenanceVehicules.vehiculeId, input.id), eq(contratsMaintenanceVehicules.actif, true)))
         .limit(5);
 
-      return { vehicule, client, orCourant, orTermine: orCourant ? ["LIVRE", "ANNULE", "CLOTURE"].includes(orCourant.statut) : false, responsable, rapportDiagnostic, lignesTravaux, demandesPieces, retours: retoursList, facture, factureLignes, photos, alertes, timeline, historiqueOR: historiqueEnrichi, autresVehicules, contrats: liaisonContrat };
+      return { vehicule, client, orCourant, orTermine: orCourant ? dossierEstTermine(orCourant.statut) : false, responsable, rapportDiagnostic, lignesTravaux, demandesPieces, retours: retoursList, facture, factureLignes, photos, alertes, timeline, historiqueOR: historiqueEnrichi, autresVehicules, contrats: liaisonContrat };
     }),
 
   // ─── Création ───
