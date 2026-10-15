@@ -520,14 +520,40 @@ export const orRouter = createTRPCRouter({
         .where(eq(lignesOrdreReparation.ordreId, input.id))
         .orderBy(lignesOrdreReparation.id);
 
-      const [historique, photos, parametres, rapports] = await Promise.all([
+      const [historique, photos, rapports] = await Promise.all([
         db.select().from(orHistorique).where(eq(orHistorique.orId, input.id)).orderBy(asc(orHistorique.changeLe)),
         db.select().from(orPhotos).where(eq(orPhotos.orId, input.id)).orderBy(asc(orPhotos.createdAt)),
-        db.select().from(atelierParametres).where(eq(atelierParametres.agenceId, ctx.user.agenceId)).limit(1),
         db.select().from(orRapportsDiagnostic).where(eq(orRapportsDiagnostic.orId, input.id)).orderBy(desc(orRapportsDiagnostic.id)).limit(1),
       ]);
-      const seuils = parametres?.[0]
-        ? { seuilPromesseJours: parametres[0].seuilPromesseJours ?? 1, seuilImmobilisationJours: parametres[0].seuilImmobilisationJours ?? 5, seuilBloqueJours: parametres[0].seuilBloqueJours ?? 3 }
+
+      // Les seuils d'alerte sont lus COLONNE PAR COLONNE, jamais par
+      // `select()` complet. `select()` génère toutes les colonnes de la table,
+      // y compris `outillage_catalogue` : sur une base qui n'a pas encore reçu
+      // la migration `0008`, l'entête de la fiche dossier échouerait avec
+      // « column does not exist » alors qu'elle n'a besoin que des seuils.
+      //
+      // On ne veut pas que l'absence d'une colonne de configuration empêche
+      // d'ouvrir un dossier.
+      const seuils = (await db
+        .select({
+          seuilPromesseJours: atelierParametres.seuilPromesseJours,
+          seuilImmobilisationJours: atelierParametres.seuilImmobilisationJours,
+          seuilBloqueJours: atelierParametres.seuilBloqueJours,
+        })
+        .from(atelierParametres)
+        .where(eq(atelierParametres.agenceId, ctx.user.agenceId))
+        .limit(1)) as unknown as {
+          seuilPromesseJours: number | null;
+          seuilImmobilisationJours: number | null;
+          seuilBloqueJours: number | null;
+        }[];
+      const p0 = seuils[0];
+      const seuilsAlerte = p0
+        ? {
+            seuilPromesseJours: p0.seuilPromesseJours ?? 1,
+            seuilImmobilisationJours: p0.seuilImmobilisationJours ?? 5,
+            seuilBloqueJours: p0.seuilBloqueJours ?? 3,
+          }
         : undefined;
       const dateEntree = or.dateOuverture ?? new Date();
       const alerte = calculerAlertes({
@@ -535,7 +561,7 @@ export const orRouter = createTRPCRouter({
         priorite: or.priorite,
         datePromesse: or.datePromesse,
         dateEntree,
-        seuils,
+        seuils: seuilsAlerte,
       });
       return {
         ...or,
@@ -548,6 +574,7 @@ export const orRouter = createTRPCRouter({
         retardJours: retardJours(or.datePromesse),
         alerte: alerte.principale,
         alertes: alerte.alertes,
+        seuils: seuilsAlerte,
       };
     }),
 
@@ -900,7 +927,7 @@ export const orRouter = createTRPCRouter({
           // autre formulaire envoie `outillage` sans libellé pour qu'un
           // dossier archivé perde ce que l'agent avait coché. Ici, quelle que
           // soit l'origine de l'écriture, la réponse est complète.
-          outillage: await normaliserOutillage(await lireCatalogue(tx, ctx.user.agenceId), input.reception.outillage),
+          outillage: await normaliserOutillage((await lireCatalogue(tx, ctx.user.agenceId)).items, input.reception.outillage),
           typeIntervention: input.reception.typeIntervention,
           lieuDepannage: input.reception.lieuDepannage ?? null,
           signatureDeposant: input.reception.signatureDeposant ?? null,
@@ -2781,7 +2808,7 @@ if (or.statut !== "PRET_A_LIVRER") {
   // ouvrent une fenêtre de conflit entre deux agents.
   getCatalogueOutillage: requirePermissionProcedure("or.consulter")
     .query(async ({ ctx }) => {
-      const items = await lireCatalogue(db, ctx.user.agenceId);
+      const items = (await lireCatalogue(db, ctx.user.agenceId)).items;
       return { items, defaut: !items.length };
     }),
 
@@ -2797,7 +2824,7 @@ if (or.statut !== "PRET_A_LIVRER") {
       // catalogue aux réponses déjà enregistrées dans les dossiers. On
       // n'autorise que l'ajout, le renommage, le réordonnancement et le
       // retrait — pas la réécriture d'une clé.
-      const avant = await lireCatalogue(db, ctx.user.agenceId);
+      const avant = (await lireCatalogue(db, ctx.user.agenceId)).items;
       const connues = new Set(avant.map((i) => i.cle));
       const introduites = items.filter((i) => !connues.has(i.cle));
 

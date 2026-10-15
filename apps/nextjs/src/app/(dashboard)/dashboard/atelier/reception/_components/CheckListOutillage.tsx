@@ -15,7 +15,7 @@ import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { cn } from "~/lib/utils";
-import { slugifierElement, type ElementOutillage } from "~/lib/outillage";
+import { OUTILLAGE_PAR_DEFAUT, slugifierElement, type ElementOutillage } from "~/lib/outillage";
 
 /**
  * LOT U3 (E9, RD7) + LOT O1/O2 — Check-list « Outillage & accessoires »
@@ -100,7 +100,18 @@ export function CheckListOutillage({
   });
 
   const items = useMemo(() => {
-    const base = catalogue.data?.items ?? [];
+    // Repli sur la NOMENCLATURE PAR DÉFAUT, pas sur un tableau vide.
+    //
+    // Le premier jet faisait `catalogue.data?.items ?? []` : quand la requête
+    // échouait — base de production sans la migration `0008`, coupure réseau,
+    // permission — la liste s'affichait VIDE, avec un message annonçant le
+    // contraire. Un agent qui doit réaliser un état des lieux se retrouvait
+    // devant un bloc vide et ne pouvait rien faire.
+    //
+    // Une nomenclature qui n'arrive pas doit laisser passer le travail. La
+    // saisie est enregistrée côté serveur : si l REQUEST aboutit, les
+    // réponses sont figées normalement.
+    const base = catalogue.data?.items ?? OUTILLAGE_PAR_DEFAUT;
     const connus = new Set(base.map((i) => i.cle));
     // Les éléments retirés du catalogue mais déjà cochés restent affichés :
     // les cacher ferait disparaître une réponse déjà donnée.

@@ -17,7 +17,7 @@
 import { db } from "~/server/db";
 import { sql } from "drizzle-orm";
 import { orRouter } from "~/server/api/routers/or-router";
-import { readCatalogue, OUTILLAGE_PAR_DEFAUT } from "~/lib/outillage";
+import { OUTILLAGE_PAR_DEFAUT } from "~/lib/outillage";
 import { lireCatalogue } from "~/server/lib/outillage-catalogue";
 
 const NS = "E2EOUT";
@@ -62,8 +62,8 @@ async function nettoyer() {
 
   console.log("1. La procédure qui échouait répond-elle ?");
   try {
-    const items = await lireCatalogue(db, 1);
-    etape("getCatalogueOutillage / lireCatalogue", items.length > 0, `${items.length} éléments`);
+    const { items, source } = await lireCatalogue(db, 1);
+    etape("lireCatalogue répond", items.length > 0, `${items.length} éléments (source : ${source})`);
     etape(
       "repli = nomenclature par défaut",
       items.length === OUTILLAGE_PAR_DEFAUT.length,

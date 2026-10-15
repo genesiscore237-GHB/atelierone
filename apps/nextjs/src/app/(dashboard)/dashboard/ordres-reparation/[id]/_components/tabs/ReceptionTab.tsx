@@ -87,6 +87,9 @@ export function ReceptionTab({ or }: { or: any }) {
   // de la liste affichée ici, donc les deux écrans ne peuvent plus diverger.
   const catalogue = api.or.getCatalogueOutillage.useQuery();
   const catalogueOuDefaut = catalogue.data?.items ?? OUTILLAGE_PAR_DEFAUT;
+  // `data.items` peut être absent si la réponse est en vol ; on ne confond
+  // pas « pas encore arrivé » avec « vide ».
+  const itemsAffiches = Array.isArray(catalogueOuDefaut) ? catalogueOuDefaut : OUTILLAGE_PAR_DEFAUT;
 
   const figee =
     !!or.rapportDiagnostic && ["SOUMIS", "VALIDE"].includes(or.rapportDiagnostic.statut);
@@ -108,7 +111,7 @@ export function ReceptionTab({ or }: { or: any }) {
     validationVerbale: or.validationVerbale ?? false,
     pannesDeclarees: or.pannesDeclarees ?? "",
     observationsReception: or.observationsReception ?? "",
-    outillage: outillageInitial(or, catalogueOuDefaut),
+    outillage: outillageInitial(or, itemsAffiches),
   }));
 
   useEffect(() => {
@@ -127,7 +130,7 @@ export function ReceptionTab({ or }: { or: any }) {
       validationVerbale: or.validationVerbale ?? false,
       pannesDeclarees: or.pannesDeclarees ?? "",
       observationsReception: or.observationsReception ?? "",
-    outillage: outillageInitial(or, catalogueOuDefaut),
+    outillage: outillageInitial(or, itemsAffiches),
     });
   }, [or.id]);
 
@@ -391,7 +394,7 @@ export function ReceptionTab({ or }: { or: any }) {
         <div className="grid gap-2 sm:grid-cols-2">
           {Object.keys(form.outillage).map((cle) => {
             const libelle =
-              catalogueOuDefaut.find((i) => i.cle === cle)?.libelle ??
+              itemsAffiches.find((i) => i.cle === cle)?.libelle ??
               (or.outillage?.[cle]?.libelle as string | undefined) ??
               cle;
             const v = form.outillage[cle] as { present: boolean; observation: string };
