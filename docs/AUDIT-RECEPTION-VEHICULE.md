@@ -66,7 +66,7 @@
 | E12 | Restitution OR libère le spot + écrit mouvement SORTIE | Atteint | S1 ✅ |
 | E13 | Alerte « véhicule déjà présent » si réception sur véhicule au garage | Atteint | S2 ✅ |
 | E14 | Scheduler d'alertes parking (exécution périodique) | Atteint | A1 ✅ |
-| E15 | `or.getAlertes` branché à une UI | Atteint | A2 |
+| E15 | `or.getAlertes` branché à une UI | Atteint | A2 ✅ |
 
 ---
 
@@ -108,7 +108,7 @@
 | **S1** | Sortie unifiée (restitution → spot) | or, parking | ✅ |
 | **S2** | Alerte véhicule déjà présent | réception (API) | ✅ |
 | **A1** | Scheduler alertes | parking | ✅ |
-| **A2** | `or.getAlertes` UI | atelier | ⬜ |
+| **A2** | `or.getAlertes` UI | atelier | ✅ |
 
 ### U0 — Unification des trois créations de véhicule (décision utilisateur, 2026-10-14)
 
@@ -232,4 +232,19 @@ mouvements) : ce n'est pas un doublon du parc, c'est un métier distinct.
 
 | 2026-10-15 | **A1 — scheduler d'alertes parking (E14, RD9, P1-3)** | Livré. **Service `server/lib/parking-alertes-scheduler.ts`** : le cœur de l'analyse (`analyserParkingAlertes`) est factorisé hors du routeur et ne prend qu'un `agenceId` — il ne dépend donc d'**aucun** `ctx` tRPC. Conséquence directe : le bouton manuel et le tour automatique appellent **exactement le même code** et ne peuvent pas diverger (leçon de U0a). `garage.analyser` délègue désormais au service ; il ne subsiste qu'un wrapper passant `clotureePar: userId` (le tour automatique passe `null`). **Scheduler** (`ensureAlertesScheduler`) conforme à RD9 : **lazy** (rien ne tourne tant que le parking n'est pas utilisé), **une seule fois par process**, `setInterval` configurable (**60 min** par défaut, plancher 1 min). **Trois garde-fous** qui sont le vrai contenu de ce lot : (a) une exception dans le timer ne doit **jamais** remonter — non surveillée, elle tuerait le process Node ; tout est journalisé et le cycle continue ; (b) **pas de recouvrement** — un tour plus lent que la période est sauté, pas empilé (sinon une base saturée fait croître la charge) ; (c) **aucun timer inutile** — sans agence connue, on ne démarre pas. Le repli **bouton manuel reste disponible** : en déploiement serverless, le process peut être tué entre deux requêtes, et le scheduler n'est jamais bloquant pour la disponibilité. **Tests** : `garage-a1-scheduler-alertes.integration.test.ts` (6 tests) — ouverture sans contexte utilisateur (`cloturee_par` NULL), **idempotence** (un 2ᵉ passage ne recrée rien : le scheduler repasse toutes les heures, la table ne doit pas grossir), parité bouton/scheduler, démarrage unique (2ᵉ appel renvoie `false`), aucune agence → aucun timer, seuils bornés. Vérifs : **6/6** verts, **934/934** sur la suite complète (60 fichiers), TSC 0 erreur, lint 0 erreur. |
 
-Lots **R1**–**R5**, **U1**–**U5**, **S1**, **S2**, **A1** et **U0a**–**U0d** livrés. Il ne reste que **A2** (`or.getAlertes` branché à une UI).
+| 2026-10-15 | **A2 — `or.getAlertes` branché à une UI (E15, P2-7)** | Livré. `or.getAlertes` existait côté serveur, complet et calculé, mais **aucune interface ne l'appelait** : une fonctionnalité maintenue mais invisible. Nouvelle page `/dashboard/atelier/alertes` (entrée de menu dans « Véhicules & Atelier ») avec compteurs par gravité **cliquables** (filtre la liste), recherche, tri par **gravité puis retard décroissant**, badge d'alerte sur chaque ligne, et **lien direct vers le dossier** — une vue d'alerte non actionnable est un tableau mort. Rafraîchissement automatique **30 s** comme le pilotage : une alerte qui n'apparaît qu'au rechargement manuel est une alerte en retard. Dédoublonnage des lignes : un dossier présent dans plusieurs catégories (retard ET P1) n'apparaît qu'une fois, en **conservant toutes ses alertes** — sinon les compteurs et la liste se contredisent. États couverts : chargement, vide (« aucune alerte » vs « aucun résultat » — deux messages différents), erreur affichée. Ce que la page apporte par rapport au filtrage déjà présent dans « Pilotage du parc » : le pilotage sert à voir l'ensemble, cette page sert à « qui je dépanne maintenant » — uniquement les dossiers qui demandent une action. Vérifs : suite complète **934/934** verte, TSC 0 erreur, lint 0 erreur. |
+
+## 7. Bilan final
+
+**Les 15 exigences E1–E15 sont couvertes** et les 14 lots du plan sont livrés :
+R1, R2, R3, R4, R5 (données & cohérence) · U0a–U0d (unification) · U1–U5 (ergonomie) · S1, S2 (parcours) · A1, A2 (alertes).
+
+**Défauts P0 trouvés et corrigés en cours de route** (aucun n'était connu au départ) :
+1. **P0-3** — la restitution d'un dossier d'atelier ne libérait ni le spot ni le mouvement SORTIE (place fantôme). *Réel, dans 2 chemins.*
+2. **Réception cassée dès qu'une photo était jointe** — `or.receptionner` insérait dans des colonnes inexistantes et annulait toute la transaction. *Réel, jamais testé.*
+3. **3 courses sur séquences** (code client, n° de contrat) violant des contraintes uniques sous concurrence. *Réel, révélé par l'exécution parallèle.*
+4. **Cohérence du kilométrage non garantie** — une coquille de saisie figeait une référence fausse pour toutes les visites suivantes.
+
+**Leçon structurelle du plan** : les bugs les plus graves venaient tous de la **duplication de règles** entre écrans (normalisation, écrasement, types, séquences). D'où U0a (service unique de règles véhicule) comme décision structurante, plutôt qu'une série de correctifs ponctuels.
+
+**Dette connue et tracée** : `or_photos` est en `ON DELETE CASCADE` sur l'OR — supprimer un dossier effacerait les photos d'état des lieux (pièces à conviction). Signalé par S2 (« place fantôme » sur le même modèle) mais **non corrigé** : hors périmètre du CDC.

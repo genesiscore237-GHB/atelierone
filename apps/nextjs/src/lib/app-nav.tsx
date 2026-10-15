@@ -19,7 +19,8 @@ import {
   CircleHelp,
   Users,
   FileSignature,
-  Copy,
+Copy,
+  AlertTriangle,
   Car,
   Wrench,
   CalendarClock,
@@ -372,6 +373,17 @@ export const DOMAINS: AppDomain[] = [
         icon: ClipboardCheck,
         desc: "Fiche de réception : véhicule, client, outillage, pannes, photos",
         moduleId: "atelier",
+      },
+      {
+        // LOT A2 (E15, P2-7) — `or.getAlertes` existait côté serveur sans
+        // aucune interface pour l'appeler. Une fonctionnalité maintenue mais
+        // invisible n'est pas livrée : elle a désormais son entrée de menu.
+        id: "atelier-alertes",
+        label: "Alertes atelier",
+        href: "/dashboard/atelier/alertes",
+        icon: AlertTriangle,
+        desc: "Retards, blocages, P1 et immobilisations longues",
+        moduleId: "or",
       },
       {
         id: "atelier-vehicules",
