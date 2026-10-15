@@ -14,7 +14,8 @@
  *     identité partagée (marque/modele…) synchronisée dans les deux sens.
  *  4. T1.3 — le script de backfill `migrate-parking-vehicules.ts` lie les
  *     lignes existantes par normalisation, crée les canons manquants
- *     (projection P2I) et laisse NULL les lignes sans immatriculation.
+ *     (projection P2I) et, depuis la migration 0011, crée AUSSI un canon pour
+ *     les lignes sans immatriculation — sans jamais inventer de plaque.
  *
  * Fixtures RBAC réelles (roles / utilisateurs) : mêmes règles que
  * or-lot0.integration.test.ts — namespace `lot1`, bande de registre 9000-9999.
@@ -129,7 +130,7 @@ async function parkingDe(id: number): Promise<Row> {
 
 async function vehiculeDe(id: number): Promise<Row> {
   const rows = (await db.execute(
-    sql`SELECT id, immatriculation, marque, modele, statut_immobilisation, notes FROM vehicules WHERE id = ${id}`,
+    sql`SELECT id, immatriculation, immat_norm, marque, modele, statut_immobilisation, notes FROM vehicules WHERE id = ${id}`,
   )) as unknown as Row[];
   return rows[0] ?? {};
 }
@@ -350,8 +351,16 @@ describe("Lot 1 — dé-duplication parking ↔ véhicules", () => {
     expect(canonNew.statut_immobilisation).toBe("en_reparation");
     expect(String(canonNew.notes)).toContain("Lot 1");
 
-    // 3. Sans immatriculation : rien d'inventé, vehicule_id reste NULL.
-    expect((await parkingDe(ligneSans)).vehicule_id).toBeNull();
+    // 3. Sans immatriculation : le canon est CRÉÉ (migration 0011) mais sa
+    //    plaque reste NULL. L'absence d'invention ne se prouve donc plus par
+    //    « aucune fiche », mais par « une fiche dont la plaque n'a pas été
+    //    remplie » — c'est la garantie qui compte réellement.
+    const pSans = await parkingDe(ligneSans);
+    expect(pSans.vehicule_id).not.toBeNull();
+    const canonSans = await vehiculeDe(Number(pSans.vehicule_id));
+    expect(canonSans.immatriculation).toBeNull();
+    expect(canonSans.immat_norm).toBeNull();
+    expect(String(canonSans.notes)).toContain(`parking_id=${ligneSans}`);
 
     await db.execute(
       sql`DELETE FROM parking_vehicles WHERE id IN (${IN([

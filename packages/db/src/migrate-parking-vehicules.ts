@@ -11,12 +11,16 @@ requireLocalOrForced("lien parking_vehicles -> vehicules (migrate-parking-vehicu
  *   1. liaison vers le véhicule canonique EXISTANT (appariement par
  *      immatriculation normalisée, même agence — le plus ancien gagne) ;
  *   2. création du véhicule canonique pour chaque ligne immatriculée encore
- *      non liée (aucune invention : sans immatriculation, pas de création,
- *      `vehicule_id` reste NULL) ;
- *   3. second passage de liaison (les canons créés au 2 relient leurs lignes).
+ *      non liée (un par (agence, immat normalisée) ;
+ *   3. second passage de liaison (les canons créés au 2 relient leurs lignes) ;
+ *   4. lignes SANS immatriculation : depuis la migration 0011
+ *      (`immatriculation` nullable), elles reçoivent elles aussi une fiche —
+ *      elles sont physiquement au garage, les laisser hors de l'atelier les
+ *      rendait invisibles. Aucun numéro de plaque n'est inventé : le lien
+ *      passe par un marqueur `parking_id=<id>` dans les notes.
  *
- * Idempotent — réexécutable à volonté. La projection des statuts (CASE du
- * point 2) est la copie SQL de `PARKING_VERS_IMMOBILISATION` dans
+ * Idempotent — réexécutable à volonté. La projection des statuts (CASE des
+ * points 2 et 4) est la copie SQL de `PARKING_VERS_IMMOBILISATION` dans
  * apps/nextjs/src/server/lib/parking-statuts.ts : les deux doivent rester
  * alignées. Les statuts sans équivalent exact (EN_VENTE, ACCIDENTE,
  * A_TRANSFERER, DONNEES_INCOMPLETES) projettent NULL — aucun état inventé.
@@ -92,15 +96,65 @@ requireLocalOrForced("lien parking_vehicles -> vehicules (migrate-parking-vehicu
   // 3. Relier : les canons créés au 2 existent maintenant.
   await lier("Lien après création");
 
+  // 4. Véhicules SANS plaque (migration 0011 rend la colonne nullable).
+  //
+  //    La plaque ne peut plus servir de clé d'appariement : on grave donc dans
+  //    les notes un marqueur `parking_id=<id>`, stable et relisible. Il sert
+  //    à la fois d'clé d'IDEMPOTENCE (on ne recrée pas si le marqueur existe)
+  //    et de clé de LIAISON (on retrouve le véhicule depuis la ligne parking).
+  //    Aucun identifiant de plaque n'est inventé.
+  const sansPlaque = await db.unsafe(`
+    WITH candidats AS (
+      SELECT p.*
+      FROM parking_vehicles p
+      WHERE p.vehicule_id IS NULL
+        AND (p.immatriculation IS NULL OR btrim(p.immatriculation) = '')
+        AND NOT EXISTS (
+          SELECT 1 FROM vehicules v
+          WHERE v.notes LIKE '%parking_id=' || p.id || '%'
+        )
+    )
+    INSERT INTO vehicules (agence_id, immatriculation, marque, modele, version, couleur,
+                           numero_chassis, statut_immobilisation, notes)
+    SELECT c.agence_id, NULL, c.marque, c.modele, c.version, c.couleur,
+           c.vin,
+           CASE c.statut
+             WHEN 'EN_PARKING' THEN 'en_reception'
+             WHEN 'EN_ATTENTE_DEVIS' THEN 'attente_validation_client'
+             WHEN 'EN_ATTENTE_DIAGNOSTIC' THEN 'en_diagnostic'
+             WHEN 'EN_ATTENTE_PIECE' THEN 'attente_piece_locale'
+             WHEN 'EN_TRAVAUX' THEN 'en_reparation'
+             WHEN 'TERMINE_A_RECUPERER' THEN 'terminee_client_non_venu'
+             WHEN 'SORTI' THEN 'sorti'
+             ELSE NULL
+           END,
+           'Créé depuis le registre parking (Lot 1) — n° ' || c.num_registre
+           || ' — sans immatriculation relevée [parking_id=' || c.id || ']'
+    FROM candidats c
+    RETURNING id
+  `);
+  console.log(`Véhicules sans immatriculation créés : ${sansPlaque.length}.`);
+
+  const liesSansPlaque = await db.unsafe(`
+    UPDATE parking_vehicles p
+    SET vehicule_id = v.id, updated_at = now()
+    FROM vehicules v
+    WHERE p.vehicule_id IS NULL
+      AND (p.immatriculation IS NULL OR btrim(p.immatriculation) = '')
+      AND v.agence_id = p.agence_id
+      AND v.notes LIKE '%parking_id=' || p.id || '%'
+  `);
+  console.log(`Lignes parking sans plaque liées : ${liesSansPlaque.count}.`);
+
   const stats = await db`
     SELECT count(*)::int AS total,
            count(*) FILTER (WHERE vehicule_id IS NOT NULL)::int AS lies,
-           count(*) FILTER (WHERE vehicule_id IS NULL AND (immatriculation IS NULL OR btrim(immatriculation) = ''))::int AS sans_immat
+           count(*) FILTER (WHERE vehicule_id IS NULL)::int AS orphelines
     FROM parking_vehicles
   `;
   const s = stats[0];
   console.log(
-    `Résultat : ${s.lies}/${s.total} ligne(s) liées (${s.sans_immat} sans immatriculation — non liées par conception).`,
+    `Résultat : ${s.lies}/${s.total} ligne(s) liées${s.orphelines ? ` (${s.orphelines} encore orpheline(s))` : " — toutes liées"}.`,
   );
   await db.end({ timeout: 5 });
   process.exit(0);

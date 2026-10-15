@@ -12,15 +12,27 @@ import { clients } from "./clients";
  * terminee_client_non_venu, transfere_site2, abandonne_contentieux, sorti
  *
  * LOT R1 — `immatNorm` = plaque normalisée (trim + suppression espaces +
- * majuscules), colonne dérivée alimentée par les points d'écriture. Porte
- * l'unicité (agence, immat_norm) via index partiel : les véhicules sans
- * plaque (NULL) restent hors contrainte (D3 — aucune invention).
+ * majuscules), colonne dérivée MAINTENUE PAR DÉCLENCHEUR (migration 0010),
+ * plus par les points d'écriture. Porte l'unicité (agence, immat_norm) via
+ * index partiel : les véhicules sans plaque (NULL) restent hors contrainte
+ * (D3 — aucune invention).
+ *
+ * `immatriculation` est NULLABLE : le registre parking compte 12 véhicules
+ * réels sans plaque (arrivés sans immatriculation, ou plaque non relevée).
+ * Tant que la colonne était NOT NULL, ces véhicules ne pouvaient exister que
+ * comme lignes de registre — l'Atelier ne pouvait donc ni les lister, ni les
+ * recevoir, alors qu'ils sont physiquement au garage. Le modèle parking
+ * (`parking.ts`) les portait déjà en `varchar` nullable : l'incohérence
+ * venait de `vehicules`, pas du métier.
  */
 export const vehicules = pgTable("vehicules", {
   id: serial("id").primaryKey(),
   agenceId: integer("agence_id").notNull().references(() => agences.id),
   clientId: integer("client_id").references(() => clients.id),
-  immatriculation: varchar("immatriculation", { length: 50 }).notNull(),
+  // NULLABLE : voir l'en-tête du schéma. Un véhicule réel peut être au garage
+  // sans plaque relevée ; on refuse d'inventer une immatriculation, mais on
+  // refuse aussi de rendre le véhicule invisible à l'atelier.
+  immatriculation: varchar("immatriculation", { length: 50 }),
   immatNorm: varchar("immat_norm", { length: 50 }),
   marque: varchar("marque", { length: 100 }),
   modele: varchar("modele", { length: 100 }),

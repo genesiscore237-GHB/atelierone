@@ -47,36 +47,43 @@
     {
       "idx": 6,
       "version": "7",
-      "when": 1763010000000,
+      "when": 1792200000000,
       "tag": "0006_photos_etat_des_lieux",
       "breakpoints": true
     },
     {
       "idx": 7,
       "version": "7",
-      "when": 1763020000000,
+      "when": 1792300000000,
       "tag": "0007_or_photos_restrict",
       "breakpoints": true
     },
     {
       "idx": 8,
       "version": "7",
-      "when": 1763030000000,
+      "when": 1792400000000,
       "tag": "0008_outillage_catalogue",
       "breakpoints": true
     },
     {
       "idx": 9,
       "version": "7",
-      "when": 1763040000000,
+      "when": 1792500000000,
       "tag": "0009_checks_statuts",
       "breakpoints": true
     },
     {
       "idx": 10,
       "version": "7",
-      "when": 1763050000000,
+      "when": 1792600000000,
       "tag": "0010_vehicule_immat_norm_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792700000000,
+      "tag": "0011_vehicule_immatriculation_nullable",
       "breakpoints": true
     }
   ]
