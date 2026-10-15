@@ -159,6 +159,13 @@ export const SOCLE_MATRICE: Record<string, string[]> = {
     "or.valider", "contrats.consulter", "clients.consulter", "creances.consulter",
     "creances.encaisser", "creances.relancer", "planning.consulter", "comptabilite.rapport",
     "audit.consulter", "export.consulter", "rh.utilisateur.lire", "parking.consulter",
+    // La direction exporte le registre des véhicules : c'est le premier
+    // aperçu de l'activité du garage. Elle était absente ici alors que
+    // `migrate-permission-export-vehicules.ts` l'accordait — deux définitions
+    // concurrentes de la même permission, donc une base qui a reçu l'une et
+    // pas l'autre, et une dérive permanente entre environnements.
+    // Toute attribution de permission se définit ICI, et nulle part ailleurs.
+    "parking.vehicule.exporter",
     ...RH_CONSULTATION,
   ],
   admin: [

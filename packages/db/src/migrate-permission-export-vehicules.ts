@@ -5,7 +5,12 @@
 
 import { inArray, and, eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import * as schema from "./schema";
+import { SOCLE_MATRICE, SOCLE_PERMISSIONS } from "./security-socle";
+
+const PERMISSION = "parking.vehicule.exporter";
 
 /**
  * Ajoute la permission parking.vehicule.exporter et l'associe aux rôles autorisés.
@@ -24,27 +29,36 @@ export async function migratePermissionExportVehicules(db: PostgresJsDatabase<ty
     permissionId = permissionExistante.id;
     console.log("✓ Permission parking.vehicule.exporter déjà existante");
   } else {
+    // Le libellé vient lui aussi du socle : le recopier ici avait produit une
+    // permission « Exporter les vehicules » (sans accent) sur les bases
+    // amorcées par un autre script, et « Exporter les véhicules » sur celles
+    // migrées par celui-ci — deux libellés pour une seule permission, donc une
+    // dérive de contenu invisible à la simple comparaison de volumétrie.
+    const def = SOCLE_PERMISSIONS.find((p) => p.code === PERMISSION);
     const [created] = await db
       .insert(schema.permissions)
       .values({
-        code: "parking.vehicule.exporter",
-        nom: "Exporter les véhicules du registre",
-        module: "parking",
+        code: PERMISSION,
+        nom: def?.nom ?? "Exporter les véhicules du registre",
+        module: def?.module ?? "parking",
       })
       .returning({ id: schema.permissions.id });
     permissionId = created.id;
-    console.log("✓ Permission parking.vehicule.exporter créée");
+    console.log(`✓ Permission ${PERMISSION} créée`);
   }
 
-  // 2. Rôles autorisés (selon SOCLE_MATRICE)
-  const rolesAutorises = [
-    "directeur",
-    "admin",
-    "chef_atelier",
-    "secretaire",
-    "comptable",
-    "consultation",
-  ];
+  // 2. Rôles autorisés.
+  //
+  //    La liste était HARD-CODÉE ici alors que `security-socle.ts` définit
+  //    déjà, dans SOCLE_MATRICE, quels rôles ont quelles permissions — sans
+  //    `directeur`. Deux listes concurrentes pour la même règle : une base
+  //    selon laquelle on a lancé ce script différait d'une base où l'on a
+  //    lancé `seed:socle`, sans qu'aucune des deux ne soit fausse. On lit
+  //    désormais la source de vérité. Toute modification de la matrice se
+  //    fait dans security-socle.ts, et ce script suit.
+  const rolesAutorises = Object.entries(SOCLE_MATRICE)
+    .filter(([, perms]) => perms.includes(PERMISSION))
+    .map(([role]) => role);
 
   // 3. Récupérer les IDs des rôles
   const roles = await db
@@ -86,8 +100,15 @@ export async function migratePermissionExportVehicules(db: PostgresJsDatabase<ty
 
 /**
  * Script standalone pour exécution directe
+ *
+ * `import.meta.url === \`file://${process.argv[1]}\`` est un piège sous
+ * Windows : `process.argv[1]` contient des antislashs et `import.meta.url` des
+ * forward-slash percent-encodés. Les deux ne sont jamais égales, donc le bloc
+ * ci-dessous ne s'exécutait pas et la migration ne se lançait silencieusement,
+ * sans la moindre erreur. `pathToFileURL` + `realpathSync` compare des URLs
+ * normalisées, quelle que soit la plateforme.
  */
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(realpathSync(process.argv[1] ?? "")).href) {
   const { db } = await import("./index");
   await migratePermissionExportVehicules(db);
   process.exit(0);
