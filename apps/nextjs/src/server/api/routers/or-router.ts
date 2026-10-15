@@ -1722,6 +1722,13 @@ export const orRouter = createTRPCRouter({
       };
       if (!input.vehiculeId) return vide;
 
+// `parking_vehicles.vehicule_id` n'est PAS unique (`parking.ts:167` n'est
+      // qu'un index) : un véhicule a autant de lignes que de passages au
+      // garage. Prendre `ORDER BY pv.id` — la plus ancienne — faisait dire
+      // « absent » un véhicule présent depuis son dernier passage, parce que
+      // sa première ligne était SORTI. Une alerte de sécurité qui manque en
+      // silence est pire que pas d'alerte : on retient donc la ligne ACTIVE,
+      // et à défaut la plus récente.
       const lignes = (await db.execute(sql`
         SELECT pv.id            AS parking_id,
                pv.num_registre  AS num_registre,
@@ -1732,11 +1739,13 @@ export const orRouter = createTRPCRouter({
                si.nom           AS site_nom
         FROM parking_vehicles pv
         LEFT JOIN parking_spots s  ON s.id  = pv.spot_id
-        LEFT JOIN parking_zones z  ON z.id  = pv.zone_id
-        LEFT JOIN parking_sites si  ON si.id = pv.site_id
+        LEFT JOIN parking_zones z  ON z.id = pv.zone_id
+        LEFT JOIN parking_sites si ON si.id = pv.site_id
         WHERE pv.vehicule_id = ${input.vehiculeId}
           AND pv.agence_id = ${ctx.user.agenceId}
-        ORDER BY pv.id
+        ORDER BY (pv.statut IS DISTINCT FROM 'SORTI') DESC,
+                 pv.date_derniere_action DESC NULLS LAST,
+                 pv.id DESC
         LIMIT 1`)) as unknown as {
           parking_id: number;
           num_registre: number | null;
@@ -1762,10 +1771,17 @@ export const orRouter = createTRPCRouter({
       const sorti = l?.statut === "SORTI";
 
       // Place fantôme : le véhicule est sorti mais sa place lui reste attribuée.
+      //
+      // ATTENTION à l'espace d'identifiants : `parking_spots.reserve_pour`
+      // contient un `parking_vehicles.id` (écrit par `garage.place`, sur une
+      // ligne `parkingVehicles`), PAS un `vehicules.id`. Comparer à
+      // `input.vehiculeId` — ce que faisait la version initiale, et son test
+      // qui reproduisait la même faute — compareait deux séquences distinctes.
       let placeFantome = false;
-      if (sorti && l?.spot_id) {
+      if (sorti && l?.spot_id != null) {
+        const parkingId = Number(l.parking_id);
         const spots = (await db.execute(sql`
-          SELECT (bloque OR reserve_pour = ${input.vehiculeId}) AS bloque_pour
+          SELECT (bloque OR reserve_pour = ${parkingId}) AS bloque_pour
           FROM parking_spots WHERE id = ${l.spot_id}`)) as unknown as { bloque_pour: boolean }[];
         placeFantome = !!spots[0]?.bloque_pour;
       }

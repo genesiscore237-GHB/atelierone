@@ -1,4 +1,4 @@
-﻿# CDC — Enregistrement & suivi des véhicules (AtelierOne / GPJ)
+# CDC — Enregistrement & suivi des véhicules (AtelierOne / GPJ)
 
 > **Source de vérité** de la transformation « Réception & suivi véhicules ».
 > Audit initial du **2026-10-14** ; plan de lots ; journal d'avancement.
@@ -109,6 +109,7 @@
 | **S2** | Alerte véhicule déjà présent | réception (API) | ✅ |
 | **A1** | Scheduler alertes | parking | ✅ |
 | **A2** | `or.getAlertes` UI | atelier | ✅ |
+| **R1bis** | Revue de fin : alerte E13, identifiant fantôme, vrai client garage, photos RESTRICT | db, garage, or | ✅ |
 
 ### U0 — Unification des trois créations de véhicule (décision utilisateur, 2026-10-14)
 
@@ -179,14 +180,17 @@ mouvements) : ce n'est pas un doublon du parc, c'est un métier distinct.
 
 ### Responsabilités par module
 
+*Aligné sur les lots réellement livrés (revue du 2026-10-15).*
+
 | Module | Lots concernés | Points de contact |
 |---|---|---|
-| **db / schema** | R1 | `vehicules.ts`, migration `0004` |
-| **réception** (`or.receptionner`) | R2, R3, R4, U2, S2 | `or-router.ts`, `ReceptionVehicule.tsx` |
-| **clients** | R5, R2 | `clients-router.ts` |
-| **véhicules** | R1, R3 | `vehicules-router.ts`, `parking-vehicule-service.ts` |
-| **parking / garage** | S1, A1 | `garage-router.ts`, `parking-alerts.ts` |
-| **OR / atelier** | S1, A2 | `or-router.ts` |
+| **db / schema** | R1, R5, U0c, U0d, **R1bis** | `vehicules.ts`, `parking.ts`, `or_cycle.ts`, migrations `0004`–`0007` |
+| **réception** (`or.receptionner`) | R2, R3, R4, U0b–U0d, U2–U5, S2 | `or-router.ts`, `ReceptionVehicule.tsx`, `FormulaireVehicule.tsx`, `PhotosEtatDesLieu.tsx` |
+| **clients** | R5, R2 | `clients-router.ts`, `client-service.ts` |
+| **véhicules** | R1, R3, U0a, U1 | `vehicules-router.ts`, `vehicule-regles.ts` |
+| **parking / garage** | S1, A1, U0a, U0d, **R1bis** | `garage-router.ts`, `parking-vehicule-service.ts`, `parking-alertes.ts`, `parking-alertes-scheduler.ts` |
+| **OR / atelier** | S1, S2, A2, U0c, **R1bis** | `or-router.ts` (`situationParking`, `restituerVehicule`, `getAlertes`) |
+| **service partagé** | U0a, R5, **R1bis** | `vehicule-regles.ts` — règles plaques, complétion sans écrasement, dédoublonnage, création client |
 
 ---
 
@@ -232,12 +236,14 @@ mouvements) : ce n'est pas un doublon du parc, c'est un métier distinct.
 
 | 2026-10-15 | **A1 — scheduler d'alertes parking (E14, RD9, P1-3)** | Livré. **Service `server/lib/parking-alertes-scheduler.ts`** : le cœur de l'analyse (`analyserParkingAlertes`) est factorisé hors du routeur et ne prend qu'un `agenceId` — il ne dépend donc d'**aucun** `ctx` tRPC. Conséquence directe : le bouton manuel et le tour automatique appellent **exactement le même code** et ne peuvent pas diverger (leçon de U0a). `garage.analyser` délègue désormais au service ; il ne subsiste qu'un wrapper passant `clotureePar: userId` (le tour automatique passe `null`). **Scheduler** (`ensureAlertesScheduler`) conforme à RD9 : **lazy** (rien ne tourne tant que le parking n'est pas utilisé), **une seule fois par process**, `setInterval` configurable (**60 min** par défaut, plancher 1 min). **Trois garde-fous** qui sont le vrai contenu de ce lot : (a) une exception dans le timer ne doit **jamais** remonter — non surveillée, elle tuerait le process Node ; tout est journalisé et le cycle continue ; (b) **pas de recouvrement** — un tour plus lent que la période est sauté, pas empilé (sinon une base saturée fait croître la charge) ; (c) **aucun timer inutile** — sans agence connue, on ne démarre pas. Le repli **bouton manuel reste disponible** : en déploiement serverless, le process peut être tué entre deux requêtes, et le scheduler n'est jamais bloquant pour la disponibilité. **Tests** : `garage-a1-scheduler-alertes.integration.test.ts` (6 tests) — ouverture sans contexte utilisateur (`cloturee_par` NULL), **idempotence** (un 2ᵉ passage ne recrée rien : le scheduler repasse toutes les heures, la table ne doit pas grossir), parité bouton/scheduler, démarrage unique (2ᵉ appel renvoie `false`), aucune agence → aucun timer, seuils bornés. Vérifs : **6/6** verts, **934/934** sur la suite complète (60 fichiers), TSC 0 erreur, lint 0 erreur. |
 
+| 2026-10-15 | **Lot R1bis — revue de fin : 3 corrections issues d'une relecture du code** | Lot de clôture, découvert après la fin officielle du plan. Les 18 lots étaient marqués livrés ; la relecture du code a montré que trois d'entre eux n'attendaient pas ce qu'ils annonçaient. **1. Alerte E13 muette.** `situationParking` retenait `ORDER BY pv.id LIMIT 1` alors que `parking_vehicles.vehicule_id` n'est **pas unique** (`parking.ts:167` n'est qu'un index) : un véhicule a autant de lignes que de passages. La requête prenait la **plus ancienne**, donc un véhicule sorti en 2023 puis revenu en 2026 était annoncé absent alors qu'il occupait une place. Une alerte de sécurité qui manque en silence est pire que pas d'alerte. Correction : tri sur les lignes **actives** d'abord, puis date de dernière action, puis id. **2. Place fantôme sur le mauvais identifiant.** `reserve_pour` contient un `parking_vehicles.id` (écrit par `garage.place`), mais la requête le comparait à `vehicules.id` — deux séquences distinctes. **3. Photos en CASCADE.** `or_photos.or_id` était en `ON DELETE CASCADE` : le §4 le notait « à durcir » depuis U0c. Migration `0007` → `RESTRICT`. **Leçon** : le test de la place fantôme était VERT en reproduisant la même erreur que le code — test et implémentation partageaient la même hypothèse fausse. « 934/934 » ne prouve rien quand le test et le code dérivent ensemble ; d'où l'ajout de régressions vérifiées **en échec sur l'ancien code** avant d'être acceptées (tests S2 7, 8, 9). |
+| 2026-10-15 | **R1bis — le garage crée un vrai client (décision U0 non livrée)** | Le cadrage U0 disait : « la création directe au garage reste possible uniquement si la plaque est inconnue à la réception, et doit alors créer un **vrai client**, pas un texte ». U0a avait unifié les règles de plaque mais **la création de client n'avait pas été faite** : `garage.create` écrivait `clientNom`/`clientTelephone` en texte sur la ligne parking, sans jamais toucher à la table `clients`. Un véhicule créé au garage était donc invisible de l'historique client, des contrats et de la facturation — il existait pour le parking et pour personne d'autre. Nouveau service partagé `resoudreOuCreerClientDepuisIdentite()` : téléphone normalisé retrouvé → **réutilise** le client existant (le cas courant du garage) ; téléphone inconnu + nom → crée une vraie fiche ; **ni nom ni téléphone → rien n'est créé** (on n'invente pas de propriétaire) ; véhicule **déjà propriétaire → on n'y touche pas** (ni écrasement RD4, ni fiche fantôme à partir d'un nom tapé dans un registre papier). Séquence de code client sous advisory lock, comme R5/S1. |
 | 2026-10-15 | **A2 — `or.getAlertes` branché à une UI (E15, P2-7)** | Livré. `or.getAlertes` existait côté serveur, complet et calculé, mais **aucune interface ne l'appelait** : une fonctionnalité maintenue mais invisible. Nouvelle page `/dashboard/atelier/alertes` (entrée de menu dans « Véhicules & Atelier ») avec compteurs par gravité **cliquables** (filtre la liste), recherche, tri par **gravité puis retard décroissant**, badge d'alerte sur chaque ligne, et **lien direct vers le dossier** — une vue d'alerte non actionnable est un tableau mort. Rafraîchissement automatique **30 s** comme le pilotage : une alerte qui n'apparaît qu'au rechargement manuel est une alerte en retard. Dédoublonnage des lignes : un dossier présent dans plusieurs catégories (retard ET P1) n'apparaît qu'une fois, en **conservant toutes ses alertes** — sinon les compteurs et la liste se contredisent. États couverts : chargement, vide (« aucune alerte » vs « aucun résultat » — deux messages différents), erreur affichée. Ce que la page apporte par rapport au filtrage déjà présent dans « Pilotage du parc » : le pilotage sert à voir l'ensemble, cette page sert à « qui je dépanne maintenant » — uniquement les dossiers qui demandent une action. Vérifs : suite complète **934/934** verte, TSC 0 erreur, lint 0 erreur. |
 
 ## 7. Bilan final
 
-**Les 15 exigences E1–E15 sont couvertes** et les 14 lots du plan sont livrés :
-R1, R2, R3, R4, R5 (données & cohérence) · U0a–U0d (unification) · U1–U5 (ergonomie) · S1, S2 (parcours) · A1, A2 (alertes).
+**Les 15 exigences E1–E15 sont couvertes** et les 18 lots du plan sont livrés :
+R1, R2, R3, R4, R5 (données & cohérence) · U0a–U0d (unification) · U1–U5 (ergonomie) · S1, S2 (parcours) · A1, A2 (alertes) · **R1bis** (revue de fin).
 
 **Défauts P0 trouvés et corrigés en cours de route** (aucun n'était connu au départ) :
 1. **P0-3** — la restitution d'un dossier d'atelier ne libérait ni le spot ni le mouvement SORTIE (place fantôme). *Réel, dans 2 chemins.*
@@ -245,6 +251,14 @@ R1, R2, R3, R4, R5 (données & cohérence) · U0a–U0d (unification) · U1–U5
 3. **3 courses sur séquences** (code client, n° de contrat) violant des contraintes uniques sous concurrence. *Réel, révélé par l'exécution parallèle.*
 4. **Cohérence du kilométrage non garantie** — une coquille de saisie figeait une référence fausse pour toutes les visites suivantes.
 
+**Défauts trouvés par la revue de fin (R1bis)**, alors que tous les lots étaient déjà marqués livrés :
+5. **L'alerte « véhicule déjà présent » pouvait ne jamais se déclencher** — `situationParking` prenait la ligne parking la **plus ancienne**, alors qu'un véhicule a autant de lignes que de passages.
+6. **La détection de place fantôme comparait deux espaces d'identifiants** — `reserve_pour` (un `parking_vehicles.id`) était comparé à un `vehicules.id`.
+7. **Le garage ne créait pas de vrai client**, contrairement au cadrage U0 — un véhicule créé au garage n'apparaissait ni à l'historique client, ni aux contrats, ni à la facturation.
+8. **Les photos d'état des lieux partaient en CASCADE avec leur dossier** — le §4 le signalait « à durcir » depuis U0c.
+
 **Leçon structurelle du plan** : les bugs les plus graves venaient tous de la **duplication de règles** entre écrans (normalisation, écrasement, types, séquences). D'où U0a (service unique de règles véhicule) comme décision structurante, plutôt qu'une série de correctifs ponctuels.
 
-**Dette connue et tracée** : `or_photos` est en `ON DELETE CASCADE` sur l'OR — supprimer un dossier effacerait les photos d'état des lieux (pièces à conviction). Signalé par S2 (« place fantôme » sur le même modèle) mais **non corrigé** : hors périmètre du CDC.
+**Deuxième leçon, plus dure** : le test de la place fantôme était **vert** en reproduisant la même erreur que le code. Test et implémentation partageaient la même hypothèse fausse, et aucun des deux ne pouvait la rattraper. Un suite verte ne prouve que la cohérence entre le test et le code — pas la justesse du modèle. Les régressions ajoutées pour ce lot ont été **validées en échec sur l'ancien code** avant d'être acceptées ; c'est le seul contrôle qui distingue un test d'un mirage.
+
+**Il ne reste aucune dette connue sur le périmètre de ce CDC.** Hors périmètre, et à traiter séparément : `customers.ts` écrit encore directement dans `clients` sans passer par le dédoublonnage R5 (deuxième porte d'entrée sur le référentiel clients).

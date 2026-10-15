@@ -307,4 +307,38 @@ describe("LOT U0c — état des lieux versionné par visite", () => {
     expect(code).toBe("BAD_REQUEST");
     expect((await photosDe(orId)).length).toBe(0);
   });
+
+  // ─── LOT R1bis — les photos sont des pièces à conviction ───────────────────
+  //
+  // `or_photos.or_id` était en ON DELETE CASCADE : supprimer le dossier
+  // effaçait les photos sans laisser de trace. La preuve disparaissait avec le
+  // dossier, en silence. La contrainte est passée en RESTRICT.
+
+  it("7. supprimer un dossier qui a des photos est REFUSÉ par la base", async () => {
+    const { orId } = await receptionnerAvecPhotos("U0CPHOTOS-007", [
+      { categorie: "AVANT", url: `data:image/jpeg;base64,${"A".repeat(1000)}` },
+    ]);
+    expect((await photosDe(orId)).length).toBeGreaterThan(0);
+
+    // Suppression directe en SQL : c'est le cas le plus défavorable (script de
+    // maintenance, futur endpoint, console psql) — aucune règle applicative ne
+    // peut l'interdire, seule la contrainte le fait.
+    await expect(db.execute(sql`DELETE FROM ordres_reparation WHERE id = ${orId}`)).rejects.toThrow();
+
+    const survivantes = await photosDe(orId);
+    expect(survivantes.length).toBeGreaterThan(0);
+  });
+
+  it("8. sans photo, la suppression reste possible", async () => {
+    const { orId } = await receptionnerAvecPhotos("U0CPHOTOS-008", []);
+    expect((await photosDe(orId)).length).toBe(0);
+
+    // La protection ne doit pas rendre l'OR indestructible : elle protège les
+    // preuves, pas les dossiers vides.
+    await db.execute(sql`DELETE FROM ordres_reparation WHERE id = ${orId}`);
+    const restant = (await db.execute(
+      sql`SELECT count(*)::int AS n FROM ordres_reparation WHERE id = ${orId}`,
+    )) as unknown as { n: number }[];
+    expect(Number(restant[0].n)).toBe(0);
+  });
 });

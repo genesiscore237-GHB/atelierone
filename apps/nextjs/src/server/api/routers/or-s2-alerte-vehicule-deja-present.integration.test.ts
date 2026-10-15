@@ -142,8 +142,21 @@ async function assurerReferentiel(): Promise<void> {
   spotId = Number(spot?.id);
 }
 
-/** Véhicule + ligne parking positionnée, dans un statut donné. */
+/**
+ * Véhicule + ligne parking positionnée, dans un statut donné.
+ * La convention réelle du code de production est respectée ici :
+ * `parking_spots.reserve_pour` reçoit le **parking_vehicles.id** de la ligne
+ * (`garage.place`), et non le `vehicules.id`.
+ */
 async function fixtureParking(immat: string, statutParking: string): Promise<number> {
+  return (await fixtureParkingLigne(immat, statutParking)).vehiculeId;
+}
+
+/** Idem, en exposant aussi l'id de la ligne parking créée. */
+async function fixtureParkingLigne(
+  immat: string,
+  statutParking: string,
+): Promise<{ vehiculeId: number; parkingId: number }> {
   await assurerReferentiel();
   const [v] = (await db.execute(
     sql`INSERT INTO vehicules (agence_id, immatriculation, immat_norm, marque, statut_immobilisation)
@@ -158,7 +171,28 @@ async function fixtureParking(immat: string, statutParking: string): Promise<num
         RETURNING id`,
   )) as unknown as Row[];
   await db.execute(sql`UPDATE parking_spots SET bloque = true, reserve_pour = ${p.id} WHERE id = ${spotId}`);
-  return vehiculeId;
+  return { vehiculeId, parkingId: Number(p.id) };
+}
+
+/**
+ * Ajoute une ligne parking SUPPLÉMENTAIRE sur un véhicule déjà présent,
+ * sans toucher au spot (simule un second passage au garage).
+ */
+async function ajouterLigneParking(
+  vehiculeId: number,
+  immat: string,
+  statut: string,
+  avecSpot: boolean,
+): Promise<number> {
+  await assurerReferentiel();
+  const [p] = (await db.execute(
+    sql`INSERT INTO parking_vehicles
+          (agence_id, vehicule_id, num_registre, immatriculation, statut, site_id, zone_id, spot_id, centre_x, centre_y)
+        VALUES (1, ${vehiculeId}, ${NUM_REGISTRE}, ${immat}, ${statut}, ${siteId}, ${zoneId},
+                ${avecSpot ? spotId : null}, 5, 5)
+        RETURNING id`,
+  )) as unknown as Row[];
+  return Number(p.id);
 }
 
 describe("LOT S2 — alerte « véhicule déjà présent »", () => {
@@ -203,9 +237,16 @@ describe("LOT S2 — alerte « véhicule déjà présent »", () => {
 
   it("4. place fantôme : ligne SORTI dont la place reste bloquée", async () => {
     const caller = orRouter.createCaller(ctxSuperadmin());
-    const vehiculeId = await fixtureParking("S2ALERTE-004", "SORTI");
+    const { vehiculeId, parkingId } = await fixtureParkingLigne("S2ALERTE-004", "SORTI");
     // On reproduit l'état hérité : la place reste bloquée pour ce véhicule.
-    await db.execute(sql`UPDATE parking_spots SET bloque = true, reserve_pour = ${vehiculeId} WHERE id = ${spotId}`);
+    //
+    // `reserve_pour` porte un `parking_vehicles.id` — c'est ce qu'écrit
+    // `garage.place`. La version initiale de ce test y mettait le
+    // `vehicules.id` : test et implémentation partageaient la même faute,
+    // et le 6/6 vert ne prouvait rien.
+    await db.execute(
+      sql`UPDATE parking_spots SET bloque = true, reserve_pour = ${parkingId} WHERE id = ${spotId}`,
+    );
 
     const s = await caller.situationParking({ vehiculeId });
     expect(s.dejaPresent).toBe(false);
@@ -225,15 +266,88 @@ describe("LOT S2 — alerte « véhicule déjà présent »", () => {
     const caller = orRouter.createCaller(ctxSuperadmin());
     const vehiculeId = await fixtureParking("S2ALERTE-006", "EN_TRAVAUX");
 
-    const avant = (await db.execute(
-      sql`SELECT count(*)::int AS n FROM ordres_reparation`,
-    )) as unknown as { n: number }[];
-    await caller.situationParking({ vehiculeId });
-    await caller.situationParking({ vehiculeId });
-    const apres = (await db.execute(
-      sql`SELECT count(*)::int AS n FROM ordres_reparation`,
-    )) as unknown as { n: number }[];
+    // On mesure le périmètre de CETTE requête (les dossiers du véhicule), et
+    // non `count(*) FROM ordres_reparation` sur toute la base : les fichiers de
+    // test tournent en parallèle et créent leurs propres dossiers, donc le
+    // décompte global bouge sans que la requête ait rien écrit. Le test
+    // vérifiait le passage à côté de ce qu'il prétendait vérifier.
+    const dossiersDe = async () => {
+      const lignes = (await db.execute(
+        sql`SELECT count(*)::int AS n FROM ordres_reparation WHERE vehicule_id = ${vehiculeId}`,
+      )) as unknown as { n: number }[];
+      return Number(lignes[0].n);
+    };
 
-    expect(Number(apres[0].n)).toBe(Number(avant[0].n));
+    const avant = await dossiersDe();
+    await caller.situationParking({ vehiculeId });
+    await caller.situationParking({ vehiculeId });
+    expect(await dossiersDe()).toBe(avant);
+
+    // Aucune écriture côté parking non plus.
+    const spots = (await db.execute(
+      sql`SELECT reserve_pour FROM parking_spots WHERE id = ${spotId}`,
+    )) as unknown as { reserve_pour: number | null }[];
+    expect(Number(spots[0].reserve_pour)).toBeGreaterThan(0);
+  });
+
+  // ── Régressions ajoutées après revue du 2026-10-15 ─────────────────────────
+  //
+  // `parking_vehicles.vehicule_id` n'est PAS unique : un véhicule a autant de
+  // lignes que de passages au garage. La requête retenait `ORDER BY pv.id`
+  // (la plus ancienne), donc un véhicule sorti en 2023 puis revenu en 2026
+  // était annoncé ABSENT alors qu'il occupait une place. Une alerte de
+  // sécurité qui manque en silence est pire que pas d'alerte.
+
+  it("7. historique de passages : une ancienne ligne SORTI ne masque pas la ligne active", async () => {
+    const caller = orRouter.createCaller(ctxSuperadmin());
+    const { vehiculeId } = await fixtureParkingLigne("S2ALERTE-007", "EN_TRAVAUX");
+    // Second passage : l'ancienne ligne est sortie, la nouvelle est en atelier.
+    await ajouterLigneParking(vehiculeId, "S2ALERTE-007", "SORTI", false);
+    const parkingActifId = await ajouterLigneParking(vehiculeId, "S2ALERTE-007", "EN_TRAVAUX", true);
+    await db.execute(
+      sql`UPDATE parking_spots SET bloque = true, reserve_pour = ${parkingActifId} WHERE id = ${spotId}`,
+    );
+
+    const s = await caller.situationParking({ vehiculeId });
+    expect(s.dejaPresent).toBe(true);
+    expect(s.ligne!.parkingId).toBe(parkingActifId);
+    expect(s.placeFantome).toBe(false);
+  });
+
+  it("8. toutes les lignes SORTI : la plus récente fait foi", async () => {
+    const caller = orRouter.createCaller(ctxSuperadmin());
+    const { vehiculeId } = await fixtureParkingLigne("S2ALERTE-008", "SORTI");
+    await db.execute(sql`UPDATE parking_spots SET bloque = false, reserve_pour = NULL WHERE id = ${spotId}`);
+    const derniereSortie = await ajouterLigneParking(vehiculeId, "S2ALERTE-008", "SORTI", false);
+
+    const s = await caller.situationParking({ vehiculeId });
+    expect(s.dejaPresent).toBe(false);
+    expect(s.placeFantome).toBe(false);
+    expect(s.ligne!.parkingId).toBe(derniereSortie);
+  });
+
+  it("9. place réservée par un AUTRE véhicule : pas de faux positif de place fantôme", async () => {
+    const caller = orRouter.createCaller(ctxSuperadmin());
+    // Véhicule A sorti, sa ligne porte encore son spot.
+    const { vehiculeId: a } = await fixtureParkingLigne("S2ALERTE-009A", "SORTI");
+    const parkingA = (await db.execute(
+      sql`SELECT id FROM parking_vehicles WHERE vehicule_id = ${a} AND statut = 'SORTI' LIMIT 1`,
+    )) as unknown as Row[];
+    // Véhicule B sorti ensuite : c'est SA ligne qui réserve le spot partagé.
+    const { vehiculeId: b } = await fixtureParkingLigne("S2ALERTE-009B", "SORTI");
+    const parkingB = (await db.execute(
+      sql`SELECT id FROM parking_vehicles WHERE vehicule_id = ${b} AND statut = 'SORTI' LIMIT 1`,
+    )) as unknown as Row[];
+    await db.execute(
+      sql`UPDATE parking_spots SET bloque = false, reserve_pour = ${Number(parkingB[0].id)} WHERE id = ${spotId}`,
+    );
+
+    // A n'est plus responsable du spot : sa place n'est pas fantôme.
+    const sA = await caller.situationParking({ vehiculeId: a });
+    expect(sA.placeFantome).toBe(false);
+    // B en porte encore la réservation : c'est B le fantôme.
+    const sB = await caller.situationParking({ vehiculeId: b });
+    expect(sB.placeFantome).toBe(true);
+    expect(parkingA[0].id).not.toBe(parkingB[0].id);
   });
 });

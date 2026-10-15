@@ -21,6 +21,8 @@
 import { and, eq, sql } from "drizzle-orm";
 import { vehicules, clients, immatNormaleCondition, immatNormPreferenceSql, normaliserImmat } from "@atelierone/db";
 import { normaliserTelephone } from "@atelierone/db";
+import { verrouillerSequence, prochaineSequence } from "./facturation-service";
+import { genererCodeClient } from "./client-service";
 
 /** Champs qu'un enregistrement peut venir COMPLÉTER sans jamais écraser. */
 export const CHAMPS_COMPLETABLES = [
@@ -227,8 +229,7 @@ export async function completerVehiculeSansEcrasement(
  * LOT R5 — marque le nouveau client ET le client existant qui partagent un
  * téléphone normalisé, SANS jamais les fusionner (D3 : pas d'invention).
  *
- * Utilisé par les écrans qui créent un client ; le garage n'a pas de client à
- * créer et n'appelle donc pas cette règle.
+ * Utilisé par les écrans qui créent un client.
  */
 export async function marquerDoublonClientTelephone(
   exec: Exec,
@@ -262,4 +263,94 @@ export async function marquerDoublonClientTelephone(
     .set({ clientsDoublonnes: true } as any)
     .where(eq(clients.id, params.nouveauClientId));
   return true;
+}
+
+// ─── LOT R1bis — le garage crée un VRAI client, pas un texte ────────────────
+
+/**
+ * Rend le garage conforme au cadrage U0 : une création directe au garage doit
+ * produire une **vraie fiche client**, rattachée par `vehicules.clientId`.
+ *
+ * Constat d'origine : `garage.create` n'écrivait que `clientNom` /
+ * `clientTelephone` en texte sur la ligne parking. Le véhicule restait donc
+ * invisible de l'historique client, des contrats et de la facturation — il
+ * existait pour le parking et pour personne d'autre.
+ *
+ * Règles (aucune invention) :
+ *  - téléphone normalisé retrouvé chez un client existant → on RÉUTILISE ce
+ *    client plutôt que d'en créer un second (c'est le cas courant : le garage
+ *    voit des véhicules déjà passés à la réception) ;
+ *  - téléphone inconnu + nom fourni → création d'une vraie fiche ;
+ *  - ni nom ni téléphone → RIEN n'est créé, le véhicule reste sans client.
+ *    On n'invente pas de fiche pour un véhicule sans propriétaire identifiable ;
+ *  - aucune fusion automatique : le marquage de doublon reste une proposition
+ *    faite à l'utilisateur, jamais une décision prise à sa place (D3).
+ *
+ * DOIT être appelé dans une transaction (la séquence de code client est
+ * verrouillée par advisory lock).
+ */
+export async function resoudreOuCreerClientDepuisIdentite(
+  exec: Exec,
+  params: {
+    agenceId: number;
+    nom?: string | null;
+    telephone?: string | null;
+  },
+): Promise<{ clientId: number; cree: boolean; reutilise: boolean } | null> {
+  const nom = params.nom?.trim() || "";
+  const telNorm = normaliserTelephone(params.telephone);
+  if (!nom && !telNorm) return null;
+
+  // 1. Un client de l'agence porte-il déjà ce téléphone normalisé ?
+  if (telNorm) {
+    const [existant] = await exec
+      .select({ id: clients.id })
+      .from(clients)
+      .where(
+        and(
+          eq(clients.agenceId, params.agenceId),
+          sql`${clients.deletedAt} IS NULL`,
+          sql`regexp_replace(substring(regexp_replace(coalesce(${clients.telephone}, ''), '[^0-9]', '', 'g') from '^(?:237)?([0-9]{9})$'), '[^0-9]', '', 'g') = ${telNorm}`,
+        ),
+      )
+      .limit(1);
+    if (existant) return { clientId: existant.id, cree: false, reutilise: true };
+  }
+
+  // 2. Non : on crée une vraie fiche, rattachable aux contrats et à la facture.
+  const codeClient = await genererCodeClientSequentiel(exec, params.agenceId);
+  const [cree] = await exec
+    .insert(clients)
+    .values({
+      agenceId: params.agenceId,
+      nom: nom || `Client ${telNorm}`,
+      telephone: params.telephone?.trim() || null,
+      codeClient,
+      typeClient: "PART",
+      statut: "ACTIF",
+    } as any)
+    .returning({ id: clients.id });
+
+  await marquerDoublonClientTelephone(exec, {
+    agenceId: params.agenceId,
+    nouveauClientId: cree.id,
+    telephone: params.telephone,
+  });
+  return { clientId: cree.id, cree: true, reutilise: false };
+}
+
+/**
+ * Code client séquentiel, calculé sous verrou consultif.
+ *
+ * `count(*)+1` — l'implémentation historique — lit et écrit livalent, donc
+ * deux créations concurrentes lisent le même compte et violent
+ * `clients_code_client_unique`. Défaut réellement observé à l'exécution
+ * parallèle, pas théorique. On réutilise donc les helpers de séquence déjà
+ * éprouvés (S1/R5) plutôt qu'une troisième implémentation.
+ */
+async function genererCodeClientSequentiel(exec: Exec, _agenceId: number): Promise<string> {
+  const now = new Date();
+  await verrouillerSequence(exec, "CLT", now.getFullYear());
+  const n = await prochaineSequence(exec, clients, clients.codeClient, `CLT-${now.getFullYear()}-`);
+  return genererCodeClient(n, now);
 }

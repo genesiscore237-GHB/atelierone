@@ -71,6 +71,8 @@ import {
 } from "~/server/lib/parking-vehicule-service";
 import {
   resoudreOuCreerVehicule,
+  completerVehiculeSansEcrasement,
+  resoudreOuCreerClientDepuisIdentite,
 } from "~/server/lib/vehicule-regles";
 
 export const STATUTS_VEHICULE = [
@@ -908,6 +910,33 @@ spots: spots.map((s) => {
           },
         });
         vehiculeId = resolution.vehiculeId;
+
+        // LOT R1bis — le garage doit produire une VRAIE fiche client, pas une
+        // paire de champs texte. Historiquement le véhicule créé ici n'apparaissait
+        // ni à l'historique client, ni aux contrats, ni à la facturation : il
+        // existait pour le parking et pour personne d'autre.
+        //
+        // Deux garde-fous, tous deux inspirés du cadrage U0 (« la création
+        // directe au garage reste possible UNIQUEMENT si la plaque est
+        // inconnue à la réception ») :
+        //  - véhicule déjà propriétaire → on n'y touche pas. Ni écrasement
+        //    (RD4), ni fiche fantôme_PART : un nom tapé dans un registre
+        //    papier ne suffit pas à créer un client (D3, pas d'invention) ;
+        //  - ni nom ni téléphone → rien n'est créé.
+        //
+        // Le nom/telephone restent copiés sur la ligne parking (le registre
+        // historique n'est pas altéré), mais le lien canonique passe
+        // désormais par `vehicules.clientId`.
+        if (!resolution.clientIdHistorique) {
+          const client = await resoudreOuCreerClientDepuisIdentite(db, {
+            agenceId,
+            nom: input.clientNom,
+            telephone: input.clientTelephone,
+          });
+          if (client) {
+            await completerVehiculeSansEcrasement(db, vehiculeId, { clientId: client.clientId });
+          }
+        }
       }
 
       const photos = auteurPhotos(input.photos, ctx.user);

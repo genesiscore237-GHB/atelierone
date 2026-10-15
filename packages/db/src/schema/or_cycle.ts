@@ -22,7 +22,24 @@ export const orHistorique = pgTable("or_historique", {
 /** Photos / vidéos jointes à l'OR (consignes d'entrée, état des lieux). */
 export const orPhotos = pgTable("or_photos", {
   id: serial("id").primaryKey(),
-  orId: integer("or_id").notNull().references(() => ordresReparation.id, { onDelete: "cascade" }),
+  /**
+   * LOT R1bis — PIÈCES À CONVICTION : `onDelete: "restrict"`, plus `cascade`.
+   *
+   * Les photos d'état des lieux sont la preuve de l'état du véhicule à l'entrée
+   * et à la sortie. En `cascade`, un simple `DELETE FROM ordres_reparation`
+   * — en SQL direct, en script de maintenance, ou via un futur endpoint —
+   * effaçait ces preuves sans laisser de trace et sans lever d'erreur : le
+   * dossier disparaissait, la preuve avec.
+   *
+   * `restrict` déplace la décision là où elle doit être : la base refuse la
+   * suppression tant qu'une photo existe. C'est aussi le seul point qui protège
+   * TOUS les accès, y compris ceux qui n'existent pas encore — aucune route
+   * applicative ne supprime d'OR aujourd'hui, mais rien ne l'interdisait.
+   *
+   * Pour supprimer un dossier ayant des photos, il faut d'abord les supprimer
+   * explicitement : geste visible et volontaire, pas un effet de bord.
+   */
+  orId: integer("or_id").notNull().references(() => ordresReparation.id, { onDelete: "restrict" }),
   url: text("url").notNull(),
   type: varchar("type", { length: 10 }).default("PHOTO"), // PHOTO | VIDEO
   creePar: integer("cree_par").references(() => utilisateurs.id),
