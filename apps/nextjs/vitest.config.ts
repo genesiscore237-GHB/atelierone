@@ -34,22 +34,70 @@ export const TESTS_BASE_REELLE = [
   'src/server/api/routers/rpt04-journal.integration.test.ts',
 ];
 
+const COMMUN = {
+  environment: 'node' as const,
+  globals: true,
+  setupFiles: ['./src/test/setup.ts'],
+  // Tests d'intégration DB : le défaut (5 s) est franchi dès que plusieurs
+  // fichiers tournent en parallèle sous charge (11 s mesuré en local).
+  testTimeout: 20000,
+  hookTimeout: 20000,
+  // `*.spec.ts` = Playwright (e2e et variantes e2e-r*) : jamais par vitest.
+  exclude: ['**/*.spec.ts', 'node_modules/**', ...TESTS_BASE_REELLE],
+};
+
+const ALIAS = {
+  '@': path.resolve(__dirname, './src'),
+  '~': path.resolve(__dirname, './src'),
+};
+
+/**
+ * ISOLATION — deux projets au lieu d'un seul.
+ *
+ * Tous les fichiers partageaient UNE base et tournaient EN PARALLÈLE. Chaque
+ * fichier y créait ses fixtures avec des identifiants en dur, et le nommage
+ * a fini par se recouvrir : un clientatosis détecté par un test appartenait
+ * parfois au fichier d'à côté. Symptôme caractéristique : le fichier passe
+ * seul, échoue dans la suite complète, et l'erreur désigne une contrainte
+ * portant sur une donnée qu'il n'a pas créée.
+ *
+ * Réparer cela au cas par cas (renommer des téléphones de fixture) est futile :
+ * la prochaine règle métier rendrait le recouvrement à nouveau, et
+ * l'échec suivant désignerait un fichier innocent. Trois fois de suite cela s'est produit
+ * produis ainsi sur ce lot.
+ *
+ * D'où deux projets :
+ *   - `unites`       : logique pure, aucune base. Parallèles, rapides.
+ *   - `integration`  : base réelle. SÉRIALISÉS (`fileParallelism: false`),
+ *                      donc plus aucun recouvrement possible entre fichiers.
+ *
+ * Coût : la suite complète s'allonge (les tests base s'exécutent l'un après
+ * l'autre). Gain : plus aucun faux échec, et plus jamais de téléphone de
+ * fixture à renommer à la main. La fiabilité prime — un test qui échoue par
+ * hasard coûte plus cher qu'une suite un peu plus lente.
+ */
 export default defineConfig({
   test: {
-    environment: 'node',
-    globals: true,
-    setupFiles: ['./src/test/setup.ts'],
-    // Tests d'intégration DB : le défaut (5 s) est franchi dès que plusieurs
-    // fichiers tournent en parallèle sous charge (11 s mesuré en local).
-    testTimeout: 20000,
-    hookTimeout: 20000,
-    // `*.spec.ts` = Playwright (e2e et variantes e2e-r*) : jamais par vitest.
-    exclude: ['**/*.spec.ts', 'node_modules/**', ...TESTS_BASE_REELLE],
+    projects: [
+      {
+        resolve: { alias: ALIAS },
+        test: {
+          ...COMMUN,
+          name: 'unites',
+          include: ['**/*.test.ts'],
+          exclude: [...COMMUN.exclude, '**/*.integration.test.ts'],
+        },
+      },
+      {
+        resolve: { alias: ALIAS },
+        test: {
+          ...COMMUN,
+          name: 'integration',
+          include: ['**/*.integration.test.ts'],
+          fileParallelism: false,
+        },
+      },
+    ],
   },
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-      '~': path.resolve(__dirname, './src'),
-    },
-  },
+  resolve: { alias: ALIAS },
 });
