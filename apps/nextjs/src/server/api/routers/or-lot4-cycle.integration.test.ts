@@ -160,7 +160,19 @@ describe("Lot 4 — cycle OR complet (réception → clôture définitive)", () 
     const [veh] = (await db.execute(
       sql`SELECT statut_immobilisation FROM vehicules WHERE id = ${vehiculeId}`,
     )) as unknown as Row[];
-    expect(veh?.statut_immobilisation).toBe("en_reparation");
+
+    // LOT P0.1. AVANT, ce test attendait « en réparation » — et c'était le
+    // bug. `or.receptionner` écrivait `en_reception` à la création du
+    // véhicule, puis `en_reparation` quarante lignes plus bas : deux statuts
+    // écrits, un seul conservé, et celui qui restait n'était le statut
+    // d'aucun fait réel. Le dossier venait d'être ouvert, il était en attente
+    // de diagnostic ; dire « en réparation » sixty secondes après l'arrivée du
+    // véhicule rendait le tableau de bord faux dès la première seconde.
+    //
+    // Le statut est maintenant dérivé du dossier : `EN_ATTENTE_DIAGNOSTIC`
+    // → `en_reception`. Il passera à « en réparation » quand le dossier
+    // passera en `EN_COURS` (étape 3), ce qui est le seul moment où c'est vrai.
+    expect(veh?.statut_immobilisation).toBe("en_reception");
   });
 
   it("2. diagnostic soumis : rapport SOUMIS, OR en attente de validation", async () => {

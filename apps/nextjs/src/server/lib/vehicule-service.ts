@@ -63,7 +63,20 @@ const TRANSITIONS: Record<string, string[]> = {
 };
 
 export function transitionStatutVehiculeValide(de: string | null | undefined, vers: string): boolean {
-  if (!de) return STATUTS_IMMOBILISATION.includes(vers as any);
+  // LOT P0.1 — plus d'auto-dégradation.
+  //
+  // AVANT : `if (!de) return STATUTS_IMMOBILISATION.includes(vers)`. Un véhicule
+  // dont `statut_immobilisation` était NULL — produit par le backfill
+  // `migrate-parking-vehicules.ts` dont le `CASE` finit en `ELSE NULL` —
+  // voyait TOUTE transition comme autorisée. La garde de sécurité
+  // disparaissait précisément sur les données qu'elle devait surveiller, et
+  // sans lever la moindre erreur : les statuts NULL étaient indétectables.
+  //
+  // Un statut inconnu n'est plus traité comme une passe-partout : il est
+  // refusé. Un NULL se traite comme le repli documenté, pas comme « tout est
+  // permis ».
+  if (!de) return vers === "en_reception";
+  if (!STATUTS_IMMOBILISATION.includes(de as any)) return false;
   const autorisees = TRANSITIONS[de] ?? [];
   return autorisees.includes(vers);
 }

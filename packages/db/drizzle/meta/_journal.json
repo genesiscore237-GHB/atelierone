@@ -64,6 +64,13 @@
       "when": 1763030000000,
       "tag": "0008_outillage_catalogue",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1763040000000,
+      "tag": "0009_checks_statuts",
+      "breakpoints": true
     }
   ]
 }

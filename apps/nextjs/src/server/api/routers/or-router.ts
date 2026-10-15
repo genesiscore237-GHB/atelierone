@@ -83,6 +83,7 @@ import {
   transitionLigneValide,
 } from "~/server/lib/atelier-service";
 import { lignesNonReglees, messageTravauxNonTermines } from "~/server/lib/gardes-travaux";
+import { synchroniserStatutVehicule } from "~/server/lib/statut-vehicule";
 import {
   lireCatalogue,
   ecrireCatalogue,
@@ -654,15 +655,15 @@ export const orRouter = createTRPCRouter({
           changePar: Number(ctx.user.id),
         } as any);
 
-        // Le véhicule entre en réparation
-        if (vehicule.statutImmobilisation !== "en_reparation") {
-          await tx
-            .update(vehicules)
-            .set({ statutImmobilisation: "en_reparation", updatedAt: new Date() } as any)
-            .where(eq(vehicules.id, input.vehiculeId));
-          // LOT 1 — projection → registre parking lié.
-          await projeterParkingDepuisImmo(tx, input.vehiculeId, "en_reparation");
-        }
+// LOT P0.1 : le statut n'est plus écrit, il est dérivé du dossier que
+        // cet appel vient d'ouvrir (`EN_ATTENTE_DIAGNOSTIC` → `en_reception`).
+        //
+        // AVANT, cette écriture inconditionnelle forçait `en_reparation`,
+        // y compris sur un véhicule `sorti` ou `abandonne_contentieux` — deux
+        // transitions que la machine d'états interdit. Comme `or.receptionner`
+        // est le chemin le plus emprunté, c'est par lui que le contrôle
+        // « véhicule sorti ⇒ ré-entrée » de `or.create` se faisait contourner.
+        await synchroniserStatutVehicule(tx, input.vehiculeId, ctx.user.agenceId);
         return row;
       });
     }),
@@ -957,10 +958,17 @@ export const orRouter = createTRPCRouter({
           changePar: Number(ctx.user.id),
         } as any);
 
-        // 6. Le véhicule entre en réparation
-        await tx.update(vehicules).set({ statutImmobilisation: "en_reparation", updatedAt: new Date() } as any).where(eq(vehicules.id, vehiculeId));
-        // LOT 1 — projection → registre parking lié.
-        await projeterParkingDepuisImmo(tx, vehiculeId, "en_reparation");
+// 6. Le statut du véhicule n'est plus ÉCRIT ici : il est DÉRIVÉ du dossier
+        // qu'on vient d'ouvrir, puis projeté vers le registre parking.
+        //
+        // AVANT, cette ligne écrivait `en_reception` à la création du véhicule
+        // (dix lignes plus haut) puis `en_reparation` ici : deux statuts écrits,
+        // un seul conservé. Et l'agent qui rouvrait la fiche voyait « en
+        // réparation » alors que le dossier venait d'être créé.
+        //
+        // Maintenant la source de vérité est le dossier (`EN_ATTENTE_DIAGNOSTIC`
+        // → `en_reception`), et la fonction est le seul point d'écriture.
+        await synchroniserStatutVehicule(tx, vehiculeId, ctx.user.agenceId);
 
         // RD3 — transparence : l'UI informe que le véhicule existant a été
         // réutilisé (et non recréé) lors de la réception.
@@ -1547,7 +1555,11 @@ if (or.statut !== "PRET_A_LIVRER") {
           dateCloture: or.dateCloture ?? new Date(),
           updatedAt: new Date(),
         } as any).where(eq(ordresReparation.id, input.orId));
-        await tx.update(vehicules).set({ statutImmobilisation: "sorti", kilometrage: input.kilometrageSortie, updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
+        // LOT P0.1 — le statut est dérivé de l'OR passé à `LIVRE` : `sorti`.
+        // On écrit SEULEMENT le kilométrage ici ; le statut est recalculé
+        // depuis le dossier pour qu'il ne puisse pas diverger.
+        await tx.update(vehicules).set({ kilometrage: input.kilometrageSortie, updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
+        await synchroniserStatutVehicule(tx, or.vehiculeId, ctx.user.agenceId);
         // LOT S1 (E12, RD8) — la restitution est une VRAIE sortie du parking.
         //
         // AVANT ce lot, on appelait `projeterParkingDepuisImmo(…, "sorti")` :
@@ -1633,9 +1645,20 @@ if (or.statut !== "PRET_A_LIVRER") {
         changePar: Number(ctx.user.id),
       } as any);
 
-      // Cohérence véhicule
+// Cohérence véhicule
+      //
+      // LOT P0.1 : plus aucun `statutImmobilisation` n'est écrit ici. Avant,
+      // ce bloc ne traitait que trois cas sur onze : `ANNULE` et
+      // `ferme_definitif` ne touchaient à rien, si bien qu'un dossier annulé
+      // laissait le véhicule « en réparation » INDÉFINIMENT, sans aucun
+      // dossier ouvert. La fiche affichait alors « En réparation » juste
+      // au-dessus de « Aucun ordre de réparation en cours ».
+      //
+      // Le statut est recalculé à chaque changement : c'est le dossier qui
+      // vient d'être écrit qui répond.
+      await synchroniserStatutVehicule(db, or.vehiculeId, ctx.user.agenceId);
+
       if (input.nouveauStatut === "LIVRE") {
-        await db.update(vehicules).set({ statutImmobilisation: "sorti", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
         // LOT S1 (E12, RD8) — même exigence que `or.restituerVehicule` : une
         // livraison marque le véhicule SORTI, donc sa place doit être LIBÉRÉE
         // et la sortie journalisée. La projection seule laissait une place
@@ -1647,10 +1670,6 @@ if (or.statut !== "PRET_A_LIVRER") {
           motif: `Livraison dossier ${or.numero ?? input.id}`,
           commentaire: "Véhicule livré (changement de statut LIVRE)",
         });
-      } else if (input.nouveauStatut === "EN_COURS" || input.nouveauStatut === "CONTROLE_QUALITE") {
-        await db.update(vehicules).set({ statutImmobilisation: "en_reparation", updatedAt: new Date() } as any).where(eq(vehicules.id, or.vehiculeId));
-        // LOT 1 — projection → registre parking lié.
-        await projeterParkingDepuisImmo(db, or.vehiculeId, "en_reparation");
       }
 
       return { success: true, statut: input.nouveauStatut };

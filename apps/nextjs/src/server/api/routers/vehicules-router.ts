@@ -27,6 +27,8 @@ import {
 import { eq, and, desc, sql, or, ilike } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { dossierEstTermine } from "~/server/lib/atelier-service";
+import { resoudreStatutVehicule, STATUTS_DERIVABLES } from "~/server/lib/statut-vehicule";
+import { STATUT_LABELS } from "~/server/lib/vehicule-service";
 import {
   transitionStatutVehiculeValide,
   STATUTS_IMMOBILISATION,
@@ -583,6 +585,35 @@ export const vehiculesRouter = createTRPCRouter({
         .where(and(eq(vehicules.id, input.id), eq(vehicules.agenceId, ctx.user.agenceId)))
         .limit(1);
       if (!vehicule) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
+
+      // LOT P0.1 — cette mutation est une CORRECTION MANUELLE, et elle est
+      // légitime : `transfere_site2`, `abandonne_contentieux` et
+      // `terminee_client_non_venu` sont des états qu'aucun flux de l'atelier
+      // ne produit. Personne d'autre ne les posera.
+      //
+      // En revanche elle ne doit pas contredire un dossier ouvert : un agent
+      // qui passe « en atelier » un véhicule dont le dossier est en
+      // `PRET_A_LIVRER` effacerait l'information la plus utile du dossier.
+      //
+      //   - statut que le DÉROULEMENT sait produire et qui diffère du statut
+      //     dérivé → refusé, le dossier a raison ;
+      //   - statut HORS flux → accepté, mais avec motif obligatoire : le
+      //     véhicule y restera jusqu'à la prochaine action de l'atelier.
+      const derive = await resoudreStatutVehicule(db, input.id, ctx.user.agenceId);
+      const posableALaMain = !STATUTS_DERIVABLES.includes(input.nouveauStatut as never);
+      if (derive.source === "dossier" && !posableALaMain && derive.statut !== input.nouveauStatut) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Un dossier d'atelier est ouvert : son statut implique « ${STATUT_LABELS[derive.statut] ?? derive.statut} ». Faites avancer le dossier, ou choisissez un état hors flux (transféré, contentieux, client non venu).`,
+        });
+      }
+      if (derive.source === "dossier" && posableALaMain && (input.motif ?? "").trim().length < 3) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Mettre un véhicule en état hors flux pendant qu'un dossier est ouvert exige un motif : il y restera jusqu'à la prochaine action de l'atelier.",
+        });
+      }
+
       if (!transitionStatutVehiculeValide(vehicule.statutImmobilisation, input.nouveauStatut)) {
         throw new TRPCError({ code: "BAD_REQUEST", message: `Transition « ${vehicule.statutImmobilisation} → ${input.nouveauStatut} » non autorisée.` });
       }

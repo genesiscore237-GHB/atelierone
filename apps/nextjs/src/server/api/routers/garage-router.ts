@@ -74,6 +74,8 @@ import {
   completerVehiculeSansEcrasement,
   resoudreOuCreerClientDepuisIdentite,
 } from "~/server/lib/vehicule-regles";
+import { synchroniserStatutVehicule, resoudreStatutVehicule } from "~/server/lib/statut-vehicule";
+import { STATUT_LABELS } from "~/server/lib/vehicule-service";
 
 export const STATUTS_VEHICULE = [
   "EN_PARKING",
@@ -1110,7 +1112,11 @@ spots: spots.map((s) => {
         vin: input.vin,
       });
       if (input.statut !== undefined) {
-        await projeterImmoDepuisParking(db, vehiculeId, input.statut);
+        // LOT P0.1 : le statut parking a été écrit, le statut du véhicule est
+        // recalculé. Un dossier d'atelier ouvert reste prioritaire — sinon
+        // modifier une ligne du registre pendant une intervention effacerait
+        // l'état des travaux.
+        await synchroniserStatutVehicule(db, vehiculeId, ctx.user.agenceId);
       }
 
       return { id: updated.id, statutChange };
@@ -1567,6 +1573,26 @@ spots: spots.map((s) => {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Ce véhicule est déjà sorti." });
       }
 
+        // LOT P0.1 — garde métier.
+        //
+        // Sortir physiquement un véhicule du garage alors qu'un dossier est
+        // ouvert crée une incohérence que rien ne savait signaler : le registre
+        // parking disait SORTI, le dossier continuait, et la fiche véhicule
+        // affichait « en réception » pour un véhicule parti. C'est la
+        // désynchronisation n°1, et elle n'est pas réparable après coup.
+        //
+        // Le dossier est la vérité. Pour sortir le véhicule, il faut d'abord
+        // clore le dossier — ou utiliser la restitution, qui fait les deux.
+        if (vehicle.vehiculeId) {
+          const derive = await resoudreStatutVehicule(db, vehicle.vehiculeId, agenceId);
+          if (derive.source === "dossier") {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: `Ce véhicule a un ordre de réparation ouvert (« ${STATUT_LABELS[derive.statut] ?? derive.statut} »). Restituez-le depuis le dossier, ou annulez le dossier avant de le sortir du garage : sans cela, le véhicule disparaît des deux registres.`,
+            });
+          }
+        }
+
       await db.transaction(async (tx) => {
         // LOT S1 (RD8) — la sortie est une logique UNIQUE partagée avec
         // `or.restituerVehicule` (libération du spot + mouvement SORTIE).
@@ -1580,6 +1606,16 @@ spots: spots.map((s) => {
         if (!r.applique && r.raison === "pas_de_ligne_parking") {
           throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
         }
+
+        // LOT P0.1 — désynchronisation n°1 refermée.
+        //
+        // Avant, `garage.sortie` libérait la place et écrivait SORTI dans le
+        // registre parking, SANS toucher au véhicule canonique. Résultat : la
+        // fiche véhicule affichait toujours « En réception » ou « En
+        // réparation » alors que le véhicule était physiquement sorti, et
+        // `or.create` refusait toujours de lui ouvrir un dossier. Le véhicule
+        // devenait invisible à l'atelier tout en étant sorti du parking.
+        await synchroniserStatutVehicule(tx, vehicle.vehiculeId, ctx.user.agenceId);
       });
       return { id: vehicle.id, ok: true };
     }),
@@ -2209,7 +2245,15 @@ analyser: requirePermissionProcedure("parking.alertes.gerer")
             updatedAt: new Date(),
           } as any)
           .where(eq(parkingTransfers.id, tr.id));
-        await projeterImmoDepuisParking(tx, vehicle.vehiculeId, "EN_PARKING");
+
+        // LOT P0.1 : le statut du véhicule n'est plus déduit du statut
+        // parking. AVANT, cette ligne projetait `EN_PARKING` → `en_reception`
+        // et rebattait donc en « en réception » un véhicule qui pouvait avoir
+        // un dossier `EN_COURS` et des travaux en cours — le transfert
+        // effaçait l'état de l'atelier. Le comportement était testé comme
+        // voulu (garage-lot2 : `en_reparation` → `en_reception`), ce qui
+        // rendait le défaut intentionnel à défaut d'être voulu.
+        await synchroniserStatutVehicule(tx, vehicle.vehiculeId, ctx.user.agenceId);
       });
       return { id: tr.id, ok: true };
     }),
@@ -2254,6 +2298,10 @@ analyser: requirePermissionProcedure("parking.alertes.gerer")
               } as any)
               .where(eq(parkingVehicles.id, tr.vehicleId));
             await projeterImmoDepuisParking(tx, vehicle.vehiculeId, precedent);
+            // LOT P0.1 : recalculé depuis le dossier plutôt que projeté depuis
+            // le parking — un transfert annulé ne doit pas laisser un dossier
+            // en cours dans un état que la projection ne sait pas exprimer.
+            await synchroniserStatutVehicule(tx, vehicle.vehiculeId, ctx.user.agenceId);
           }
         }
         await tx
