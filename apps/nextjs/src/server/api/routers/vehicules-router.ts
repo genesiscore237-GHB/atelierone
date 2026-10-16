@@ -46,6 +46,7 @@ import {
   completerVehiculeSansEcrasement,
 } from "~/server/lib/vehicule-regles";
 import { listeCanoniqueVehicules } from "~/server/lib/liste-canonique-vehicules";
+import { journalVehicule } from "~/server/lib/journal-vehicule";
 
 /** MODULE VÉHICULES & ATELIER — parc, fiche, statuts d'immobilisation, historique. */
 export const vehiculesRouter = createTRPCRouter({
@@ -179,6 +180,23 @@ export const vehiculesRouter = createTRPCRouter({
           : [],
       };
     }),
+
+  /**
+ * Journal unifié du véhicule : diagnostic, devis, interventions, événements —
+ * **datés et attribués**.
+ *
+ * C'est ce que l'agent doit voir au clic, et ce que la fiche 360 ne donnait
+ * pas : `or_historique.change_par` existe en base mais n'était pas demandé,
+ * donc l'historique était daté et **anonyme**.
+ */
+journal: requirePermissionProcedure("vehicules.consulter")
+  .input(
+    z.object({
+      id: z.number().int().positive(),
+      limite: z.number().int().min(1).max(500).default(200),
+    }),
+  )
+  .query(async ({ ctx, input }) => journalVehicule(db, input.id, ctx.user.agenceId, input.limite)),
 
   list: requirePermissionProcedure("vehicules.consulter")
     .input(
