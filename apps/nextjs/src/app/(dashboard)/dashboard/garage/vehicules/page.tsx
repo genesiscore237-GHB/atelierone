@@ -24,6 +24,7 @@ import {
 } from "../_components/statuts";
 import { VehiculeFormDialog, type VehiculeFormModel } from "../_components/VehiculeFormDialog";
 import { PhotoLightbox } from "../_components/PhotoLightbox";
+import { useTempsReel } from "~/hooks/useTempsReel";
 import { ExportVehiculesDialog } from "../_components/ExportVehiculesDialog";
 import { vehiculeVersFormModel } from "../_components/vehicule-form-model";
 import {
@@ -107,13 +108,18 @@ useEffect(() => {
   }, [editDetail]);
 
   const { data: sites } = api.garage.sites.useQuery();
+// Le registre est l'écran que l'agent laisse ouvert sur l'établi : c'est
+  // celui où un changement fait par un collègue doit apparaître sans qu'il
+  // recharge. 10 s suffisent — un transfert, une entrée ou un déplacement
+  // n'a pas besoin d'être vu dans la seconde, mais ne doit pas attendre.
+  const intervalleTempsReel = useTempsReel(10_000);
   const { data, isLoading, isError, error, refetch } = api.garage.vehicles.useQuery({
     search: debouncedSearch.trim() || undefined,
     statut: statut || undefined,
     siteId: siteId ? Number(siteId) : undefined,
     nonPositionnes: nonPositionnes ? true : undefined,
     limit: 200,
-  }, { placeholderData: keepPreviousData });
+    }, { placeholderData: keepPreviousData, refetchInterval: intervalleTempsReel });
 
   const canCreer = hasPermission("parking.vehicule.creer");
   const canModifier = hasPermission("parking.vehicule.modifier");

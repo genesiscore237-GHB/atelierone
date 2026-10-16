@@ -15,6 +15,7 @@ import { usePermissions } from "~/hooks/usePermissions";
 import { useDebounce } from "~/lib/useDebounce";
 import { PhotoLightbox } from "~/components/photos/PhotoLightbox";
 import { photosValides } from "~/lib/photos";
+import { useTempsReel } from "~/hooks/useTempsReel";
 
 const TAILLE_PAGE = 25;
 
@@ -58,7 +59,12 @@ export function VehiculesListClient() {
     offset: page * TAILLE_PAGE,
   } as const;
 
-  const { data, isLoading, isError, error } = api.vehicules.listeCanonique.useQuery(filtres);
+  // Le statut d'immobilisation est DERIVE d'un dossier ouvert ailleurs : l'agent
+  // doit voir le changement fait par un collegue sans recharger la page.
+  const intervalle = useTempsReel(10_000);
+  const { data, isLoading, isError, error } = api.vehicules.listeCanonique.useQuery(filtres, {
+    refetchInterval: intervalle,
+  });
   const { data: clientsData } = api.clients.list.useQuery({ statut: "ACTIF", limit: 200 });
   const create = api.vehicules.create.useMutation({
     onSuccess: (r: any) => {

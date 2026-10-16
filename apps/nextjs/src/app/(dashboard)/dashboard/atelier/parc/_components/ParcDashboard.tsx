@@ -39,6 +39,7 @@ import {
   MOTIFS_ENTREE,
   suggererPriorite,
 } from "~/server/lib/atelier-service";
+import { useTempsReel } from "~/hooks/useTempsReel";
 import { usePermissions } from "~/hooks/usePermissions";
 
 const TYPE_CLIENT_LABELS: Record<string, string> = { PART: "Particulier", ENTR: "Entreprise", ADMIN: "Administration", ASSUR: "Assurance", FLOTTE: "Flotte", PROSP: "Prospect" };
@@ -68,7 +69,11 @@ const FACTURE_LABEL: Record<string, string> = {
 export function ParcDashboard() {
   const { hasPermission } = usePermissions();
   const utils = api.useUtils();
-  const { data, isLoading, refetch, dataUpdatedAt } = api.or.getDashboard.useQuery(undefined, { refetchInterval: 30_000 });
+  // L'encours du garage : 30 s, et SUSPENDU quand l'onglet est masque.
+  // Cet ecran est typiquement ouvert en permanence sur un poste de l'atelier :
+  // sans la suspension, il interroge la base 2 880 fois par jour et par poste.
+  const intervalleTempsReel = useTempsReel(30_000);
+  const { data, isLoading, refetch, dataUpdatedAt } = api.or.getDashboard.useQuery(undefined, { refetchInterval: intervalleTempsReel });
   const { data: notifsData } = api.or.listNotifsAtelier.useQuery({ lu: false });
 
   const [search, setSearch] = useState("");
@@ -446,7 +451,7 @@ export function ParcDashboard() {
 
 // ─── Panneau détail véhicule au clic (toutes les informations de suivi) ───
 function ParcDetailModal({ orId, onClose }: { orId: number; onClose: () => void }) {
-  const { data, isLoading } = api.or.getDashboard.useQuery(undefined, { refetchInterval: 30_000 });
+  const { data, isLoading } = api.or.getDashboard.useQuery(undefined, { refetchInterval: useTempsReel(30_000) });
   const parc = (data?.parc ?? []) as any[];
   const p = parc.find((x) => x.id === orId);
 
