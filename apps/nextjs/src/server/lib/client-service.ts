@@ -6,7 +6,19 @@
 export const TYPES_CLIENT = ["PART", "ENTR", "ADMIN", "ASSUR", "FLOTTE", "PROSP"] as const;
 export type TypeClient = (typeof TYPES_CLIENT)[number];
 
-export const STATUTS_CLIENT = ["PROSPECT", "ACTIF", "INACTIF", "BLOQUE", "ARCHIVE"] as const;
+/**
+ * Statuts client.
+ *
+ * `PROVISOIRE` — fiche créée depuis le registre parking, où le nom est du
+ * texte libre recopié et rien d'autre n'est vérifié. Ce n'est pas un prospect :
+ * un prospect est un type (`PROSP`), quelqu'un à qui on vend. Confluer les
+ * deux faisait entrer un client non vérifié dans les classements commerciaux
+ * et le recouvrement, ce que la décision D4 refuse explicitement.
+ *
+ * La promotion vers `ACTIF` se fait à la réception : c'est le premier moment
+ * où quelqu'un confirme que la personne est réelle et joignable.
+ */
+export const STATUTS_CLIENT = ["PROVISOIRE", "PROSPECT", "ACTIF", "INACTIF", "BLOQUE", "ARCHIVE"] as const;
 export type StatutClient = (typeof STATUTS_CLIENT)[number];
 
 export const TYPES_CONTRAT = ["FORFAIT_MENSUEL", "FORFAIT_ANNUEL", "A_LA_DEMANDE", "PREVENTIF_PROGRAMME", "MIXTE"] as const;
@@ -74,6 +86,7 @@ export function genererNumeroContrat(sequence: number, date = new Date()): strin
 /** Transitions de statut client autorisées (règle §5 : PROSPECT→ACTIF explicite, etc.). */
 export function transitionStatutClientValide(de: StatutClient | null | undefined, vers: StatutClient): boolean {
   switch (de) {
+    case "PROVISOIRE": return vers === "ACTIF" || vers === "ARCHIVE";
     case "PROSPECT": return vers === "ACTIF" || vers === "ARCHIVE";
     case "ACTIF": return vers === "INACTIF" || vers === "BLOQUE" || vers === "ARCHIVE";
     case "BLOQUE": return vers === "ACTIF" || vers === "ARCHIVE";
@@ -81,6 +94,18 @@ export function transitionStatutClientValide(de: StatutClient | null | undefined
     case "ARCHIVE": return false;
     default: return vers === "ACTIF"; // création → ACTIF
   }
+}
+
+/**
+ * La réception est la seule preuve qu'une fiche `PROVISOIRE` est réelle :
+ * quelqu'un a ramené le véhicule et identifié la personne.
+ *
+ * Un clientarchivé n'est pas promu — il ne peut l'être de toute façon, la
+ * machine l'interdit. Un client bloqué non plus : la promotion ne doit pas
+ * servir de contournement au blocage.
+ */
+export function promotionReceptionValide(de: StatutClient | null | undefined): boolean {
+  return de === "PROVISOIRE" || de === "PROSPECT" || de === "INACTIF";
 }
 
 /** Un client BLOQUÉ ne peut plus avoir de nouvel OR (règle §5, appliquée par le module OR). */

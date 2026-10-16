@@ -36,8 +36,9 @@ import {
   stocks,
   immatNormaleCondition,
   immatNormPreferenceSql,
-  normaliserTelephone,
-} from "@atelierone/db";
+normaliserTelephone,
+  clientStatutHistorique,
+ } from "@atelierone/db";
 import { eq, and, desc, sql, gte, lte, asc, inArray, ilike, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
@@ -94,7 +95,7 @@ import {
   type ElementOutillage,
 } from "~/server/lib/outillage-catalogue";
 import { sortirPourOR, enregistrerMouvement } from "~/server/lib/stock-engine";
-import { genererCodeClient } from "~/server/lib/client-service";
+import { genererCodeClient, promotionReceptionValide } from "~/server/lib/client-service";
 
 /** E1 — notification atelier (helper interne). */
 async function notifierAtelier(
@@ -191,6 +192,51 @@ const verifierProprietaireNonModifiable = async (
       `procédure de cession. Si c'est bien le même client, sélectionnez sa fiche ` +
       `existante au lieu d'en créer une seconde.`,
   });
+};
+
+/**
+ * D4 — promotion du client à la réception.
+ *
+ * Une fiche client issue du registre parking est `PROVISOIRE` : son nom vient
+ * d'un texte libre, rien d'autre n'est vérifié. La réception est le premier
+ * moment où quelqu'un identifie réellement la personne sur le véhicule — donc
+ * le premier moment où la fiche est confirmée.
+ *
+ * Sans cette promotion, un client parking restait « non confirmé » indéfiniment,
+ * alors même qu'il venait de rentrer pour un travail : la décision D4 était
+ * écrite mais jamais exécutée.
+ *
+ * Ce qui n'est PAS promu, délibérément :
+ *   - `BLOQUE`  — la promotion ne doit pas servir de contournement au blocage ;
+ *   - `ARCHIVE` — la machine l'interdit, et c'est la bonne réponse ;
+ *   - `ACTIF`   — déjà confirmé, l'écriture serait un bruit inutile.
+ *
+ * L'historique est écrit comme pour toute autre transition : un statut qui
+ * change sans trace est un statut dont personne ne peut rendre compte.
+ */
+const promouvoirClientReception = async (
+  exec: typeof db | any,
+  clientId: number,
+): Promise<void> => {
+  const [cli] = await exec
+    .select({ id: clients.id, statut: clients.statut })
+    .from(clients)
+    .where(eq(clients.id, clientId))
+    .limit(1);
+  if (!cli) return;
+  if (!promotionReceptionValide(cli.statut)) return;
+
+  await exec
+    .update(clients)
+    .set({ statut: "ACTIF" } as any)
+    .where(eq(clients.id, clientId));
+
+  await exec.insert(clientStatutHistorique).values({
+    clientId,
+    ancienStatut: cli.statut,
+    nouveauStatut: "ACTIF",
+    motif: "Promotion à la réception : identité confirmée sur le véhicule.",
+  } as any);
 };
 
 /** MVP : dossier fermé définitivement → plus aucune modification (diagnostic, devis, pièces, travaux, facture). */
@@ -942,6 +988,12 @@ export const orRouter = createTRPCRouter({
           // conserverait l'ancien propriétaire en silence, et l'agent croirait
           // avoir enregistré la réception pour le bon client.
           await verifierProprietaireNonModifiable(tx, vehiculeId, clientId);
+
+          // D4 — la réception est le moment où une fiche `PROVISOIRE`
+          // devient vérifiée : quelqu'un a identifier la personne sur le
+          // véhicule. Sans cela, un client parking reste « non confirmé »
+          // indéfiniment alors qu'il vient de rentrer pour un travail.
+          if (clientId) await promouvoirClientReception(tx, clientId);
 
           await completerVehiculeSansEcrasement(tx, vehiculeId, {
             clientId,

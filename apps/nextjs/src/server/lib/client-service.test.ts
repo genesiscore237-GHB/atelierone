@@ -11,6 +11,9 @@ import {
   statutContratEffectif,
   calculerSolde,
   champsObligatoires,
+  promotionReceptionValide,
+  STATUTS_CLIENT,
+  TYPES_CLIENT,
 } from "./client-service";
 
 describe("Clients & Contrats — validation par type (specs §2-3)", () => {
@@ -79,6 +82,51 @@ describe("Transitions statut client (specs §5)", () => {
   });
   it("création → ACTIF par défaut", () => {
     expect(transitionStatutClientValide(null, "ACTIF")).toBe(true);
+  });
+});
+
+/**
+ * D4 — « fiche parking = PROVISOIRE, promote à la réception ».
+ *
+ * La décision était écrite dans le plan depuis le début et n'était exécutée
+ * nulle part : les fiches parking restaient non confirmées indéfiniment.
+ */
+describe("PROVISOIRE — fiche parking non vérifiée (D4)", () => {
+  it("la nomenclature distingue PROVISOIRE du prospect commercial", () => {
+    expect(STATUTS_CLIENT).toContain("PROVISOIRE");
+    // Le prospect reste un TYPE, pas un degré de vérification : les confondre
+    // faisait entrer un client non vérifié dans les classements commerciaux.
+    expect(TYPES_CLIENT).toContain("PROSP");
+    expect(STATUTS_CLIENT).toContain("PROSPECT");
+  });
+
+  it("PROVISOIRE ne s'atteint que par la création, puis sort vers ACTIF ou ARCHIVE", () => {
+    expect(transitionStatutClientValide("PROVISOIRE", "ACTIF")).toBe(true);
+    expect(transitionStatutClientValide("PROVISOIRE", "ARCHIVE")).toBe(true);
+    // Aucune promotion en PROSPECT : ce serait re-confondre les deux notions.
+    expect(transitionStatutClientValide("PROVISOIRE", "PROSPECT")).toBe(false);
+    expect(transitionStatutClientValide("PROVISOIRE", "BLOQUE")).toBe(false);
+  });
+
+  it("la réception promeut PROVISOIRE, PROSPECT et INACTIF", () => {
+    expect(promotionReceptionValide("PROVISOIRE")).toBe(true);
+    expect(promotionReceptionValide("PROSPECT")).toBe(true);
+    expect(promotionReceptionValide("INACTIF")).toBe(true);
+  });
+
+  it("la réception ne promeut ni BLOQUE ni ARCHIVE ni un client déjà ACTIF", () => {
+    // BLOQUE : la promotion ne doit pas servir de contournement au blocage.
+    expect(promotionReceptionValide("BLOQUE")).toBe(false);
+    // ARCHIVE : la machine l'interdit, et c'est la bonne réponse.
+    expect(promotionReceptionValide("ARCHIVE")).toBe(false);
+    // ACTIF : l'écriture serait un bruit inutile dans l'historique.
+    expect(promotionReceptionValide("ACTIF")).toBe(false);
+  });
+
+  it("un client PROVISOIRE peut malgré tout ouvrir un dossier", () => {
+    // Il n'est pas BLOQUE : il est simplement non vérifié. Le bloquer
+    // empêcherait la réception, c'est-à-dire la seule voie de promotion.
+    expect(peutOuvrirOrdre("PROVISOIRE")).toBe(true);
   });
 });
 

@@ -17,10 +17,17 @@ requireLocalOrForced("creation des clients depuis le registre parking (migrate-p
  *   - `nom` repris tel quel de la première occurrence (casse d'origine) ;
  *   - aucun téléphone, e-mail, adresse ou NIU ne sont devinés — la colonne
  *     reste NULL et l'écran de fiche les demande ;
- *   - `statut = 'PROSPECT'` : c'est une valeur de la nomenclature existante
- *     (`STATUTS_CLIENT`) qui dit exactement « connu, pas encore confirmé ».
- *     Un statut « PROVISOIRE » serait un mot neuf que rien d'autre ne
- *     connaîtrait, et que le code refuserait ensuite.
+ *   - `statut = 'PROVISOIRE'` : la fiche vient d'un registre, son nom est du
+ *     texte libre recopié, le téléphone est inconnu. Ce n'est pas un client
+ *     actif — D4 refuse qu'il entre au classement commercial et au recouvrement
+ *     avant d'avoir été confirmé en réception.
+ *   - `type_client = 'PART'` : valeur de `TYPES_CLIENT`. Un premier passage
+ *     écrivait 'PARTICULIER', qui n'existe pas dans la nomenclature : la fiche
+ *     décrivait un type que rien ne savait interpréter. La migration `0012` le
+ *     corrige et pose `chk_clients_type_client`, pour que la faute ne revienne
+ *     pas au prochain script.
+ *   - promotion en réception (`or.receptionner`) : c'est le premier moment où
+ *     l'identité est confirmée sur le véhicule.
  *
  * La fiche n'est pas marquée doublon : on ne crée que s'il n'existe aucun
  * homonyme dans l'agence, le marqueur serait donc toujours faux ici. Les
@@ -61,8 +68,8 @@ requireLocalOrForced("creation des clients depuis le registre parking (migrate-p
     SELECT s.nom,
            NULLIF(btrim(s.client_telephone), ''),
            s.agence_id,
-           'PROSPECT',
-           'PARTICULIER',
+           'PROVISOIRE',
+           'PART',
            true,
            'Créé depuis le registre parking — fiche à compléter (nom seul, aucune donnée inventée).',
            false
@@ -92,14 +99,14 @@ requireLocalOrForced("creation des clients depuis le registre parking (migrate-p
   const stats = await db.unsafe(`
     SELECT
       (SELECT count(*) FROM clients)                                        AS clients,
-      (SELECT count(*) FROM clients WHERE statut = 'PROSPECT')             AS prospects,
+      (SELECT count(*) FROM clients WHERE statut = 'PROVISOIRE')             AS provisoires,
       (SELECT count(*) FROM vehicules)                                     AS vehicules,
       (SELECT count(*) FROM vehicules WHERE client_id IS NOT NULL)         AS vehicules_avec_client,
       (SELECT count(*) FROM parking_vehicles WHERE vehicule_id IS NOT NULL) AS parking_lies,
       (SELECT count(*) FROM parking_vehicles)                              AS parking_total
   `);
   console.log("\n--- État ---");
-  console.log(`  clients                 : ${stats[0].clients} (dont ${stats[0].prospects} PROSPECT)`);
+  console.log(`  clients                 : ${stats[0].clients} (dont ${stats[0].provisoires} PROVISOIRE)`);
   console.log(`  véhicules               : ${stats[0].vehicules}, avec client : ${stats[0].vehicules_avec_client}`);
   console.log(`  parking lié / total     : ${stats[0].parking_lies}/${stats[0].parking_total}`);
 
