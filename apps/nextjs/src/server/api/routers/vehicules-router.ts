@@ -45,6 +45,7 @@ import {
   resoudreOuCreerVehicule,
   completerVehiculeSansEcrasement,
 } from "~/server/lib/vehicule-regles";
+import { listeCanoniqueVehicules } from "~/server/lib/liste-canonique-vehicules";
 
 /** MODULE VÉHICULES & ATELIER — parc, fiche, statuts d'immobilisation, historique. */
 export const vehiculesRouter = createTRPCRouter({
@@ -75,6 +76,78 @@ export const vehiculesRouter = createTRPCRouter({
     }),
 
   // ─── Liste du parc ───
+
+  /**
+   * P1.1 — LISTE CANONIQUE.
+   *
+   * Point d'entrée unique du parc : une ligne = un véhicule, avec sa position
+   * registre résolue en noms lisibles et son dossier en cours. Toutes les
+   * autres listes de véhicules doivent venir d'ici.
+   *
+   * Ce qui est corrigé par rapport aux procédures préexistantes :
+   *
+   *   - `total` **réel** (`count(*)`) et non `rows.length`. La liste garage
+   *     annonçait « N véhicule(s) affiché(s) » en plafonnant à la taille de
+   *     sa page : le compteur mentait dès que le parc dépassait le `limit`.
+   *   - pagination réelle (`limit` + `offset`), alors que `vehicules.list`
+   *     proposait un `offset` qu'aucun écran n'utilisait.
+   *   - compteurs par statut calculés sur le périmètre **filtré**, pas sur la
+   *     page courante — le garage les calculait en JS sur 200 lignes.
+   *   - position (site / zone / place) réellement présente dans la réponse.
+   *     L'écran la lisait déjà, mais l'endpoint ne la renvoyait pas : la
+   *     colonne affichait « Non défini » en permanence.
+   *   - recherche par VIN, téléphone client et n° de registre, que les trois
+   *     listes existantes traitaient différemment.
+   */
+  listeCanonique: requirePermissionProcedure("vehicules.consulter")
+    .input(
+      z.object({
+        search: z.string().trim().max(120).optional(),
+        statut: z.string().optional(),
+        statutParking: z.string().optional(),
+        clientId: z.number().int().positive().optional(),
+        siteId: z.number().int().positive().optional(),
+        orEnCours: z.boolean().optional(),
+        limit: z.number().int().min(1).max(200).default(50),
+        offset: z.number().int().min(0).default(0),
+        tri: z.enum(["immatriculation", "immatriculation_desc", "km", "km_asc", "recent"]).default("immatriculation"),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const { lignes, total, parStatut } = await listeCanoniqueVehicules(
+        db,
+        {
+          agenceId: ctx.user.agenceId,
+          search: input.search ?? null,
+          statut: input.statut ?? null,
+          statutParking: input.statutParking ?? null,
+          clientId: input.clientId ?? null,
+          siteId: input.siteId ?? null,
+          orEnCours: input.orEnCours ?? false,
+          // Les `.default()` zod garantissent la valeur ici : le spread
+          // `...input` conservait le type *d'entrée*, où ils sont optionnels.
+          limit: input.limit ?? 50,
+          offset: input.offset ?? 0,
+        },
+        input.tri ?? "immatriculation",
+      );
+      return {
+        vehicules: lignes,
+        total,
+        parStatut,
+        // Le sélecteur de statut est servi par le serveur : l'UI ne recopie
+        // plus une liste en dur, qui finit toujours par diverger.
+        optionsStatut: STATUTS_DERIVABLES.map((s) => ({ valeur: s, libelle: STATUT_LABELS[s] ?? s })),
+        page: {
+          limit: input.limit,
+          offset: input.offset,
+          total,
+          page: Math.floor(input.offset / input.limit) + 1,
+          pages: Math.max(1, Math.ceil(total / input.limit)),
+        },
+      };
+    }),
+
   list: requirePermissionProcedure("vehicules.consulter")
     .input(
       z.object({
