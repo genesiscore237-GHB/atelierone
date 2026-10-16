@@ -198,6 +198,42 @@ async function main(): Promise<void> {
   console.log(executer ? "\nMODE EXECUTION" : "\nMODE DRY-RUN (aucune suppression)");
   console.log("=".repeat(72));
 
+  /**
+   * Base de test DÉDIÉE : tout ce qu'elle contient est une fixture, par
+   * construction.
+   *
+   * `SIGNALEES` existe parce que, sur `atelierone_erp` (la base locale réelle),
+   * un véhicule sans client rattaché est ambigu : fixture oubliée, ou import du
+   * registre GPJ ? Supprimer sans arbitrage serait décider à la place de
+   * l'utilisateur.
+   *
+   * Sur `*_test`, la question n'a pas de réponse parce qu'elle n'a pas de
+   * sens : la base est créée vide par `db:test-setup` et n reçoit que des
+   * fixtures. Refuser d'y purger laisse les résidus s'accumuler d'une exécution
+   * à l'autre — et ces résidus produisent des tests qui échouent sans raison
+   * (observé : un échec intermittent sans cause, disparu après purge).
+   *
+   * Le Criterion est le NOM de la base, pas une option : impossible à activer
+   * par inadvertance sur la base réelle.
+   */
+  const nomBase = (() => {
+    try {
+      return decodeURIComponent(new URL(process.env.DATABASE_URL!).pathname.replace(/^\//, ""));
+    } catch {
+      return "";
+    }
+  })();
+  const baseDeTestDeduiee = /(^|_)test$/i.test(nomBase) || nomBase.endsWith("_test");
+  if (baseDeTestDeduiee) {
+    console.log(
+      `\n  Base de test dediee detectee (« ${nomBase} ») : aucune ligne n'y est reelle.`,
+    );
+    console.log(
+      `  Les cas « origine ambigue » (${SIGNALEES.length}) sont donc des fixtures,`,
+    );
+    console.log(`  et sont purgés au lieu d'etre signales.`);
+  }
+
   const plan: { table: string; label: string; n: number }[] = [];
   let total = 0;
 
@@ -208,6 +244,21 @@ async function main(): Promise<void> {
     if (n === 0) continue;
     total += n;
     plan.push({ table: cible.table, label: cible.label, n });
+  }
+
+  if (baseDeTestDeduiee) {
+    for (const cible of SIGNALEES) {
+      if (PROTEGE.has(cible.table)) continue;
+      if (!(await tableExiste(cible.table))) continue;
+      const n = await compter(cible.table, cible.condition);
+      if (n === 0) continue;
+      total += n;
+      plan.push({
+        table: cible.table,
+        label: `${cible.label} [fixture — base de test dediee]`,
+        n,
+      });
+    }
   }
 
   if (!plan.length) {
@@ -223,14 +274,17 @@ async function main(): Promise<void> {
   console.log(`\n  Tables protegees (jamais purgees) : ${PROTEGE.size}`);
   console.log(`  Roles socles exclus ligne a ligne : ${ROLES_SOCLE.length}`);
 
-  // Signalements : on montre, on ne supprime pas.
+  // Signalements : on montre, on ne supprime pas. Sur une base de test
+  // dédiée, ces lignes ont déjà été promotions en plan ci-dessus.
   const aValider: { table: string; label: string; n: number }[] = [];
-  for (const cible of SIGNALEES) {
-    if (PROTEGE.has(cible.table)) continue;
-    if (!(await tableExiste(cible.table))) continue;
-    const n = await compter(cible.table, cible.condition);
-    if (n === 0) continue;
-    aValider.push({ table: cible.table, label: cible.label, n });
+  if (!baseDeTestDeduiee) {
+    for (const cible of SIGNALEES) {
+      if (PROTEGE.has(cible.table)) continue;
+      if (!(await tableExiste(cible.table))) continue;
+      const n = await compter(cible.table, cible.condition);
+      if (n === 0) continue;
+      aValider.push({ table: cible.table, label: cible.label, n });
+    }
   }
   if (aValider.length) {
     console.log("\nSIGNALEES MAIS NON PURGEES (decision humaine requise)\n");
