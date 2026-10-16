@@ -10,7 +10,21 @@ const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-XSS-Protection", value: "1; mode=block" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  // `camera=(self)` et NON `camera=()`.
+  //
+  // `camera=()` est un refus PAR DÉFAUT pour tout le site : même si l'agent
+  // autorise la caméra dans son navigateur, l'en-tête l'interdit — et
+  // `getUserMedia` échoue alors sans lever la moindre invite. C'est la cause
+  // exacte du symptôme décrit sur le terrain (« le navigateur bloque l'accès à
+  // l'appareil photo ») : ce n'est pas l'agent qui avait refusé, c'est
+  // l'application qui se l'était interdit à elle-même, et aucun message
+  // côté navigateur ne l'explique.
+  //
+  // Durcissement conservé : `(self)` n'accorde la caméra qu'à la page
+  // elle-même, jamais à un tiers ni à une iframe tierce. Microphone et
+  // géolocalisation restent refusés — l'application n'en a pas besoin, et
+  // ouvrir une caméra n'a jamais valu ouvrir un micro.
+  { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=()" },
   // Isolation inter-origines (COOP/COEP/CORP) — durcissement navigation
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
   { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
