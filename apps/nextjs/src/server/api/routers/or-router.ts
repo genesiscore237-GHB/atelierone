@@ -41,6 +41,7 @@ normaliserTelephone,
  } from "@atelierone/db";
 import { eq, and, desc, sql, gte, lte, asc, inArray, ilike, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import { employeDeUtilisateur } from "~/server/lib/auteur";
 import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
 import { calculerTotalFacture, calculerEcheance, respectePlafondCredit, genererReferenceFacture, verrouillerSequence, prochaineSequence, MODES_PAIEMENT, montantLigne } from "~/server/lib/facturation-service";
 import { RBACService } from "~/server/lib/rbac-service";
@@ -1263,6 +1264,10 @@ export const orRouter = createTRPCRouter({
           template: input.template,
           titre: input.titre ?? "Inspection multi-points",
           statut: "BROUILLON",
+          // `or_inspections.technicien_id` référence `utilisateurs.id`
+          // (contrainte `or_inspections_technicien_id_utilisateurs_id_fk`) :
+          // ici, le compte EST l'identité. Ne pas « corriger » vers un
+          // `employes.id` — la base refuserait, à raison.
           technicienId: Number(ctx.user.id),
         } as any).returning();
         for (const p of input.points) {
@@ -2384,9 +2389,23 @@ if (or.statut !== "PRET_A_LIVRER") {
         if (!diagnosticSoumissible({ constat: input.constat }, input.lignes)) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Le rapport doit avoir un constat et au moins une préconisation." });
         }
-        const [rapport] = await tx
+        // ─── Qui a écrit ce diagnostic ────────────────────────────────────────────
+//
+// `ctx.user.id` est un `utilisateurs.id`. `or_rapports_diagnostic.technicien_id`
+// attend un `employes.id`. Les deux portent des identifiants numériques et
+// AUCUNE clé étrangère ne les rapproche — donc écrire l'un à la place de
+// l'autre ne lève aucune erreur : le rapport est simplement attribué au
+// mauvais numéro, et le journal affiche un nom faux ou rien du tout.
+//
+// C'est précisément l'exigence « qui l'a fait », cassée à la racine.
+//
+// Le `?? null` qui suivait ne servait à rien : `Number(x)` ne renvoie jamais
+// `null` ni `undefined`. Il donnait l'illusion d'une protection.
+const moi = await employeDeUtilisateur(tx, ctx.user.id);
+
+const [rapport] = await tx
           .insert(orRapportsDiagnostic)
-          .values({ orId: input.orId, technicienId: Number(ctx.user.id) ?? null, constat: input.constat, cause: input.cause ?? null, codesDTC: input.codesDTC ?? null, tests: input.tests ?? null, statut: "SOUMIS", dateSoumission: new Date() } as any)
+          .values({ orId: input.orId, technicienId: moi, constat: input.constat, cause: input.cause ?? null, codesDTC: input.codesDTC ?? null, tests: input.tests ?? null, statut: "SOUMIS", dateSoumission: new Date() } as any)
           .returning();
         let order = 0;
         for (const l of input.lignes) {
