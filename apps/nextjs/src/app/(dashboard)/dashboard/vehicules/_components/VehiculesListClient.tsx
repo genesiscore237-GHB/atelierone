@@ -13,6 +13,8 @@ import { libelleTypeVehicule } from "~/server/lib/vehicule-service";
 import { FormulaireVehicule } from "~/components/vehicule/FormulaireVehicule";
 import { usePermissions } from "~/hooks/usePermissions";
 import { useDebounce } from "~/lib/useDebounce";
+import { PhotoLightbox } from "~/components/photos/PhotoLightbox";
+import { photosValides } from "~/lib/photos";
 
 const TAILLE_PAGE = 25;
 
@@ -78,6 +80,20 @@ export function VehiculesListClient() {
   const optionsStatut = data?.optionsStatut ?? [];
   const clientsList = (clientsData?.clients ?? []) as any[];
   const canCreer = hasPermission("vehicules.creer");
+
+  /**
+   * Visionneuse — ouverte au clic sur une vignette.
+   *
+   * Les photos ne sont chargées qu'au moment du clic : un parc affiche une
+   * trentaine de vignettes, et charger toutes les photos de toutes les lignes
+   * ferait transiter des Mo de data-url pour des images que personne ne regarde.
+   */
+  const [photoDe, setPhotoDe] = useState<{ parkingRowId: number; vehiculeId: number; label: string } | null>(null);
+  const [photoOuverte, setPhotoOuverte] = useState(0);
+  const { data: photosOuvertes } = api.vehicules.photos.useQuery(
+    { id: photoDe?.vehiculeId ?? 0 },
+    { enabled: photoDe != null, staleTime: 60_000 },
+  );
 
   const optionsFiltrees = (() => {
     // Type explicite : sans lui, TypeScript déduit l'union littérale des
@@ -194,6 +210,7 @@ export function VehiculesListClient() {
         <table className="w-full">
           <thead className="bg-muted/40 text-left text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
             <tr>
+              <th className="w-16 px-3 py-2.5">Photo</th>
               <th className="px-4 py-2.5">Véhicule</th>
               <th className="px-4 py-2.5">Type</th>
               <th className="px-4 py-2.5">Propriétaire</th>
@@ -205,11 +222,11 @@ export function VehiculesListClient() {
           </thead>
           <tbody className="divide-y divide-border/60">
             {isLoading ? (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">Chargement…</td></tr>
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">Chargement…</td></tr>
             ) : isError ? (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-destructive">{error.message}</td></tr>
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-destructive">{error.message}</td></tr>
             ) : list.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-muted-foreground">
+              <tr><td colSpan={8} className="px-4 py-12 text-center text-sm text-muted-foreground">
                 <Car size={32} className="mx-auto mb-2 opacity-40" />
                 {recherche || statutFilter
                   ? "Aucun véhicule ne correspond à cette recherche."
@@ -218,6 +235,41 @@ export function VehiculesListClient() {
             ) : (
               list.map((v) => (
                 <tr key={v.id} className="text-sm text-foreground hover:bg-accent/30">
+                  <td className="px-3 py-2.5">
+                    {v.photoPresente && v.photoUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPhotoDe({
+                            parkingRowId: v.parkingRowId!,
+                            vehiculeId: v.id,
+                            label: v.immatriculation ?? `${v.marque ?? ""} ${v.modele ?? ""}`.trim(),
+                          });
+                          setPhotoOuverte(0);
+                        }}
+                        title={`Voir les ${v.nbPhotos} photo${v.nbPhotos > 1 ? "s" : ""}`}
+                        className="group relative block h-12 w-16 overflow-hidden rounded-lg border border-border"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={v.photoUrl}
+                          alt=""
+                          loading="lazy"
+                          className="h-full w-full object-cover transition group-hover:scale-105"
+                        />
+                        {v.nbPhotos > 1 && (
+                          <span className="absolute bottom-0.5 right-0.5 rounded bg-black/70 px-1 text-[9px] font-bold text-white">
+                            {v.nbPhotos}
+                          </span>
+                        )}
+                      </button>
+                    ) : (
+                      // Pas de photo n'est un état NORMAL (un véhicule du
+                      // registre n'en a pas toujours). « — » le dit sans
+                      // laisser croire à une image manquante par erreur.
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5">
                     {v.immatriculation ? (
                       <Link href={`/dashboard/vehicules/${v.id}`} className="font-mono font-semibold hover:text-primary">{v.immatriculation}</Link>
@@ -286,6 +338,17 @@ export function VehiculesListClient() {
           </Button>
         </div>
       )}
+
+      {/* Visionneuse partagée avec le parking — même zoom, même navigation,
+          même bande de vignettes. Un seul composant, donc un seul comportement
+          : l'agent n'apprend pas deux façons de regarder une photo. */}
+      <PhotoLightbox
+        photos={photosValides(photosOuvertes?.photos)}
+        index={photoDe ? photoOuverte : null}
+        onIndexChange={setPhotoOuverte}
+        onClose={() => setPhotoDe(null)}
+        nomFichierBase={photoDe?.label || "vehicule"}
+      />
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowForm(false)}>

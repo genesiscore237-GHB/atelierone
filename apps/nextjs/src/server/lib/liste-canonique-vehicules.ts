@@ -58,7 +58,7 @@ import { and, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 const POSITION_PARKING_RECENT = sql`
   LEFT JOIN LATERAL (
     SELECT pv.id, pv.num_registre, pv.statut, pv.centre_x, pv.centre_y,
-           pv.date_entree, pv.immatriculation,
+           pv.date_entree, pv.immatriculation, pv.photo_presente, pv.photos,
            ps.nom  AS site_nom,
            pz.nom  AS zone_nom,
            psp.code AS spot_code
@@ -108,6 +108,20 @@ export type LigneCanonique = {
     spotCode: string | null;
     dateEntree: Date | null;
   } | null;
+
+  /**
+   * Photo de couverture, dénormalisée comme sur `parking_vehicles`.
+   *
+   * `photo_presente` est une colonne miroir booléenne : l'interroger évite de
+   * dépacketer le `jsonb` de 11 Mo que contient `photos`. Seule l'URL de
+   * couverture est extraite, et uniquement pour les lignes affichées — pas
+   * pour tout le parc.
+   */
+  photoPresente: boolean;
+  photoUrl: string | null;
+  nbPhotos: number;
+  /** Identifiant de la ligne parking porteuse des photos (clé de la visionneuse). */
+  parkingRowId: number | null;
 
   orEnCours: {
     id: number;
@@ -214,6 +228,8 @@ function fromCanonique() {
 function versLigne(r: Record<string, unknown>): LigneCanonique {
   const numRegistre = (r.num_registre ?? null) as number | null;
   const aUnePosition = r.pos_id != null;
+  const nbPhotos = Number(r.nb_photos ?? 0);
+  const photoUrl = (r.photo_url ?? null) as string | null;
   return {
     id: r.id as number,
     immatriculation: (r.immatriculation ?? null) as string | null,
@@ -249,7 +265,14 @@ function versLigne(r: Record<string, unknown>): LigneCanonique {
             priorite: (r.orc_priorite ?? null) as string | null,
             dateOuverture: (r.orc_date_ouverture ?? null) as Date | null,
           }
-        : null,
+: null,
+    // `photo_presente` peut dire vrai alors que l'URL est vide (photo retirée
+    // du stockage sans remise à jour du miroir). Dans ce cas, ne pas afficher
+    // une vignette cassée : on retombe sur « pas de photo », qui est vrai.
+    photoPresente: aUnePosition && r.photo_presente === true && !!photoUrl,
+    photoUrl,
+    nbPhotos: aUnePosition ? nbPhotos : 0,
+    parkingRowId: aUnePosition ? (r.pos_id as number) : null,
   };
 }
 
@@ -260,6 +283,14 @@ const SELECT_COLONNES = sql`
   c.nom AS client_nom, c.telephone AS client_telephone,
   pos.id AS pos_id, pos.num_registre, pos.statut AS statut_parking,
   pos.site_nom, pos.zone_nom, pos.spot_code, pos.date_entree,
+  pos.photo_presente,
+  -- jsonb_array_length(NULL) leve « cannot get length of a scalar », et un
+  -- COALESCE ne sauve pas : la fonction est evaluee avant le repli. Sur une
+  -- ligne sans photo, la colonne est NULL : cas frequent, pas un cas limite.
+  -- (Pas de backticks dans ce commentaire : il vit dans un template SQL.)
+  CASE WHEN jsonb_typeof(pos.photos) = 'array'
+       THEN jsonb_array_length(pos.photos) ELSE 0 END AS nb_photos,
+  pos.photos -> 0 ->> 'url' AS photo_url,
   orc.id AS orc_id, orc.numero AS orc_numero, orc.statut AS orc_statut,
   orc.priorite AS orc_priorite, orc.date_ouverture AS orc_date_ouverture`;
 

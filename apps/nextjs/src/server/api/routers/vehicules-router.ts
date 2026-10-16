@@ -148,6 +148,38 @@ export const vehiculesRouter = createTRPCRouter({
       };
     }),
 
+  /**
+   * Photos d'un véhicule, par identifiant VÉHICULE.
+   *
+   * `garage.vehiculePhotos` existe déjà mais s'indexe sur l'identifiant de la
+   * **ligne parking**. L'atelier connaît le véhicule, pas la ligne de registre :
+   * lui demander de retrouver la ligne correspondiente l'obligerait à
+   *.download les données du registre pour ouvrir une fiche technique. Le clic
+   * sur un véhicule doit donc suffire.
+   *
+   * Résolution par la MÊME règle que la liste canonique : ligne de parking la
+   * plus récente. Deux écrans, une seule source, un seul classement.
+   */
+  photos: requirePermissionProcedure("vehicules.consulter")
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const r = await db.execute(sql`
+        SELECT pv.photos
+        FROM parking_vehicles pv
+        WHERE pv.vehicule_id = ${input.id}
+          AND pv.agence_id = ${ctx.user.agenceId}
+        ORDER BY pv.id DESC
+        LIMIT 1
+      `);
+      const photos = (r as unknown as { photos?: unknown }[])[0]?.photos;
+      return {
+        photos: Array.isArray(photos)
+          ? (photos as { url?: string; categorie?: string; date?: string; auteur?: string }[])
+              .filter((p) => typeof p?.url === "string" && p.url.length > 0)
+          : [],
+      };
+    }),
+
   list: requirePermissionProcedure("vehicules.consulter")
     .input(
       z.object({

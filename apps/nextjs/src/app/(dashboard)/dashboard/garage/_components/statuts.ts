@@ -103,26 +103,6 @@ export const PHOTO_CATEGORIES = [
   "AUTRE",
 ] as const;
 
-export const PHOTO_CATEGORIE_LABELS: Record<string, string> = {
-  AVANT: "Avant",
-  ARRIERE: "Arrière",
-  COTE_GAUCHE: "Côté gauche",
-  COTE_DROIT: "Côté droit",
-  INTERIEUR: "Intérieur",
-  PLAQUE_IMMATRICULATION: "Plaque",
-  MOTEUR: "Moteur",
-  AUTRE: "Autre",
-};
-
-export const PHOTO_MAX_TAILLE = 6;
-
-export interface VehiculePhoto {
-  url: string;
-  categorie: string;
-  date?: string | null;
-  auteur?: string | null;
-}
-
 export const MOUVEMENT_LABELS: Record<string, string> = {
   ENTREE: "Entrée",
   SORTIE: "Sortie",
@@ -178,3 +158,11 @@ export function formatMeters(n: number | null | undefined): string {
   if (n == null) return "—";
   return `${n.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} m`;
 }
+
+/**
+ * Le socle photo (types, libellés, limite) vit dans `src/lib/photos.ts` pour
+ * être partagé avec l'atelier. Réexporté ici : les appels existants ne
+ * changent pas, et il n'y a donc qu'une seule définition.
+ */
+export { PHOTO_CATEGORIE_LABELS, PHOTO_MAX_TAILLE, libellePhotoCategorie, photosValides } from "~/lib/photos";
+export type { VehiculePhoto } from "~/lib/photos";
