@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { FicheVehicule360 } from "~/components/vehicule/FicheVehicule360";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
@@ -59,11 +60,17 @@ export default function GarageVehiculeFichePage() {
   const searchParams = useSearchParams();
   const idNum = Number(id);
   const { hasPermission } = usePermissions();
+  // Pour signer les impressions : l'agent connecte, pas un champ du
+  // vehicule (qui n'en a pas).
+  const { data: session } = api.user.getMe.useQuery(undefined, { staleTime: 300_000 });
+  const utilisateurCourant = session?.name ?? null;
   const utils = api.useUtils();
 
   const canExporter = hasPermission("parking.vehicule.exporter");
   const [exportOuvert, setExportOuvert] = useState(false);
-
+// Quelle fiche voit-on ? « registre » = gestion de place (contenu d'origine),
+  // « vehicule » = la 360 commune a l'atelier, augmentee Position et Alertes.
+  const [vue, setVue] = useState<"registre" | "vehicule">("registre");
   // Feuille de style d'impression : mise en page dédiée pour la fiche véhicule
   // avec photo principale, informations structurées, et masquage des éléments UI.
   useMemo(() => {
@@ -350,6 +357,45 @@ export default function GarageVehiculeFichePage() {
         <span className="font-medium text-foreground">n°{v.numRegistre}</span>
       </nav>
 
+      {/* Sélecteur de vue : la fiche REGISTRE (gestion de place) et la fiche
+          VÉHICULE (7 onglets, identique à celle de l'atelier).
+
+          Deux écrans pour un même véhicule ne doivent jamais être deux vérités.
+          On ne remplace donc pas la fiche registre — qui porte les mouvements,
+          les tâches et la gestion de place, qu'aucun autre écran n'a — on la
+          complète par la même fiche que l'atelier, plus deux onglets propres au
+          parking (Position, Alertes). Un composant partagé, deux points
+          d'entrée : une seule fiche à corriger quand elle évolue. */}
+      <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-card p-1">
+        {([
+          ["registre", "Fiche registre"],
+          ["vehicule", "Fiche véhicule"],
+        ] as const).map(([cle, libelle]) => (
+          <button
+            key={cle}
+            type="button"
+            onClick={() => setVue(cle)}
+            aria-pressed={vue === cle}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+              vue === cle
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+            }`}
+          >
+            {libelle}
+          </button>
+        ))}
+        {vue === "vehicule" && v.vehiculeId == null && (
+          <span className="ml-2 text-[11px] text-warning-foreground">
+            Cette ligne de registre n'est rattachée à aucune fiche véhicule : la fiche détaillée n'existe pas encore.
+          </span>
+        )}
+      </div>
+
+      {vue === "vehicule" && v.vehiculeId != null ? (
+        <FicheVehicule360 id={String(v.vehiculeId)} contexte="garage" />
+      ) : (
+        <>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3 print-header">
           <Button asChild variant="ghost" size="sm" className="-ml-2 no-print" title="Retour à la liste des véhicules">
@@ -389,7 +435,13 @@ export default function GarageVehiculeFichePage() {
           </div>
           <div className="print-meta-right">
             <span>Généré le {new Date().toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}</span>
-            <span>Utilisateur : {data.user?.name ?? "—"}</span>
+            {/* `data.user` n'existe pas sur la réponse de `garage.vehicule` :
+                ce champ affichait donc « — » sur TOUTES les impressions, en
+                permanence. Une ligne d'impression qui prétend identifier son
+                auteur sans le faire est pire qu'une absence de ligne : le
+                document semble signé, et il ne l'est pas. La session, elle,
+                est disponible. */}
+            <span>Utilisateur : {utilisateurCourant ?? "—"}</span>
             <span>Fiche véhicule n°{v.numRegistre}</span>
           </div>
         </div>
@@ -682,6 +734,8 @@ export default function GarageVehiculeFichePage() {
         variant="destructive"
         requiresReason
       />
+        </>
+      )}
     </motion.div>
   );
 }

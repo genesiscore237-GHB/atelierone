@@ -36,7 +36,25 @@ const joursEntre = (d: string | Date | null | undefined) => {
   return Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86400000));
 };
 
-export function VehiculeDetail({ id }: { id: string }) {
+/**
+ * FICHE VEHICULE 360 — composant PARTAGE (atelier ET parking).
+ *
+ * Elle vivait dans pp/(dashboard)/dashboard/vehicules/ alors que le parking en
+ * a besoin aussi. Un composant metier dans le dossier d'un seul ecran n'est pas
+ * un detail d'organisation : le jour ou l'ecran bouge, l'autre point d'entree
+ * casse — pour une raison purement materielle.
+ *
+ * Meme jeu d'onglets des deux cotes ; le parking ajoute les SIENS. Un onglet de
+ * plus selon le point d'entree, et le meme corps partout : une seule chose a
+ * corriger quand la fiche evolue.
+ */
+export function FicheVehicule360({
+  id,
+  contexte = "atelier",
+}: {
+  id: string;
+  contexte?: "atelier" | "garage";
+}) {
   const { hasPermission } = usePermissions();
   const utils = api.useUtils();
   const router = useRouter();
@@ -172,7 +190,17 @@ export function VehiculeDetail({ id }: { id: string }) {
     (e: any) => e.source === "evenement" && e.type === "VALIDATION_DEVIS" && (e.detail ?? "").startsWith("Devis refusé"),
   );
 
-  const tabs = Object.keys(TAB_ICONS);
+// Les onglets du garage s'ajoutent à ceux de l'atelier, mêmes règles d'onglet,
+// un seul rendu.
+  //
+  // Calcul direct, PAS de `useMemo` : ce composant a des retours précoces
+  // (chargement, erreur) plus haut, et un hook appelé après un retour est une
+  // violation des règles de hooks — l'ordre d'appel change d'un rendu à
+  // l'autre. Un tableau de chaînes se calcule pour trois fois rien.
+  const tabs =
+    contexte === "garage"
+      ? [...Object.keys(TAB_ICONS), "Position", "Alertes"]
+      : Object.keys(TAB_ICONS);
   const Icon = TAB_ICONS[tab];
 
   return (
@@ -932,6 +960,81 @@ return (
                 ))}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ─── Onglet PARKING : position de registre ──────────────────────────
+            Le registre a une notion que l'atelier n'a pas : la place dans le
+            plan, et le statut de gestion qui lui est propre. Les montrer ici
+            evite d'ouvrir une seconde fiche pour savoir OU est le vehicule. */}
+        {contexte === "garage" && tab === "Position" && (
+          <div className="space-y-4">
+            {!parking ? (
+              <div className="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
+                Ce véhicule n'a pas de ligne au registre parking.
+              </div>
+            ) : (
+              <div className="rounded-xl border border-border bg-card p-5">
+                <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+                  <MapPin size={14} className="text-primary" /> Position au registre
+                </h3>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-4">
+                  <Field label="N° registre" value={parking.numRegistre} mono />
+                  <Field label="Site" value={parking.siteNom ?? "—"} />
+                  <Field label="Zone" value={parking.zoneNom ?? "—"} />
+                  <Field label="Emplacement" value={parking.spotCode ?? "—"} mono />
+                  <Field label="Statut registre" value={parking.statut ?? "—"} />
+                  <Field label="Entrée" value={fmtDate(parking.dateEntree)} />
+                </div>
+                {!parking.positionne && (
+                  <p className="mt-3 text-xs text-warning-foreground">
+                    Véhicule non positionné sur le plan. Click « à placer » sur la carte du parking.
+                  </p>
+                )}
+                <Link href="/dashboard/garage/carte" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
+                  Voir sur la carte parking <ArrowRight size={11} />
+                </Link>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ─── Onglet PARKING : alertes de gestion ───────────────────────────
+            Distinguées des alertes atelier : celles-ci parlent d'un dossier,
+            celles-là d'une immobilisation prolongée ou d'un dépassement de seuil
+            parking. Les confondre ferait croire qu'un véhicule est en défaut
+            alors qu'il ne fait qu'attendre sa date de restitution. */}
+        {contexte === "garage" && tab === "Alertes" && (
+          <div className="space-y-4">
+            {parking && parking.alertesOuvertes > 0 ? (
+              <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-5">
+                <h3 className="mb-2 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-destructive">
+                  <AlertTriangle size={14} /> {parking.alertesOuvertes} alerte(s) ouverte(s)
+                </h3>
+                <Link href="/dashboard/garage/alertes" className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
+                  Traiter les alertes <ArrowRight size={11} />
+                </Link>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
+                Aucune alerte ouverte sur ce véhicule.
+              </div>
+            )}
+            {alertes.length > 0 && (
+              <div className="rounded-xl border border-border bg-card p-5">
+                <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-foreground">
+                  Notifications d'atelier ({alertes.length})
+                </h3>
+                <ul className="space-y-2">
+                  {alertes.map((a: any) => (
+                    <li key={a.id} className="text-xs">
+                      <span className="font-semibold">{a.titre}</span>
+                      <span className="text-muted-foreground"> — {a.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </div>

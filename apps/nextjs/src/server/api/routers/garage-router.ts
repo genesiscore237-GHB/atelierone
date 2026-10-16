@@ -663,6 +663,7 @@ spots: spots.map((s) => {
           siteId: parkingVehicles.siteId,
           centreX: parkingVehicles.centreX,
           immatriculation: parkingVehicles.immatriculation,
+          dateEntree: parkingVehicles.dateEntree,
           siteCode: parkingSites.code,
           siteNom: parkingSites.nom,
           zoneNom: parkingZones.nom,
@@ -691,6 +692,11 @@ spots: spots.map((s) => {
         siteNom: v.siteNom,
         zoneNom: v.zoneNom,
         spotCode: v.spotCode,
+        // La date d'entrée manquait à cette réponse alors que la fiche la
+        // demande : l'onglet « Position » l'aurait affichée en « — » pour
+        // toujours, sans aucun signal d'erreur. Une donnée absente d'une
+        // réponse se lit exactement comme une donnée absente de la réalité.
+        dateEntree: v.dateEntree,
         positionne: v.centreX != null,
         alertesOuvertes: alertes[0]?.c ?? 0,
       };
