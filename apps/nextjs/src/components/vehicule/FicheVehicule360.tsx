@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "~/components/ui/button";
 import { transitionStatutVehiculeValide, STATUT_LABELS, STATUT_STYLE, STATUTS_IMMOBILISATION } from "~/server/lib/vehicule-service";
+import { STATUTS_LIGNE, STATUTS_LIGNE_LIBELLES } from "~/server/lib/atelier-service";
 import { STATUT_LABELS as OR_STATUT_LABELS, STATUT_BADGE as OR_STATUT_BADGE, PRIORITE_META, MOTIF_ENTREE_LABELS } from "~/server/lib/atelier-service";
 import { usePermissions } from "~/hooks/usePermissions";
 import { PhotoLightbox } from "~/components/photos/PhotoLightbox";
@@ -78,6 +79,11 @@ export function FicheVehicule360({
   // la photo de facade du meme vehicule ne disent pas la meme chose : les
   // confondre en une seule galerie perdrait l'une des deux.
   const photosParking = photosValides(photosData?.photos);
+  // Techniciens pour le selecteur de reassignation. staleTime long : la
+  // liste des employs de l agence bouge rarement, et la recharger a chaque
+  // ouverture de fiche serait du travail pour rien.
+  const { data: techData } = api.vehicules.techniciens.useQuery(undefined, { staleTime: 300_000 });
+  const techniciens = (techData?.techniciens ?? []) as any[];
   // Journal unifie : source UNIQUE de l'historique. La 360 avait son propre
   // `timeline`, limite au dossier en cours et sans auteur — deux chemins pour la
   // meme donnee, donc deux verites. Celui-la est mort ; celui-ci fait foi.
@@ -641,18 +647,7 @@ export function FicheVehicule360({
                     </thead>
                     <tbody>
                       {travaux.map((l: any) => (
-                        <tr key={l.id} className="border-b border-border/50">
-                          <td className="py-2 pr-3">{l.libelle}</td>
-                          <td className="py-2 pr-3 text-right">{fmt(l.quantite)}</td>
-                          <td className="py-2 pr-3 text-right">{fmt(l.prixUnitaire)}</td>
-                          <td className="py-2 pr-3 text-right font-semibold">{fmt(Number(l.quantite) * Number(l.prixUnitaire))}</td>
-                          <td className="py-2">
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                              l.statut === "fait" || l.statut === "valide" ? "bg-success/10 text-success-foreground"
-                              : l.statut === "en_cours" ? "bg-sky-500/10 text-sky-400" : "bg-muted text-muted-foreground"
-                            }`}>{l.statut}</span>
-                          </td>
-                        </tr>
+                        <LigneTravailEditable key={l.id} ligne={l} techniciens={techniciens} />
                       ))}
                     </tbody>
                   </table>
@@ -1034,6 +1029,117 @@ export function FicheVehicule360({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * LIGNE DE TRAVAIL ÉDITABLE — statut, technicien, blocage.
+ *
+ * Étape 2 de la demande : « et pouvoir les mettre à jour ». La fiche était en
+ * lecture seule — il fallait repartir vers un autre écran pour changer un statut
+ * de travail, ce qui, en pratique, veut dire que l'agent ne le fait pas et que
+ * le tableau ment sur l'avancement réel.
+ *
+ * `or.updateLigne` existe déjà, et il est mieux protégé que cette interface :
+ * énumération des statuts (P0.3), contrôle de transition, refus si le dossier
+ * est fermé, recalcul des totaux, et journalisation avec `changePar`. L'écran
+ * ne fait qu'appeler — il ne reditige pas la règle. C'est le bon sens.
+ *
+ * Deux garde-fous côté écran, qui n'ont rien à voir avec le serveur :
+ *
+ *  - le bouton disparaît sans la permission, et non pas « désactivé » : un
+ *    agent voit ce qu'il ne peut pas faire au lieu de Decodeur pourquoi il ne
+ *    peut rien faire ;
+ *  - chaque écriture invalide la fiche ET le journal. Sans cela, l'agent voit
+ *    sa ligne changer puis, au rechargement, revenir à l'ancienne valeur.
+ */
+function LigneTravailEditable({ ligne, techniciens }: { ligne: any; techniciens: any[] }) {
+  const { hasPermission } = usePermissions();
+  const utils = api.useUtils();
+  const [ouvert, setOuvert] = useState(false);
+  const editable = hasPermission("or.modifier");
+
+  const majStatut = api.or.updateLigne.useMutation({
+    onSuccess: (r: any) => {
+      if (!r?.success) toast.error("Mise à jour refusée.");
+      else toast.success("Ligne mise à jour.");
+      setOuvert(false);
+      // La fiche ET le journal : sans ça, la ligne change puis « revient ».
+      void utils.vehicules.get.invalidate();
+      void utils.vehicules.journal.invalidate();
+      void utils.or.getDashboard.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const enregistrer = (corps: Record<string, unknown>) => majStatut.mutate({ id: ligne.id, ...corps });
+
+  return (
+    <tr className="border-b border-border/50 align-middle">
+      <td className="py-2 pr-3">
+        <span className="font-medium text-foreground">{ligne.libelle}</span>
+        {ligne.raisonBlocageLigne && (
+          <div className="mt-0.5 text-[10px] text-warning-foreground">Bloquée : {ligne.raisonBlocageLigne}</div>
+        )}
+      </td>
+      <td className="py-2 pr-3 text-right">{fmt(ligne.quantite)}</td>
+      <td className="py-2 pr-3 text-right">{fmt(ligne.prixUnitaire)}</td>
+      <td className="py-2 pr-3 text-right font-semibold">{fmt(Number(ligne.quantite) * Number(ligne.prixUnitaire))}</td>
+      <td className="py-2">
+        {ouvert && editable ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <select
+              value={ligne.statut ?? "a_faire"}
+              onChange={(e) => enregistrer({ statut: e.target.value })}
+              disabled={majStatut.isPending}
+              className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+            >
+              {STATUTS_LIGNE.map((s) => (
+                <option key={s} value={s}>{STATUTS_LIGNE_LIBELLES[s] ?? s}</option>
+              ))}
+            </select>
+            <select
+              value={ligne.technicienId ?? ""}
+              onChange={(e) => enregistrer({ technicienId: e.target.value ? Number(e.target.value) : null })}
+              disabled={majStatut.isPending}
+              className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+              title="Technicien responsable"
+            >
+              <option value="">— Non attribué —</option>
+              {techniciens.map((t: any) => (
+                <option key={t.id} value={t.id}>{`${t.prenom ?? ""} ${t.nom ?? ""}`.trim()}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setOuvert(false)}
+              className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
+            >
+              Fermer
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+              ligne.statut === "fait" || ligne.statut === "valide" ? "bg-success/10 text-success-foreground"
+              : ligne.statut === "en_cours" ? "bg-sky-500/10 text-sky-400" : "bg-muted text-muted-foreground"
+            }`}>
+              {STATUTS_LIGNE_LIBELLES[ligne.statut] ?? ligne.statut}
+            </span>
+            {editable && (
+              <button
+                type="button"
+                onClick={() => setOuvert((o) => !o)}
+                title="Modifier cette intervention"
+                className="rounded-md border border-border px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                {ouvert ? "Fermer" : "Modifier"}
+              </button>
+            )}
+          </div>
+        )}
+      </td>
+    </tr>
   );
 }
 

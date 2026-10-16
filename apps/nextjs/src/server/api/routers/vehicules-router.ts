@@ -24,7 +24,7 @@ import {
   immatNormaleCondition,
   immatNormPreferenceSql,
 } from "@atelierone/db";
-import { eq, and, desc, sql, or, ilike } from "drizzle-orm";
+import { eq, and, asc, desc, sql, or, ilike } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { dossierEstTermine } from "~/server/lib/atelier-service";
 import { resoudreStatutVehicule, STATUTS_DERIVABLES } from "~/server/lib/statut-vehicule";
@@ -197,6 +197,27 @@ journal: requirePermissionProcedure("vehicules.consulter")
     }),
   )
   .query(async ({ ctx, input }) => journalVehicule(db, input.id, ctx.user.agenceId, input.limite)),
+
+  /**
+ * Techniciens de l'agence, pour le sélecteur « qui fait cette intervention ».
+ *
+ * Existait déjà sous le nom `employes`, mais depuis le module Employés : un
+ * écran d'atelier qui devait ouvrir le module RH pour réattribuer une ligne de
+ * travail n'aurait jamais été utilisé. Un sélecteur qui exige un détour n'est
+ * pas un sélecteur.
+ *
+ * Renommé et replacé ici parce que la seule question posée est « qui travaille
+ * sur ce dossier », pas « quelle est la fiche RH complète ».
+ */
+techniciens: requirePermissionProcedure("vehicules.consulter")
+    .query(async ({ ctx }) => {
+      const rows = await db
+        .select({ id: employes.id, nom: employes.nom, prenom: employes.prenom })
+        .from(employes)
+        .where(and(eq(employes.agenceId, ctx.user.agenceId), eq(employes.statut, "ACTIF")))
+        .orderBy(asc(employes.nom));
+      return { techniciens: rows };
+    }),
 
   list: requirePermissionProcedure("vehicules.consulter")
     .input(
