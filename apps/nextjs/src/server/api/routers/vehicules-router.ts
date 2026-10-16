@@ -344,8 +344,7 @@ journal: requirePermissionProcedure("vehicules.consulter")
       let factureLignes: Record<string, unknown>[] = [];
       let photos: Record<string, unknown>[] = [];
       let alertes: Record<string, unknown>[] = [];
-      let timeline: Record<string, unknown>[] = [];
-
+  
       if (orCourant) {
         if (orCourant.responsableTechnicienId) {
           const [emp] = await db
@@ -492,20 +491,6 @@ journal: requirePermissionProcedure("vehicules.consulter")
           .where(and(eq(atelierNotifications.orId, orCourant.id), eq(atelierNotifications.lu, false)))
           .orderBy(desc(atelierNotifications.createdAt))
           .limit(20);
-
-        timeline = await db
-          .select({
-            id: orHistorique.id,
-            type: orHistorique.type,
-            ancienneValeur: orHistorique.ancienneValeur,
-            nouvelleValeur: orHistorique.nouvelleValeur,
-            commentaire: orHistorique.commentaire,
-            changeLe: orHistorique.changeLe,
-          })
-          .from(orHistorique)
-          .where(eq(orHistorique.orId, orCourant.id))
-          .orderBy(desc(orHistorique.changeLe))
-          .limit(100);
       }
 
       // ── Historique complet des OR ──
@@ -568,7 +553,7 @@ journal: requirePermissionProcedure("vehicules.consulter")
         .where(and(eq(contratsMaintenanceVehicules.vehiculeId, input.id), eq(contratsMaintenanceVehicules.actif, true)))
         .limit(5);
 
-      return { vehicule, client, orCourant, orTermine: orCourant ? dossierEstTermine(orCourant.statut) : false, responsable, rapportDiagnostic, lignesTravaux, demandesPieces, retours: retoursList, facture, factureLignes, photos, alertes, timeline, historiqueOR: historiqueEnrichi, autresVehicules, contrats: liaisonContrat };
+      return { vehicule, client, orCourant, orTermine: orCourant ? dossierEstTermine(orCourant.statut) : false, responsable, rapportDiagnostic, lignesTravaux, demandesPieces, retours: retoursList, facture, factureLignes, photos, alertes, historiqueOR: historiqueEnrichi, autresVehicules, contrats: liaisonContrat };
     }),
 
   // ─── Création ───

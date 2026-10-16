@@ -60,6 +60,14 @@ export function VehiculeDetail({ id }: { id: string }) {
   // la photo de facade du meme vehicule ne disent pas la meme chose : les
   // confondre en une seule galerie perdrait l'une des deux.
   const photosParking = photosValides(photosData?.photos);
+  // Journal unifie : source UNIQUE de l'historique. La 360 avait son propre
+  // `timeline`, limite au dossier en cours et sans auteur — deux chemins pour la
+  // meme donnee, donc deux verites. Celui-la est mort ; celui-ci fait foi.
+  const { data: journalData } = api.vehicules.journal.useQuery(
+    { id: Number(id) },
+    { enabled: Number.isFinite(Number(id)) && Number(id) > 0, retry: false },
+  );
+  const journal = journalData?.entrees ?? [];
   const [clientId, setClientId] = useState(0);
   const [contratId, setContratId] = useState(0);
   const [statutMotif, setStatutMotif] = useState("");
@@ -117,7 +125,6 @@ export function VehiculeDetail({ id }: { id: string }) {
       factureLignes: (data.factureLignes ?? []) as any[],
       photos: (data.photos ?? []) as any[],
       alertes: (data.alertes ?? []) as any[],
-      timeline: (data.timeline ?? []) as any[],
       historiqueOR: (data.historiqueOR ?? []) as any[],
       autresVehicules: (data.autresVehicules ?? []) as any[],
       contrats: (data.contrats ?? []) as any[],
@@ -136,7 +143,7 @@ export function VehiculeDetail({ id }: { id: string }) {
     );
   }
 
-  const { vehicule: v, client, orCourant, responsable, rapport, travaux, demandes, retours, orTermine, facture, factureLignes, photos, alertes, timeline, historiqueOR, autresVehicules, contrats } = data360;
+  const { vehicule: v, client, orCourant, responsable, rapport, travaux, demandes, retours, orTermine, facture, factureLignes, photos, alertes, historiqueOR, autresVehicules, contrats } = data360;
   const clientsList = (clientsData?.clients ?? []) as any[];
   const contratsActifs = (contratsData ?? []) as any[];
   const canModifier = hasPermission("vehicules.modifier");
@@ -158,7 +165,12 @@ export function VehiculeDetail({ id }: { id: string }) {
   const joursGarage = orCourant ? joursEntre(orCourant.dateOuverture) : null;
   const joursPromesse = orCourant?.datePromesse ? joursEntre(orCourant.datePromesse) : null;
   const prioMeta = orCourant?.priorite ? PRIORITE_META[orCourant.priorite as keyof typeof PRIORITE_META] : null;
-  const devisRefuse = timeline.find((t: any) => t.type === "VALIDATION_DEVIS" && (t.commentaire ?? "").startsWith("Devis refusé"));
+  // Le refus de devis se lit désormais dans le JOURNAL, comme tout le reste.
+// Tant qu'il était lu dans `timeline`, ce bloc justifiait à lui seul de garder
+// une deuxième requête pour la même donnée — et donc une deuxième vérité.
+  const devisRefuse = journal.find(
+    (e: any) => e.source === "evenement" && e.type === "VALIDATION_DEVIS" && (e.detail ?? "").startsWith("Devis refusé"),
+  );
 
   const tabs = Object.keys(TAB_ICONS);
   const Icon = TAB_ICONS[tab];
@@ -712,7 +724,7 @@ return (
               ) : devisRefuse ? (
                 <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
                   <p className="font-semibold text-destructive">✖ Devis refusé par le client.</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{devisRefuse.commentaire}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{devisRefuse.detail}</p>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">Aucun devis soumis pour cet OR. Le devis devient soumissible une fois le diagnostic validé.</p>
@@ -864,22 +876,33 @@ return (
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-xl border border-border bg-card p-5">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
-                <CalendarClock size={14} className="text-primary" /> Événements de l'OR en cours ({timeline.length})
+                <CalendarClock size={14} className="text-primary" /> Journal du véhicule ({journal.length})
               </h3>
-              {timeline.length === 0 ? (
+              {journal.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Aucun événement tracé.</p>
               ) : (
                 <div className="space-y-0">
-                  {timeline.map((t: any, i: number) => (
-                    <div key={t.id} className="relative pb-4 pl-5">
-                      {i < timeline.length - 1 && <span className="absolute left-[5px] top-2 h-full w-px bg-border" />}
+                  {journal.map((t: any, i: number) => (
+                    <div key={`${t.source}-${t.quand}-${i}`} className="relative pb-4 pl-5">
+                      {i < journal.length - 1 && <span className="absolute left-[5px] top-2 h-full w-px bg-border" />}
                       <span className="absolute left-0 top-1.5 size-2.5 rounded-full bg-primary" />
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{fmtDate(t.changeLe ?? t.createdAt)} · {t.type}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                        {t.quand ? fmtDate(t.quand) : <span className="italic normal-case">date inconnue</span>}
+                        {" — "}{t.libelle}
+                        {t.orNumero ? ` · ${t.orNumero}` : ""}
+                      </p>
                       <p className="text-xs text-foreground">
-                        {t.ancienneValeur && <span className="text-muted-foreground line-through">{t.ancienneValeur}</span>}
-                        {t.ancienneValeur && t.nouvelleValeur && <span className="text-muted-foreground"> → </span>}
-                        {t.nouvelleValeur && <span className="font-semibold">{t.nouvelleValeur}</span>}
-                        {t.commentaire && <span className="text-muted-foreground"> — {t.commentaire}</span>}
+                        {t.ancien && <span className="text-muted-foreground line-through">{t.ancien}</span>}
+                        {t.ancien && t.nouveau && <span className="text-muted-foreground"> → </span>}
+                        {t.nouveau && <span className="font-semibold">{t.nouveau}</span>}
+                        {t.detail && <span className="text-muted-foreground"> — {t.detail}</span>}
+                        {/* L'auteur est la raison d'être de ce journal. Son absence
+                            se DIT, elle ne se masque pas : une saisie incomplète
+                            qu'on cache devient une erreur invisible. */}
+                        <span className="ml-1 font-semibold normal-case">
+                          {" — "}
+                          {t.auteur ?? <span className="italic text-warning-foreground">auteur inconnu</span>}
+                        </span>
                       </p>
                     </div>
                   ))}
