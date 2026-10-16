@@ -114,12 +114,37 @@ async function columns(sql: postgres.Sql): Promise<Set<string>> {
 }
 
 async function contraintes(sql: postgres.Sql): Promise<Set<string>> {
+  // `contype = 'n'` (NOT NULL) est EXCLU, et c'est délibéré.
+  //
+  // PostgreSQL 18 matérialise les colonnes NOT NULL dans `pg_constraint` avec
+  // des noms auto-générés (`achats_id_not_null`). En 17 et antérieur, ces
+  // contraintes n'existent pas du tout dans le catalogue.
+  //
+  // Or le local tourne en 17 et la production (Neon) en 18 : comparer les deux
+  // sur ce critère produit 1016 « contraintes absentes de B » qui ne sont pas
+  // des absences. Le garde-fou signalait une dérive là où il n'y en avait
+  // aucune — et, pire, une dérive qui change selon le sens de comparaison, ce
+  // qui rend un garde-fou imprévisible, donc inutilisable.
+  //
   const r = await sql.unsafe(`
-    SELECT conrelid::regclass::text || '|' || conname AS k
+    -- conrelid::regclass::text est INTERDIT ici : sa forme depend du
+    -- search_path de la session. Sur le pooler Neon, qui ouvre avec un
+    -- search_path VIDE, le nom sort non qualifie (absences) alors que le
+    -- local renvoie public.absences. Les deux cles ne se ressemblent plus,
+    -- et la comparaison conclut que les 821 contraintes locales « manquent »
+    -- en production : un ecart entierement fabrique par la connexion.
+    --
+    -- C'est le meme piege documente dans AGENTS.md pour les scripts
+    -- d'exploitation, et il vient d'attraper la comparaison elle-meme : un
+    -- garde-fou qui se trompe de sens selon qui l'appelle ne protege de rien.
+    --
+    -- Le NOT NULL reste verifie autrement : la nullabilite des colonnes est
+    -- lue dans information_schema, quelle que soit la version de PostgreSQL.
+    SELECT n.nspname || '.' || t.relname || '|' || c.conname AS k
     FROM pg_constraint c
     JOIN pg_class t ON t.oid = c.conrelid
     JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE n.nspname = 'public'
+    WHERE n.nspname = 'public' AND c.contype <> 'n'
   `);
   return new Set(r.map((x) => String(x.k)));
 }
@@ -232,6 +257,45 @@ function compter(set: Set<string>, prefixe: string): Map<string, Set<string>> {
 
   console.log(`Référence (A) : ${a.nom}`);
   console.log(`Comparée  (B) : ${b.nom}\n`);
+  /**
+   * Filet avant toute comparaison.
+   *
+   * Sans ce contrôle, une base momentanément injoignable — ou une session
+   * ouverte avec un `search_path` qui ne résout rien — renvoie zéro objet, et
+   * la comparaison conclut alors que « tout ce qui est dans A manque dans B ».
+   * Le garde-fou affiche alors un écart de 821 objets, ou de 226 tables, et
+   * **le résultat dépend du sens de comparaison** : un signal qui change de
+   * valeur selon la façon dont on le regarde n'est pas un signal, c'est du bruit.
+   *
+   * On exige donc que les deux bases exposent des tables avant de comparer
+   * quoi que ce soit. C'est la différence entre « elles diffèrent » et « je ne
+   * sais pas les lire » — deux phrases qu'un agent ne doit pas pouvoir confondre.
+   */
+  for (const c of [a, b]) {
+    let nTables = 0;
+    try {
+      const r = await c.sql.unsafe(
+        `SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = 'public'`,
+      );
+      nTables = Number(r[0]?.n ?? 0);
+    } catch (e) {
+      console.error(
+        `[drift-check] Base ${c.nom} injoignable : ${(e as Error).message}\n` +
+          `             Comparaison annulée — on ne peut rien conclure.`,
+      );
+      process.exit(2);
+    }
+    if (nTables === 0) {
+      console.error(
+        `[drift-check] La base ${c.nom} ne renvoie AUCUNE table : elle est vide,\n` +
+          `             mal ciblée, ou la session ne résout pas le schéma. Comparaison\n` +
+          `             annulée — conclure « tout manque » sur une lecture vide serait faux.`,
+      );
+      process.exit(2);
+    }
+    console.log(`[drift-check] ${c.nom} : ${nTables} tables lisibles.`);
+  }
+  console.log("");
 
   let bloquant = 0;
   let divergence = 0;
