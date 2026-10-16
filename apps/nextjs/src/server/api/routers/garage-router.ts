@@ -488,6 +488,15 @@ spots: spots.map((s) => {
           siteId: parkingVehicles.siteId,
           zoneId: parkingVehicles.zoneId,
           spotId: parkingVehicles.spotId,
+          // P1.1 — Les TROIS noms lisibles manquaient. L'écran registyre lit
+          // `v.site` / `v.zone` / `v.spot` depuis le début, et l'endpoint ne les
+          // renvoyait pas : la colonne « Emplacement » affichait donc
+          // « Non défini » en permanence, y compris pour un véhicule dont la
+          // place est parfaitement connue. Le nom lisible n'existe pas sur
+          // `parking_vehicles` — il faut la jointure.
+          siteNom: parkingSites.nom,
+          zoneNom: parkingZones.nom,
+          spotCode: parkingSpots.code,
           centreX: parkingVehicles.centreX,
           centreY: parkingVehicles.centreY,
           dateEntree: parkingVehicles.dateEntree,
@@ -498,6 +507,9 @@ spots: spots.map((s) => {
           photoDate: parkingVehicles.photoDate,
         })
         .from(parkingVehicles)
+        .leftJoin(parkingSites, eq(parkingVehicles.siteId, parkingSites.id))
+        .leftJoin(parkingZones, eq(parkingVehicles.zoneId, parkingZones.id))
+        .leftJoin(parkingSpots, eq(parkingVehicles.spotId, parkingSpots.id))
         .where(and(...conditions))
         .orderBy(asc(parkingVehicles.numRegistre))
         .limit(input.limit);
@@ -542,6 +554,10 @@ spots: spots.map((s) => {
           siteId: v.siteId,
           zoneId: v.zoneId,
           spotId: v.spotId,
+          // P1.1 — noms lisibles, enfin renvoyés. Voir la sélection plus haut.
+          site: v.siteNom ?? null,
+          zone: v.zoneNom ?? null,
+          spot: v.spotCode ?? null,
           centreX: v.centreX,
           centreY: v.centreY,
           dateEntree: v.dateEntree,
