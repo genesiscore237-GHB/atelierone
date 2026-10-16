@@ -1,26 +1,25 @@
 import "dotenv/config";
-import { requireLocalOrForced } from "./env-guard";
+import { requireLocalOrForced, sslPourUrl } from "./env-guard";
 import { db } from "./client";
 import { sql } from "drizzle-orm";
 import postgres from "postgres";
 import { ensureSecuritySocle } from "./security-socle";
+import { KEEP } from "./reset-keep";
 
 requireLocalOrForced("db:reset (reset-db.ts)");
 
-// Tables conservees : socle de reference (structure + unites + referentiel educatif),
-// comptes utilisateurs et donnees d'acces. Tout le reste (donnees metier) est vide.
-const KEEP = [
-  "agences", "organisations", "cles_api",
-  "utilisateurs", "user_roles",
-  "roles", "permissions", "role_permissions",
-  "verification_tokens",
-  "unites_mesure",
-  "__drizzle_migrations",
-];
-
+// Liste de survie documentée dans `reset-keep.ts` : socle de sécurité,
+// référentiel et configuration. Tout le reste — véhicules, dossiers, ventes,
+// dossiers RH, lignes parking — est vid�� à dessein.
 (async () => {
-  const raw = postgres(process.env.DATABASE_URL!, { ssl: false, prepare: false });
-  console.log("=== RESET: purge des donnees metier (comptes + socle conserves) ===");
+  // `ssl: false` en dur faisait échouer ce script sur Neon (`connection is
+  // insecure`). Le calcul est centralisé et aligné sur `client.ts`.
+  const raw = postgres(process.env.DATABASE_URL!, {
+    ssl: sslPourUrl(process.env.DATABASE_URL!),
+    prepare: false,
+  });
+  console.log("=== RESET: purge des donnees metier (socle + referentiel conserves) ===");
+  console.log(`Tables preservees (${KEEP.length}) : ${KEEP.join(", ")}`);
 
   // Dissocier les employes avant purge (les dossiers RH sont des donnees metier).
   // Les rôles sont conserves (socle) : on ne remet PAS role_id a NULL.
@@ -33,6 +32,17 @@ const KEEP = [
   const toTruncate = tables.map((t: any) => t.tablename);
   console.log(`Tables a vider (${toTruncate.length}):`);
   for (const t of toTruncate) console.log("  " + t);
+
+  // TRUNCATE ne déclenche PAS les déclencheurs de ligne. Le contrôle de
+  // gouvernance `trg_append_only_mouvements_stock`, qui interdit de modifier
+  // un mouvement de stock une fois écrit, est donc contourné SANS ERREUR et
+  // SANS MESSAGE. C'est le comportement attendu d'un reset — mais il ne faut
+  // pas le découvrir en production en cherchant pourquoi la piste d'audit a un
+  // trou. D'où l'affichage explicite.
+  console.log(
+    `\nATTENTION : TRUNCATE ne declenche pas les triggers de ligne — ` +
+    `trg_append_only_mouvements_stock est ignore, sans erreur.`,
+  );
 
   await raw`TRUNCATE TABLE ${raw(toTruncate)} RESTART IDENTITY CASCADE`;
   console.log("Purge OK.");
