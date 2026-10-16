@@ -5,14 +5,16 @@ import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import {
   ArrowLeft, ArrowRight, Car, FileSignature, Gauge, History, Phone, User, Wrench, ClipboardList,
-  PackageSearch, Receipt, Camera, AlertTriangle, CalendarClock, Timer, MapPin, ChevronRight, Loader2,
-} from "lucide-react";
+PackageSearch, Receipt, Camera, AlertTriangle, CalendarClock, Timer, MapPin, ChevronRight, Loader2, Image as ImageIcon,
+  } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "~/components/ui/button";
 import { transitionStatutVehiculeValide, STATUT_LABELS, STATUT_STYLE, STATUTS_IMMOBILISATION } from "~/server/lib/vehicule-service";
 import { STATUT_LABELS as OR_STATUT_LABELS, STATUT_BADGE as OR_STATUT_BADGE, PRIORITE_META, MOTIF_ENTREE_LABELS } from "~/server/lib/atelier-service";
 import { usePermissions } from "~/hooks/usePermissions";
+import { PhotoLightbox } from "~/components/photos/PhotoLightbox";
+import { photosValides, libellePhotoCategorie } from "~/lib/photos";
 
 const TYPE_CLIENT_LABELS: Record<string, string> = {
   PART: "Particulier", ENTR: "Entreprise", ADMIN: "Administration", ASSUR: "Assurance", FLOTTE: "Flotte", PROSP: "Prospect",
@@ -47,6 +49,17 @@ export function VehiculeDetail({ id }: { id: string }) {
     { enabled: Number.isFinite(Number(id)) && Number(id) > 0, retry: false },
   );
   const [tab, setTab] = useState("Vue d'ensemble");
+  // Galerie photos — même source que le parking, donc même vérité.
+  const [photoOuverte, setPhotoOuverte] = useState<number | null>(null);
+  const { data: photosData } = api.vehicules.photos.useQuery(
+    { id: Number(id) },
+    { enabled: Number.isFinite(Number(id)) && Number(id) > 0, retry: false, staleTime: 60_000 },
+  );
+  // PHOTOS PARKING — distinctes des photos d'etat des lieux de l'OR que
+  // renvoie deja la fiche 360 (photos plus bas). Un constat avant travaux et
+  // la photo de facade du meme vehicule ne disent pas la meme chose : les
+  // confondre en une seule galerie perdrait l'une des deux.
+  const photosParking = photosValides(photosData?.photos);
   const [clientId, setClientId] = useState(0);
   const [contratId, setContratId] = useState(0);
   const [statutMotif, setStatutMotif] = useState("");
@@ -128,6 +141,17 @@ export function VehiculeDetail({ id }: { id: string }) {
   const contratsActifs = (contratsData ?? []) as any[];
   const canModifier = hasPermission("vehicules.modifier");
 
+  // Visionneuse des photos parking, ouverte depuis la galerie.
+  const photoLightbox = (
+    <PhotoLightbox
+      photos={photosParking}
+      index={photoOuverte}
+      onIndexChange={setPhotoOuverte}
+      onClose={() => setPhotoOuverte(null)}
+      nomFichierBase={v?.immatriculation ?? "vehicule"}
+    />
+  );
+
   const transitions = STATUTS_IMMOBILISATION.filter((s) => transitionStatutVehiculeValide(v.statutImmobilisation, s));
   const displayName = client ? (client.raisonSociale ?? `${client.prenom ?? ""} ${client.nom}`) : null;
   const estFlotte = client?.typeClient === "FLOTTE";
@@ -141,6 +165,7 @@ export function VehiculeDetail({ id }: { id: string }) {
 
   return (
     <div className="space-y-5">
+      {photoLightbox}
       {/* ── Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -206,7 +231,12 @@ export function VehiculeDetail({ id }: { id: string }) {
       <div className="flex flex-wrap gap-1 rounded-xl border border-border bg-card p-1.5">
         {tabs.map((t) => {
           const TIcon = TAB_ICONS[t];
-          return (
+return (
+    <>
+      {photoLightbox}
+    </>
+  );
+  return (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -345,13 +375,79 @@ export function VehiculeDetail({ id }: { id: string }) {
                 {!parking.positionne && (
                   <p className="mt-2 text-xs text-warning-foreground">Véhicule non positionné sur le plan (panneau « À placer »).</p>
                 )}
-                <Link href="/dashboard/garage/carte" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
-                  Voir sur la carte parking <ArrowRight size={11} />
-                </Link>
+<Link href="/dashboard/garage/carte" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
+                    Voir sur la carte parking <ArrowRight size={11} />
+                  </Link>
+                </div>
+              )}
+
+              {/* ─── PHOTOS ───────────────────────────────────────────────
+                  Alimentation par la MÊME source que le parking et que la
+                  vignette de la liste : `vehicules.photos`, qui résout la ligne
+                  de registre la plus récente. Une seule source, donc un clic
+                  sur un véhicule ne peut pas montrer une photo différente de
+                  celle affichée deux secondes plus tôt.
+
+                  L'arbre de rendu n'était PAS dans le `parking && (...)` : un
+                  véhicule absent du registre n'a pas de photos, mais il peut
+                  en avoir ailleurs (état des lieux d'un dossier). Conditionner
+                  l'affichage à `parking` aurait masqué des photos existantes. */}
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="flex items-center gap-2 text-sm font-bold text-foreground">
+                    <ImageIcon size={14} className="text-primary" /> Photos du véhicule
+                    {photosParking.length > 0 && (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-black text-muted-foreground">
+                        {photosParking.length}
+                      </span>
+                    )}
+                  </h3>
+                  {photosParking.length > 0 && (
+                    <Button size="sm" variant="outline" className="gap-1 text-xs" onClick={() => setPhotoOuverte(0)}>
+                      Ouvrir la visionneuse
+                    </Button>
+                  )}
+                </div>
+
+                {photosParking.length === 0 ? (
+                  <p className="py-3 text-xs text-muted-foreground">
+                    Aucune photo. Elles se prennent depuis la fiche parking ou depuis l'état des lieux d'un dossier.
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      {photosParking.map((p, i) => (
+                        <button
+                          key={`${p.url}-${i}`}
+                          type="button"
+                          onClick={() => setPhotoOuverte(i)}
+                          title={`${libellePhotoCategorie(p.categorie)}${p.date ? ` — ${fmtDate(p.date)}` : ""}${p.auteur ? ` — ${p.auteur}` : ""}`}
+                          className="group relative h-20 w-28 overflow-hidden rounded-lg border border-border"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={p.url} alt={libellePhotoCategorie(p.categorie)} loading="lazy" className="h-full w-full object-cover transition group-hover:scale-105" />
+                          <span className="absolute bottom-0 left-0 right-0 truncate bg-black/60 px-1 text-[9px] font-semibold text-white">
+                            {libellePhotoCategorie(p.categorie)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    {/* Qui a photographié quoi, et quand — sans quoi une photo
+                        n'est qu'une image sans auteur ni date. */}
+                    <ul className="mt-3 space-y-0.5 text-[11px] text-muted-foreground">
+                      {photosParking.map((p, i) => (
+                        <li key={`meta-${i}`} className="truncate">
+                          {libellePhotoCategorie(p.categorie)}
+                          {p.date ? ` — ${fmtDate(p.date)}` : ""}
+                          {p.auteur ? ` — ${p.auteur}` : " — auteur inconnu"}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
               </div>
-            )}
-          </>
-        )}
+            </>
+          )}
 
         {/* ═══════ VÉHICULE & CLIENT ═══════ */}
         {tab === "Véhicule & client" && (
