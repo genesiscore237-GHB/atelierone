@@ -20,6 +20,27 @@ function getClient(): Client {
   clientInstance = postgres(connectionString, {
     prepare: false,
     ssl,
+    /**
+     * `search_path` explicite — le point de correction unique pour toute la
+     * famille de pannes « relation "X" does not exist ».
+     *
+     * Les sessions n'ouvrent pas toutes avec le même schéma :
+     *   - local      → `"$user", public`      (ne fonctionne que par chance)
+     *   - Neon direct→ `"$user", public`      (idem)
+     *   - Neon POOLER→ **VIDE**               (c'est le Behavior documenté de l'endpoint)
+     *
+     * Sur le pooler, un nom de table non qualifié ne se résout donc pas : le
+     * socle sécurité échouait sur `relation "roles" does not exist` alors que la
+     * table existe bel et bien en production — et bloquait le push via le
+     * verrou de cohérence.
+     *
+     * On fixe le chemin ici, à la source, plutôt que de qualifier `public.`
+     * dans chaque requête : il y a des centaines de requêtes, et le jour où
+     * quelqu'un en ajoute une sans qualifier, elle échoue en production
+     * uniquement. Ici, une seule ligne couvre l'application ET tous les
+     * scripts d'exploitation, passés et à venir.
+     */
+    connection: { search_path: "public" },
     // Keep connections warm across requests: postgres-js default idle_timeout (5s)
     // closes connections after a short idle, and re-connecting costs 2-3s (TLS
     // handshake to a remote host), making every page visit / live search take
