@@ -271,12 +271,7 @@ export function FicheVehicule360({
       <div className="flex flex-wrap gap-1 rounded-xl border border-border bg-card p-1.5">
         {tabs.map((t) => {
           const TIcon = TAB_ICONS[t];
-return (
-    <>
-      {photoLightbox}
-    </>
-  );
-  return (
+          return (
             <button
               key={t}
               onClick={() => setTab(t)}
