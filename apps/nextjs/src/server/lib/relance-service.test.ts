@@ -25,6 +25,8 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   TYPES_RELANCE,
   CANAUX_RELANCE,
@@ -63,10 +65,10 @@ describe("ÉTAPE 5 — relances : le vocabulaire est une liste fermée", () => {
     // Le test de cohérence du 0013 avait le même objet : deux listes
     // concurrentes pour la même règle produisent une dérive permanente entre
     // le local et la production. La base les refuse, le TypeScript les énumère.
-    const sql = require("node:fs").readFileSync(
-      require("node:path").resolve(process.cwd(), "../../packages/db/drizzle/0014_relances_tracables.sql"),
+    const sql = readFileSync(
+      resolve(process.cwd(), "../../packages/db/drizzle/0014_relances_tracables.sql"),
       "utf8",
-    ) as string;
+    );
 
     for (const t of TYPES_RELANCE) {
       expect(sql, `le type ${t} n'est pas dans la contrainte SQL`).toContain(`'${t}'`);

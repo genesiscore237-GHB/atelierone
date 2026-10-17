@@ -4,6 +4,8 @@ import { clients } from "./clients";
 import { dettesClients } from "./dettes";
 import { fournisseurs } from "./fournisseurs";
 import { dettesFournisseurs } from "./dettes_fournisseurs";
+import { vehicules } from "./vehicules";
+import { ordresReparation } from "./ordres_reparation";
 
 export const previsionsTresorerie = pgTable("previsions_tresorerie", {
   id: serial("id").primaryKey(),
@@ -26,6 +28,11 @@ export const previsionsTresorerie = pgTable("previsions_tresorerie", {
 export const relances = pgTable("relances", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").references(() => clients.id),
+  // Migration 0014 — la table ne savait raccrocher une relance qu'à un client
+  // ou une dette. Impossible d'écrire « ce véhicule a été relancé », qui est
+  // la seule relance utile au garage.
+  orId: integer("or_id").references(() => ordresReparation.id, { onDelete: "cascade" }),
+  vehiculeId: integer("vehicule_id").references(() => vehicules.id, { onDelete: "cascade" }),
   detteId: integer("dette_id").references(() => dettesClients.id),
   fournisseurId: integer("fournisseur_id").references(() => fournisseurs.id),
   detteFournisseurId: integer("dette_fournisseur_id").references(() => dettesFournisseurs.id),
