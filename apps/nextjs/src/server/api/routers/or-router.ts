@@ -1803,7 +1803,30 @@ if (or.statut !== "PRET_A_LIVRER") {
         .limit(1);
       if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
       const t = transitionStatutAtelierValide(or.statut, input.nouveauStatut, input.raison);
-      if (!t.ok) throw new TRPCError({ code: "BAD_REQUEST", message: t.raison ?? "Transition refusée." });
+      if (!t.ok) {
+        // ÉTAPE 4. La machine d'états refuse `PRET_A_LIVRER → LIVRE` : c'est
+        // juste, `LIVRE` signifie « le véhicule est parti », et un changement
+        // de statut ne peut pas l'affirmer. Mais le refus, tel qu'il était
+        // écrit, s'arrêtait à « Transition refusée ».
+        //
+        // Un agent qui lit ce message ne sait pas quoi faire. Alors il cherche un
+        // autre chemin : l'interface d'abord, et si elle ne propose rien, il
+        // écrit en base. C'est exactement le trajet qu'on voulait éviter.
+        //
+        // Un refus qui ne dit pas où aller n'est pas une garde : c'est un
+        // obstacle dont on fait le tour.
+        if (input.nouveauStatut === "LIVRE") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "« Livré » ne se déclare pas : le véhicule est PARTI. " +
+              "Utilisez la restitution (onglet Facture & Restitution), qui enregistre " +
+              "le kilométrage de sortie, le carburant, la signature du client et le nom " +
+              "du récupérateur. C'est cette trace — et elle seule — qui autorise l'état.",
+          });
+        }
+        throw new TRPCError({ code: "BAD_REQUEST", message: t.raison ?? "Transition refusée." });
+      }
 
       const updateData: Record<string, unknown> = { statut: input.nouveauStatut, updatedAt: new Date() };
       if (input.nouveauStatut === "BLOQUE") {
