@@ -302,7 +302,7 @@ Ordre de suppression obtenu par **fermeture transitive du graphe FK** (57 tables
 | 2 | Harmonisation — 360 partagée, listes canoniques | ✅ |
 | 3 | Anatomie du cycle — les deux vocabulaires de statut | ✅ |
 | 4 | Restitutions — trace obligatoire, panneau partagé | ✅ |
-| 5 | Relances | 🟡 **2/3** — table, vocabulaire, routeur, tests ; **manque le panneau** |
+| 5 | Relances | ✅ **3/3** — table, vocabulaire, routeur, panneau, 1089 tests |
 | 6 | Statistiques et KPI fouillables | ⬜ à faire |
 | 7 | Qualité — tests de rendu React, purge des 339 erreurs TS | ⬜ à faire |
 

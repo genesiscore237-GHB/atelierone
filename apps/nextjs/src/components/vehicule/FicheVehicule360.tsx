@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import { RestituerVehicule } from "~/components/or/RestituerVehicule";
+import { BandeauRelances, PanneauRelances } from "~/components/or/PanneauRelances";
 import {
   ArrowLeft, ArrowRight, Car, FileSignature, Gauge, History, Phone, User, Wrench, ClipboardList,
 PackageSearch, Receipt, Camera, AlertTriangle, CalendarClock, Timer, MapPin, ChevronRight, Loader2, Image as ImageIcon,
@@ -274,6 +275,13 @@ export function FicheVehicule360({
         </div>
       )}
 
+      {/* ── Relances (étape 5) : au-dessus des ONGLETS, pas dans un onglet.
+          Une attente n'est pas liée à une vue. Si le bandeau n'apparaît que
+          dans « Vue d'ensemble », l'agent qui ouvre « Historique » ne voit pas
+          qu'un dossier attend une réponse depuis vingt-cinq jours — et le
+          panneau est inutile précisément quand on en a le plus besoin. */}
+      <BandeauRelances vehiculeId={v.id} />
+
       {/* ── Onglets ── */}
       <div className="flex flex-wrap gap-1 rounded-xl border border-border bg-card p-1.5">
         {tabs.map((t) => {
@@ -296,6 +304,9 @@ export function FicheVehicule360({
         {/* ═══════ VUE D'ENSEMBLE ═══════ */}
         {tab === "Vue d'ensemble" && (
           <>
+            {/* ── Relances (étape 5) : le dossier complet ── */}
+            <PanneauRelances vehiculeId={v.id} orId={orCourant?.id ?? null} />
+
             {alertes.length > 0 && (
               <div className="space-y-1.5 rounded-xl border border-warning/30 bg-warning/5 p-3">
                 {alertes.map((a: any) => (
