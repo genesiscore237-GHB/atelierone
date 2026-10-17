@@ -358,6 +358,14 @@ venteId: ordresReparation.venteId,
     // Le même défaut que la colonne « Non défini » du parking : un contrôle
     // qui a l'air d'exister et qui ne s'exerce pas.
     kilometrageEntree: ordresReparation.kilometrageEntree,
+    // ÉTAPE 6 — la note de satisfaction se prend à la restitution, donc elle
+    // s'affiche dans la 360. Sans ces deux colonnes, le bloc « Satisfaction »
+    // disait « non noté » même après enregistrement — et disparaissait au
+    // rechargement. Un enregistrement que l'écran nie est pire que pas
+    // d'enregistrement : l'agent recommence, ou pire, ne sait pas que ça a été
+    // fait.
+    satisfactionNote: ordresReparation.satisfactionNote,
+    satisfactionCommentaire: ordresReparation.satisfactionCommentaire,
     createdAt: ordresReparation.createdAt,
         })
         .from(ordresReparation)

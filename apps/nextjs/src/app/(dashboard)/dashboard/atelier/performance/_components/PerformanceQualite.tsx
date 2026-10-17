@@ -298,10 +298,28 @@ function VueSante({ periode }: { periode: PeriodeId }) {
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {data.kpis.map((k: any) => (
-          <div key={k.code} className="rounded-xl border border-border bg-card p-3">
+<div key={k.code} className="rounded-xl border border-border bg-card p-3">
             <span className={`mb-1 inline-block rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${statutColor(k.statut)}`}>{k.statut}</span>
             <p className="truncate text-xs uppercase tracking-wider text-muted-foreground">{kpiLabels[k.code] ?? k.code}</p>
-            <p className="text-lg font-black">{k.valeur != null ? `${k.valeur}${k.unite === "%" ? " %" : ""}` : "—"}</p>
+            <p className="text-lg font-black">{k.valeur != null ? `${k.valeur}${k.unite === "%" ? " %" : ""}` : "-"}</p>
+            {/* ÉTAPE 6 — LE DÉNOMINATEUR, sous la valeur.
+                Une moyenne sans « sur combien » est une impression.
+                « Satisfaction 4,5 / 5 » se lit comme une vérité établie ;
+                si une seule personne a répondu, c'est la moyenne d'UNE
+                personne, et l'écran ne le disait pas.
+
+                Trois états, pas deux : aucune mesure, mesure insuffisante,
+                mesure exploitable. Cacher la valeur sous 3 mesures serait
+                aller trop loin — la donnée existe, elle n'est pas encore
+                une tendance. */}
+            {k.n === 0 ? (
+              <p className="text-[10px] font-semibold text-muted-foreground">aucune mesure</p>
+            ) : (
+              <p className={`text-[10px] ${k.significatif ? "text-muted-foreground" : "text-warning-foreground"}`}>
+                sur {k.n} dossier{k.n > 1 ? "s" : ""}
+                {!k.significatif && " — trop peu pour conclure"}
+              </p>
+            )}
             {k.cible != null && <p className="text-[10px] text-muted-foreground">cible : {k.cible}{k.unite === "%" ? " %" : ""}</p>}
           </div>
         ))}

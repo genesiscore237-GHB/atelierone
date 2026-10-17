@@ -41,7 +41,7 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import {
-  History, Car, KeyRound, Lock, CheckCircle2, Loader2, PackageCheck, Trash2,
+  History, Car, KeyRound, Lock, CheckCircle2, Loader2, PackageCheck, Trash2, Star,
 } from "lucide-react";
 import { useOrPermissions } from "../../app/(dashboard)/dashboard/ordres-reparation/_hooks/useOrPermissions";
 import {
@@ -66,6 +66,85 @@ const CHECKLIST_SORTIE = [
   "Propreté du véhicule",
   "Objets personnels récupérés",
 ];
+
+/**
+ * Note de satisfaction — demandée au moment de la restitution.
+ *
+ * Séparée du panneau pour une raison de lecture : ce n'est plus une étape du
+ * processus de restitution, c'est une question posée au client, et elle se
+ * garde dans son propre bloc.
+ */
+function NoteSatisfaction({ or }: { or: any }) {
+  const utils = api.useUtils();
+  const [note, setNote] = useState<number>(or.satisfactionNote ?? 0);
+  const [commentaire, setCommentaire] = useState("");
+  const dejaNotee = or.satisfactionNote != null;
+
+  const noter = api.atelierKpi.noterSatisfaction.useMutation({
+    onSuccess: () => {
+      toast.success("Merci — la satisfaction est enregistrée");
+      utils.atelierKpi.invalidate();
+      utils.vehicules.get.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <h3 className="mb-2 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+        <Star size={15} className="text-primary" /> Satisfaction du client
+      </h3>
+      {dejaNotee ? (
+        <p className="text-sm text-muted-foreground">
+          Noté <b className="text-foreground">{or.satisfactionNote} / 5</b>
+          {or.satisfactionCommentaire ? ` — « ${or.satisfactionCommentaire} »` : ""}.
+          <span className="block text-xs">Redites possibles en toute honnêteté : un client qui revient le dire vaut mieux qu'un 5 de façade.</span>
+        </p>
+      ) : (
+        <>
+          <p className="mb-2 text-xs text-muted-foreground">
+            Demandez-la maintenant, pendant que le client est là : une note
+           collectée plus tard ne vaut plus rien.
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                type="button"
+                aria-label={`${n} étoile${n > 1 ? "s" : ""}`}
+                onClick={() => setNote(n)}
+                className={`rounded-lg border px-2.5 py-1 text-sm font-bold transition-colors ${
+                  note >= n
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:bg-accent"
+                }`}
+              >
+                {n} ★
+              </button>
+            ))}
+          </div>
+          <Input
+            value={commentaire}
+            onChange={(e) => setCommentaire(e.target.value)}
+            placeholder="Ce qu'il a dit (facultatif)"
+            className="mt-2"
+          />
+          <div className="mt-2 flex justify-end">
+            <Button
+              size="sm"
+              className="text-xs"
+              disabled={note === 0 || noter.isPending}
+              onClick={() => noter.mutate({ orId: Number(or.id), note, commentaire: commentaire.trim() || undefined })}
+            >
+              {noter.isPending ? <Loader2 size={12} className="animate-spin" /> : <Star size={12} />}
+              Enregistrer la note
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 /**
  * Restitution, clôture définitive et historique des restitutions d'un dossier.
@@ -366,6 +445,22 @@ export function RestituerVehicule({ or }: { or: any }) {
           Véhicule restitué — OR livré.
         </div>
       )}
+
+      {/* ─── Satisfaction client (étape 6, P3.2) ───
+          ICI, et seulement ici.
+
+          La note n'a de sens que si elle est demandée pendant que le client
+          est devant vous. Un formulaire ouvert trois jours plus tard ne
+          produit qu'un nombre inventé — et ce nombre, moyenné sur dix
+          dossiers, devient une « satisfaction client 4,2 / 5 » que personne
+          ne peut contester parce qu'elle sort d'un tableau de bord.
+
+          Le serveur existait déjà (`atelierKpi.noterSatisfaction`, protégé
+          par `or.modifier`) et n'était appelé par AUCUN écran : le KPI
+          SATISFACTION_CLIENT était donc voué au tiret éternel. Une colonne
+          qu'on lit et qu'on ne peut pas remplir — le même défaut que la
+          table `relances` avant l'étape 5. */}
+      <NoteSatisfaction or={or} />
 
       {/* ─── Clôture définitive ─── */}
       {peutCloturer && (

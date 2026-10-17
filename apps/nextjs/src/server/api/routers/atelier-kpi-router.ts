@@ -83,11 +83,52 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
     : code === "SATISFACTION_CLIENT" ? satisf
     : null;
 
+  // ÉTAPE 6 — LE DÉNOMINATEUR.
+  //
+  // Une moyenne sans dénominateur n'est pas une mesure, c'est une impression.
+  // « Satisfaction 4,5 / 5 » affiché en grand sur le tableau de bord se lit
+  // comme une vérité établie. Si la seule personne ayant répondu a mis 5, ce
+  // 4,5 est la moyenne d'UNE personne — et le tableau ne le dit pas.
+  //
+  // C'est la même famille que la colonne « Non défini » du parking et que les
+  // deux vocabulaires de statut : une information qui a l'air plus solide
+  // qu'elle ne l'est. Ici, le remède n'est pas d'enlever la valeur — c'est de
+  // montrer sur quoi elle repose.
+  //
+  // `n` est donc classé avec la valeur, jamais calculé côté écran :
+  // un écran qui recalcule le dénominateur finit par diverger du serveur.
+  const dossiersDiag = records.filter((o) => o.dateDiagSoumis && jourStr(o.dateOuverture) >= debut);
+  const n = (code: string) =>
+    code === "PONCTUALITE" ? livresPeriode.length
+    : code === "FTQ" ? livresPeriode.length
+    : code === "TAUX_RETOUR_SAV" ? comebacks.total
+    : code === "RAPIDITE_DIAG_JOURS" ? dossiersDiag.length
+    : code === "FIABILITE_APPRO" ? demandes.length
+    : code === "SATISFACTION_CLIENT" ? notes.length
+    : 0;
+
   const kpis = ["PONCTUALITE", "FTQ", "TAUX_RETOUR_SAV", "RAPIDITE_DIAG_JOURS", "FIABILITE_APPRO", "SATISFACTION_CLIENT"].map((code) => {
     const cb = c(code);
     const valeur = val(code);
-    const statut = cb ? statutKPI(valeur, Number(cb.cible), cb.seuilOrange != null ? Number(cb.seuilOrange) : null, cb.seuilRouge != null ? Number(cb.seuilRouge) : null, (cb.sens as "HAUT" | "BAS") ?? "HAUT") : "SANS_DATA";
-    return { code, valeur, cible: cb ? Number(cb.cible) : null, unite: cb?.unite ?? "%", sens: cb?.sens ?? "HAUT", statut };
+    const echantillon = n(code);
+    // Zéro mesure ne peut pas être « evaluated ». Sans ce garde, un KPI sans
+    // cible recevait quand même un statut calculé sur `null`, et le badge
+    // s'affichait — donc l'écran montrait une alerte sur une absence de
+    // donnée. C'est l'inverse de ce qu'il faut prévenir.
+    const statut = !cb || echantillon === 0
+      ? "SANS_DATA"
+      : statutKPI(valeur, Number(cb.cible), cb.seuilOrange != null ? Number(cb.seuilOrange) : null, cb.seuilRouge != null ? Number(cb.seuilRouge) : null, (cb.sens as "HAUT" | "BAS") ?? "HAUT");
+    return {
+      code,
+      valeur,
+      // VRAI ou non : sous 3 mesures, la moyenne est une anecdote.
+      n: echantillon,
+      significatif: echantillon >= 3,
+      cible: cb ? Number(cb.cible) : null,
+      unite: cb?.unite ?? "%",
+      sens: cb?.sens ?? "HAUT",
+      statut,
+    };
   });
 
   // Règles décisionnelles (calcul pur — l'insertion des notifications est

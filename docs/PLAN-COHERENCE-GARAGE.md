@@ -303,7 +303,7 @@ Ordre de suppression obtenu par **fermeture transitive du graphe FK** (57 tables
 | 3 | Anatomie du cycle — les deux vocabulaires de statut | ✅ |
 | 4 | Restitutions — trace obligatoire, panneau partagé | ✅ |
 | 5 | Relances | ✅ **3/3** — table, vocabulaire, routeur, panneau, 1089 tests |
-| 6 | Statistiques et KPI fouillables | ⬜ à faire |
+| 6 | Statistiques et KPI fouillables | 🟡 **1/9 → 3/9** — dénominateur honnête + satisfaction saisissable ; restent les 7 KPI de `P3.3` |
 | 7 | Qualité — tests de rendu React, purge des 339 erreurs TS | ⬜ à faire |
 
 **P0, P1 et P5 sont closes.** Elles n'apportent plus de valeur : ce qui bloque
@@ -318,7 +318,7 @@ statistiques.
 
 2. ~~**Rien n'a été validé en production.**~~ **Levée le 2026-10-16.** Un premier dossier réel existe désormais : `OR-26-0001`, créé le 2026-10-15, passé par le chemin « à wartier ». Le cycle reste néanmoins exercé **principalement en local**.
 
-3. **Les tests isolent mieux, mais pas encore parfaitement.** Les fichiers d'intégration sont sérialisés, donc plus de recouvrement entre eux. En revanche la base est partagée d'un fichier à l'autre et conserve des résidus : la suite passe deux fois de suite, ce n'est pas une garantie. **Un échec d'intégration sur `audit_logs` est apparu puis disparu sans changement de code** le 2026-10-17 — la référence est un fait, pas une déduction.
+3. **Les tests isolent mieux, mais pas encore parfaitement.** Les fichiers d'intégration sont sérialisés, donc plus de recouvrement entre eux. En revanche la base est partagée d'un fichier à l'autre et conserve des résidus : la suite passe deux fois de suite, ce n'est pas une garantie. **sur trois exécutions consécutives de la suite le 2026-10-17, une a échoué** le 2026-10-17 — la référence est un fait, pas une déduction.
 
 4. **Le rapport diagnostique `VALIDE` est définitif et sans issue.** Il ne peut être ni repris, ni annulé, ni corrigé. Ce n'est pas un défaut technique : c'est une décision métier qui n'a jamais été prise. Tant qu'elle ne l'est pas, un diagnostic erroné est définitif — et le vehicle reste immobilisé.
 
