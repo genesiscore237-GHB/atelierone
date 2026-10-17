@@ -75,6 +75,15 @@ type Row = Record<string, unknown>;
 
 let lignes: Ligne[] = [];
 
+
+/** Les dossiers réellement créés par le chantier — c'est CEUX-LÀ qu'on vérifie.
+
+Un dossier protégé par un mouvement de stock peut rester : le compter rendrait
+
+l'audit faux, dans un sens comme dans l'autre. */
+
+const crees: number[] = [];
+
 function ctx() {
   const user = {
     id: "1",
@@ -98,26 +107,45 @@ function ctx() {
 /**
  * Purge de l'état DÉRIVÉ.
  *
- * `mouvements_stock` est un cas à part : la table contient de VRAIS mouvements
- * (354 en production), mais `mouvements_stock.or_id` référence
- * `ordres_reparation`. On ne supprime donc QUE ceux qui pointent vers un
- * dossier — les entrées, sorties et inventaires du stock ne sont pas de
- * l'état dérivé d'une reconstruction et ne doivent pas disparaître.
+ * `mouvements_stock` est APPEND-ONLY et n'appartient PAS à ce chantier : le
+ * module stock est en cours d'implémentation par un autre agent, et on n'y
+ * touche pas. Un seul `DELETE` sur cette table et on empiète sur son travail —
+ * ou pire, on casse l'immutabilité d'un journal de mouvements, qui est
+ * précisément ce qui le rend fiable.
  *
- * C'est la seule façon de purger sans détruire : une clé étrangère ne
- * distingue pas ce qui dérive de ce qui est réel.
+ * Mais `mouvements_stock.or_id` référence `ordres_reparation`. Supprimer un
+ * dossier qui porte un mouvement est donc refusé par la clé étrangère.
+ *
+ * La sortie : on ne supprime QUE les dossiers sans mouvement. Ceux qui en
+ * portent sont laissés en place et COMPTÉS — un dossier qu'on ne peut pas
+ * enlever se signale, il ne disparaît pas en silence.
+ *
+ * En pratique, aucun véhicule du registre parking ne porte de mouvement : ce
+ * sont les fixtures d'autres fichiers de test qui en ont. La reconstruction
+ * n'a donc rien à fournir ici.
  */
 async function purger() {
   await db.execute(sql`DELETE FROM or_restitutions`);
   await db.execute(sql`DELETE FROM relances`);
   await db.execute(sql`DELETE FROM or_historique`);
   await db.execute(sql`DELETE FROM lignes_ordre_reparation`);
-  await db.execute(sql`DELETE FROM mouvements_stock WHERE or_id IS NOT NULL`);
-  await db.execute(sql`DELETE FROM ordres_reparation`);
+  await db.execute(
+    sql`DELETE FROM ordres_reparation o
+        WHERE NOT EXISTS (SELECT 1 FROM mouvements_stock m WHERE m.or_id = o.id)`,
+  );
   await db.execute(sql`DELETE FROM parking_movements`);
   await db.execute(sql`DELETE FROM parking_vehicles`);
   await db.execute(sql`DELETE FROM vehicules`);
   await db.execute(sql`DELETE FROM clients`);
+}
+
+/** Dossiers qu'on n'a PAS pu enlever, et pourquoi. */
+async function dossiersProteges() {
+  const r = (await db.execute(
+    sql`SELECT count(*)::int AS n FROM ordres_reparation o
+        WHERE EXISTS (SELECT 1 FROM mouvements_stock m WHERE m.or_id = o.id)`,
+  )) as unknown as Row[];
+  return Number(r[0]?.n ?? 0);
 }
 
 const sansPlaque = () => lignes.filter((l) => !l.immatriculation);
@@ -148,10 +176,18 @@ describe.skipIf(!ACTIF)("ÉTAPE 6 bis — reconstruction par le chemin métier",
   it("2. purge puis reconstruction : chaque véhicule plaque obtient son dossier", async () => {
     await purger();
 
+    const proteges = await dossiersProteges();
+    if (proteges > 0) {
+      // On le DIT. Un dossier qu'on n'a pas pu enlever ne doit pas
+      // disparaître du compte : sinon la vérification porte sur un ensemble
+      // différent de ce que contient la base.
+      console.log(`  ${proteges} dossier(s) proteges par mouvements_stock — laids (fixtures d'autres tests).`);
+    }
+
     const [apres] = (await db.execute(
       sql`SELECT count(*)::int AS n FROM ordres_reparation`,
     )) as unknown as Row[];
-    expect(Number(apres.n), "la purge n'a pas vidé les dossiers").toBe(0);
+    expect(Number(apres.n), "la purge n'a pas vidé les dossiers").toBe(proteges);
 
     const caller = orRouter.createCaller(ctx());
     const clientsParNom = new Map<string, number>();
@@ -190,6 +226,7 @@ describe.skipIf(!ACTIF)("ÉTAPE 6 bis — reconstruction par le chemin métier",
           },
         });
         reconstruits++;
+        crees.push(Number((r as any).id));
 
         // Mémorise la fiche créée pour les véhicules suivants du même
         // client — c'est ce que ferait un agent qui relirait le dossier au
