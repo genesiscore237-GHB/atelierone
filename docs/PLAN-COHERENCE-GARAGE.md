@@ -283,26 +283,50 @@ Ordre de suppression obtenu par **fermeture transitive du graphe FK** (57 tables
 
 ---
 
-## 5ter. Où en est le plan — 2026-10-16
+## 5ter. Où en est le plan — 2026-10-17
 
 | Phase | Avancement | Reste |
 |---|---|---|
 | **P0** Intégrité | ✅ **7/7** | — |
-| **P1** Liste véhicules | ❌ **0/3** | Liste canonique, recherche partagée, honnêteté des totaux (`P1.2` caduc) |
-| **P2** Alertes/relances | 🟡 1/4 | Vue centrale, module Relances, 2 endpoints orphelins |
-| **P3** Statistiques | 🟡 1/9 | P3.2 satisfaction, 7 KPI de P3.3 |
-| **P4** Performance | ❌ 0 | Pré-agrégation, cache, scans sans période |
-| **P5** Hygiène | 🟡 2/3 | Liste `KEEP` de `reset-db.ts` |
+| **P1** Liste véhicules | ✅ **3/3** | — (`P1.2` caduc) |
+| **P2** Alertes/relances | 🟡 **1/4** | Vue centrale d'alertes, module Relances, 2 endpoints orphelins |
+| **P3** Statistiques | 🟡 **1/9** | `P3.2` satisfaction, 7 KPI de `P3.3` |
+| **P4** Performance | ❌ **0** | Pré-agrégation, cache, scans sans période |
+| **P5** Hygiène | ✅ **3/3** | — (liste `KEEP` de `reset-db.ts`) |
+
+### Cycle véhicule — état des étapes
+
+| Étape | Objet | État |
+|---|---|---|
+| 1 | Réception — la matrice des 9 cas | ✅ |
+| 2 | Harmonisation — 360 partagée, listes canoniques | ✅ |
+| 3 | Anatomie du cycle — les deux vocabulaires de statut | ✅ |
+| 4 | Restitutions — trace obligatoire, panneau partagé | ✅ |
+| 5 | Relances | ⬜ à faire |
+| 6 | Statistiques et KPI fouillables | ⬜ à faire |
+| 7 | Qualité — tests de rendu React, purge des 339 erreurs TS | ⬜ à faire |
+
+**P0, P1 et P5 sont closes.** Elles n'apportent plus de valeur : ce qui bloque
+maintenant n'est plus l'intégrité ni la liste, c'est l'absence de relance et de
+statistiques.
 
 **P0 est close.** C'est la phase qui bloquait tout le reste, et elle est vérifiée dans le code, pas seulement au journal : `or-p0-gardes-travaux.integration.test.ts` couvre les gardes travaux, les `CHECK` sont `VALIDATE`, le trigger `immat_norm` est actif en production.
 
-### Trois réserves qu'il ne faut pas perdre de vue
+### Les quatre réserves qu'il ne faut pas perdre de vue
 
-1. ~~Une décision actée n'est pas appliquée.~~ **RESOLU le 2026-10-16 — voir le journal.** D4 (« fiche parking = `PROVISOIRE`, promote à la réception ») est désormais implémentée : la promotion existe, et une deuxième faute est sortie de l调查 — voir le journal du 2026-10-16.
+1. ~~Une décision actée n'est pas appliquée.~~ **RESOLU le 2026-10-16 — voir le journal.** D4 (« fiche parking = `PROVISOIRE`, promote à la réception ») est désormais implémentée : la promotion existe, et une deuxième faute est sortie de l'investigation — voir le journal du 2026-10-16.
 
 2. ~~**Rien n'a été validé en production.**~~ **Levée le 2026-10-16.** Un premier dossier réel existe désormais : `OR-26-0001`, créé le 2026-10-15, passé par le chemin « à wartier ». Le cycle reste néanmoins exercé **principalement en local**.
 
-3. **Les tests isolent mieux, mais pas encore parfaitement.** Les fichiers d'intégration sont sérialisés, donc plus de recouvrement entre eux. En revanche la base est partagée d'un fichier à l'autre et conserve des résidus (~129 véhicules) : la suite passe deux fois de suite, ce n'est pas une garantie.
+3. **Les tests isolent mieux, mais pas encore parfaitement.** Les fichiers d'intégration sont sérialisés, donc plus de recouvrement entre eux. En revanche la base est partagée d'un fichier à l'autre et conserve des résidus : la suite passe deux fois de suite, ce n'est pas une garantie. **Un échec d'intégration sur `audit_logs` est apparu puis disparu sans changement de code** le 2026-10-17 — la référence est un fait, pas une déduction.
+
+4. **Le rapport diagnostique `VALIDE` est définitif et sans issue.** Il ne peut être ni repris, ni annulé, ni corrigé. Ce n'est pas un défaut technique : c'est une décision métier qui n'a jamais été prise. Tant qu'elle ne l'est pas, un diagnostic erroné est définitif — et le vehicle reste immobilisé.
+
+### Ce qui n'est pas fait et ne le sera pas sans décision
+
+- **Sauvegardes production** — différées explicitement. À noter pour le jour venu : une branche Neon est un environnement, pas une sauvegarde ; le filet réel est PITR. Neon est PG18.6, le `pg_dump` local PG17.6.
+- **Rotation des secrets Neon / S3** — les identifiants ont été exposés dans une conversation. À faire avant toute automatisation durable.
+- **Validation du commit déployé sur Vercel** — le site est derrière Vercel Authentication et aucun CLI ni token n'est disponible.
 
 ## 6. Journal
 
