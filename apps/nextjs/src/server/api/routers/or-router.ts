@@ -2445,6 +2445,84 @@ const [rapport] = await tx
       }) as any;
     }),
 
+  /**
+ * Reprendre un rapport de diagnostic APRÈS coup.
+ *
+ * Le constat se pose une fois, à la création. Ensuite il est figé : le
+ * technicien qui se trompe de formulation, ou qui complète après avoir vu la
+ * voiture sur le pont, devait rouvrir un dossier. En pratique il ne le
+ * fait pas — et le diagnostic reste faux.
+ *
+ * ## Un rapport VALIDE reste figé — et c'est délibéré
+ *
+ * La machine ne permet AUCUNE transition depuis `VALIDE`. Valider, c'est
+ * s'engager : un chef d'atelier a porte la responsabilité du diagnostic, et il
+ * doit pouvoir s'y fier. Réécrire un constat validé sans trace le viderait de
+ * sa valeur.
+ *
+ * Conséquence à garder en tête : **une erreur de validation est aujourd'hui
+ * irréversible.** Il n'existe aucun chemin pour revenir de `VALIDE`. C'est un
+ * défaut métier à trancher — un contre-vérificat avec motif, ou une correction
+ * tracée comme un nouvel événement — pas un détail d'écran. Signalé, pas
+ * contourné ici : contourner la règle dans un écran serait exactement le genre
+ * de raccourci qui rend une machine d'états décorative.
+ *
+ * ## Ce qui est modifiable
+ *
+ * Le fond du constat, la cause, les codes défaut, les tests effectués. Le
+ * statut ne se modifie pas ici : il se change par les transitions
+ * habituelles (`soumettre`, `valider`, `retourner`), sinon deux portes
+ * s'ouvriraient sur la même machine d'états.
+ */
+modifierDiagnostic: requirePermissionProcedure("or.modifier")
+  .input(
+    z.object({
+      id: z.number().int().positive(),
+      constat: z.string().trim().min(3).optional(),
+      cause: z.string().trim().optional(),
+      codesDTC: z.string().trim().optional(),
+      tests: z.string().trim().optional(),
+    }),
+  )
+  .mutation(async ({ ctx, input }) => {
+    const [rapport] = await db
+      .select({ orId: orRapportsDiagnostic.orId, statut: orRapportsDiagnostic.statut })
+      .from(orRapportsDiagnostic)
+      .where(eq(orRapportsDiagnostic.id, input.id))
+      .limit(1);
+    if (!rapport) throw new TRPCError({ code: "NOT_FOUND", message: "Rapport de diagnostic introuvable." });
+
+    await verifierDossierOuvert(rapport.orId, ctx.user.agenceId);
+
+    if (rapport.statut === "VALIDE") {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          "Ce diagnostic est VALIDÉ : son contenu ne peut plus être modifié. " +
+          "Une validation engage la responsabilité du validateur.",
+      });
+    }
+
+    const { id, ...corps } = input;
+    // Rien à écrire = pas d'écriture. Invalider la date de modification sur une
+    // « sauvegarde » sans changement ferait croire que le rapport a bougé.
+    if (Object.values(corps).every((v) => v === undefined)) return { success: false, modifie: false };
+
+    await db
+      .update(orRapportsDiagnostic)
+      .set({ ...corps, updatedAt: new Date() } as any)
+      .where(eq(orRapportsDiagnostic.id, id));
+
+    await db.insert(orHistorique).values({
+      orId: rapport.orId,
+      type: "DIAGNOSTIC",
+      commentaire: `Diagnostic modifié (${Object.keys(corps).join(", ")}) — rapport ${rapport.statut}`,
+      changePar: Number(ctx.user.id),
+    } as any);
+
+    return { success: true, modifie: true };
+  }),
+
   validerDiagnostic: requirePermissionProcedure("or.valider")
     .input(z.object({ rapportId: z.number().int(), commentaire: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {

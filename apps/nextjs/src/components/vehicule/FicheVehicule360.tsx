@@ -706,6 +706,7 @@ export function FicheVehicule360({
                     </span>
                     {rapport.technicien && <span className="text-xs text-muted-foreground">par {rapport.technicien.prenom ?? ""} {rapport.technicien.nom}</span>}
                     {rapport.dateSoumission && <span className="text-xs text-muted-foreground">· soumis le {fmtDate(rapport.dateSoumission)}</span>}
+                    <ModificateurDiagnostic rapport={rapport} />
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
@@ -1140,6 +1141,108 @@ function LigneTravailEditable({ ligne, techniciens }: { ligne: any; techniciens:
         )}
       </td>
     </tr>
+  );
+}
+
+/**
+ * MODIFIER UN CONSTAT DE DIAGNOSTIC — depuis la 360.
+ *
+ * Le constat se posait une fois, à la création. Un technicien qui se trompe de
+ * formulation, ou qui complète après avoir vu la voiture sur le pont, devait
+ * rouvrir un dossier. Il ne le fait pas — et le diagnostic reste faux.
+ *
+ * ## Un rapport VALIDÉ n'est pas modifiable, et l'écran le dit
+ *
+ * La machine ne permet aucune transition depuis `VALIDE` : valider engage la
+ * responsabilité du validateur. Un rapport validé est donc hors de portée — et
+ * l'interface le DIT au lieu d'afficher un bouton qui échouerait. Un bouton
+ * qui refuse est pire que pas de bouton : l'agent retry, puis croit à un bug.
+ *
+ * ## Le statut ne se change pas ici
+ *
+ * Il passe par les transitions habituelles (soumettre / valider / retourner).
+ * Deux portes sur la même machine d'états, et la machine n'en est plus une.
+ */
+function ModificateurDiagnostic({ rapport }: { rapport: any }) {
+  const { hasPermission } = usePermissions();
+  const utils = api.useUtils();
+  const [ouvert, setOuvert] = useState(false);
+  const editable = hasPermission("or.modifier");
+
+  const vide = !rapport?.constat;
+  const [constat, setConstat] = useState(rapport?.constat ?? "");
+  const [cause, setCause] = useState(rapport?.cause ?? "");
+  const [codesDTC, setCodesDTC] = useState(rapport?.codesDTC ?? "");
+  const [tests, setTests] = useState(rapport?.tests ?? "");
+
+  const sauver = api.or.modifierDiagnostic.useMutation({
+    onSuccess: (r: any) => {
+      if (!r?.modifie) {
+        toast.info("Aucune modification à enregistrer.");
+      } else {
+        toast.success("Diagnostic mis à jour.");
+      }
+      setOuvert(false);
+      void utils.vehicules.get.invalidate();
+      void utils.vehicules.journal.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  if (vide || rapport?.statut === "VALIDE" || !editable) return null;
+
+  if (!ouvert) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOuvert(true)}
+        className="ml-auto rounded-md border border-border px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:bg-accent hover:text-foreground"
+      >
+        Modifier le constat
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-border bg-background p-3">
+      <div>
+        <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Constat</label>
+        <textarea
+          value={constat}
+          onChange={(e) => setConstat(e.target.value)}
+          rows={3}
+          className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+        />
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Cause</label>
+          <input value={cause} onChange={(e) => setCause(e.target.value)} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs" />
+        </div>
+        <div>
+          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Codes défaut (DTC)</label>
+          <input value={codesDTC} onChange={(e) => setCodesDTC(e.target.value)} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs" />
+        </div>
+      </div>
+      <div>
+        <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Tests effectués</label>
+        <input value={tests} onChange={(e) => setTests(e.target.value)} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs" />
+      </div>
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={() => setOuvert(false)} className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent">
+          Annuler
+        </button>
+        <button
+          type="button"
+          onClick={() => sauver.mutate({ id: rapport.id, constat, cause, codesDTC, tests })}
+          disabled={sauver.isPending}
+          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+        >
+          {sauver.isPending && <Loader2 size={12} className="animate-spin" />}
+          Enregistrer
+        </button>
+      </div>
+    </div>
   );
 }
 
