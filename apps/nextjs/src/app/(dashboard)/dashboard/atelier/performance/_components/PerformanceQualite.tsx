@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -292,6 +292,10 @@ function VueSante({ periode }: { periode: PeriodeId }) {
     RAPIDITE_DIAG_JOURS: "Rapidité diagnostic",
     FIABILITE_APPRO: "Fiabilité approvisionnement",
     SATISFACTION_CLIENT: "Satisfaction client",
+  // ÉTAPE 6 — le taux de reprises : combien de dossiers ont dû être repris
+  // après contrôle qualité. C'est un indicateur de coût double — une reprise,
+  // c'est une seconde immobilisation que le client a payée deux fois.
+  TAUX_REPRISE: "Taux de reprises",
   };
 
   return (

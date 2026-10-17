@@ -229,16 +229,60 @@ describe("Lot 3 — pilotage (dashboard direction)", () => {
     expect(r.score).toBeDefined();
     expect(typeof r.score!.score).toBe("number");
     expect(["BON", "MOYEN", "CRITIQUE"]).toContain(r.score!.verdict);
-    expect(r.kpis.length).toBe(6);
+    // ÉTAPE 6 — le nombre seul ne suffit plus. Ce test affirmait « 6 », et
+    // l'ajout du 7ᵉ KPI l'a fait échouer avec « expected 7 to be 6 » : le
+    // nombre n'apprend rien sur CE QUI a changé. Une liste de codes, elle,
+    // nomme le coupable — et un KPI retiré se voit aussi.
+    expect(r.kpis.map((k: any) => k.code).sort()).toEqual(
+      [
+        "FIABILITE_APPRO",
+        "FTQ",
+        "PONCTUALITE",
+        "RAPIDITE_DIAG_JOURS",
+        "SATISFACTION_CLIENT",
+        "TAUX_REPRISE",
+        "TAUX_RETOUR_SAV",
+      ].sort(),
+    );
+    // Et chacun annonce son dénominateur : une valeur sans « sur combien »
+    // est une impression.
+    for (const k of r.kpis as any[]) {
+      expect(typeof k.n, `${k.code} sans dénominateur`).toBe("number");
+    }
   });
 
-  it("6. kpiCibles : les 6 cibles par défaut existent (data-migration)", async () => {
+  it("6. chaque KPI a SA cible — sans elle, il reste voué au SANS_DATA", async () => {
     const caller = atelierKpiRouter.createCaller(ctxSuperadmin());
     const cibles = await caller.getCibles();
 
     const codes = new Set(cibles.map((c) => c.code));
-    for (const code of ["PONCTUALITE", "FTQ", "TAUX_RETOUR_SAV", "RAPIDITE_DIAG_JOURS", "FIABILITE_APPRO", "SATISFACTION_CLIENT"]) {
-      expect(codes.has(code)).toBe(true);
+    // La liste est vérifiée PAR CODE, pas par nombre : un test qui compte
+    // n'apprend rien sur ce qui a disparu.
+    for (const code of [
+      "PONCTUALITE",
+      "FTQ",
+      "TAUX_RETOUR_SAV",
+      "RAPIDITE_DIAG_JOURS",
+      "FIABILITE_APPRO",
+      "SATISFACTION_CLIENT",
+      "TAUX_REPRISE",
+    ]) {
+      expect(codes.has(code), `la cible ${code} manque : le KPI resterait SANS_DATA`).toBe(true);
+    }
+
+    // ÉTAPE 6 — et pas de doublon. `kpi_cibles` n'a AUCUNE contrainte
+    // d'unicité sur (agence_id, code) : l'invariant ne tient qu'à la garde
+    // du script d'initialisation. Un jour où deux chemins insèrent le même
+    // code, la table aurait deux cibles concurrentes pour un KPI, et le
+    // tableau de bord en afficherait une au hasard — silencieusement.
+    //
+    // Ce test ne remplace pas la contrainte : il la rend VISIBLE en attendant
+    // qu'une migration puisse l'ajouter (le journal des migrations est
+    // partagé avec un autre chantier).
+    const parCode = new Map<string, number>();
+    for (const c of cibles) parCode.set(c.code, (parCode.get(c.code) ?? 0) + 1);
+    for (const [code, n] of parCode) {
+      expect(n, `la cible ${code} existe ${n} fois`).toBe(1);
     }
   });
 });

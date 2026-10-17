@@ -303,7 +303,7 @@ Ordre de suppression obtenu par **fermeture transitive du graphe FK** (57 tables
 | 3 | Anatomie du cycle — les deux vocabulaires de statut | ✅ |
 | 4 | Restitutions — trace obligatoire, panneau partagé | ✅ |
 | 5 | Relances | ✅ **3/3** — table, vocabulaire, routeur, panneau, 1089 tests |
-| 6 | Statistiques et KPI fouillables | 🟡 **1/9 → 3/9** — dénominateur honnête + satisfaction saisissable ; restent les 7 KPI de `P3.3` |
+| 6 | Statistiques et KPI fouillables | 🟡 **4/9** — dénominateur honnête, satisfaction saisissable, `TAUX_REPRISE` ; restent marge par dossier, productivité technicien, rétention, délai pièces, transformation devis, série d'occupation |
 | 7 | Qualité — tests de rendu React, purge des 339 erreurs TS | ⬜ à faire |
 
 **P0, P1 et P5 sont closes.** Elles n'apportent plus de valeur : ce qui bloque

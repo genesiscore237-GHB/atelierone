@@ -25,6 +25,16 @@ const DEFAUTS: Array<{ code: string; cible: string; seuilOrange: string | null; 
   { code: "RAPIDITE_DIAG_JOURS", cible: "1", seuilOrange: "2", seuilRouge: "3", unite: "j", sens: "BAS" },
   { code: "FIABILITE_APPRO", cible: "90", seuilOrange: "75", seuilRouge: "60", unite: "%", sens: "HAUT" },
   { code: "SATISFACTION_CLIENT", cible: "4", seuilOrange: "3", seuilRouge: "2", unite: "/5", sens: "HAUT" },
+  // ÉTAPE 6 — TAUX_REPRISE. Le calcul (`tauxRetouche`) existait dans
+  // `kpi-service.ts` depuis le début, et `chargerRecords` fournissait déjà le
+  // champ `retouche` — mais aucun KPI ne le consommait. Une fonction exportée
+  // que personne n'appelle n'est pas une fonctionnalité, c'est de la
+  // documentation qui se prend pour du code.
+  //
+  // Cible BAS : on veut peu de reprises. 10 % est déjà mauvais pour un atelier
+  // qui revend du travail fini — une reprise, c'est une seconde immobilisation
+  // que le client a payée deux fois.
+  { code: "TAUX_REPRISE", cible: "10", seuilOrange: "15", seuilRouge: "25", unite: "%", sens: "BAS" },
 ];
 
 (async () => {

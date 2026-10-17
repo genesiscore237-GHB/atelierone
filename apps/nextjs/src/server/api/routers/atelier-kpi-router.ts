@@ -74,6 +74,14 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
   const satisf = notes.length ? Math.round((notes.reduce((s, n) => s + n, 0) / notes.length) * 100) / 100 : null;
 
   const c = (code: string): any => cibleMap.get(code);
+  // ÉTAPE 6 — TAUX_REPRISE. Le calcul existait (`tauxRetouche`) et le champ
+  // par dossier existait (`chargerRecords` → `retouche`) : il manquait
+  // seulement que quelqu'un l'appelle. Une fonction exportée que personne
+  // n'appelle n'est pas une fonctionnalité.
+  //
+  // Mesuré sur les dossiers LIVRÉS de la période : une reprise sur un dossier
+  // encore ouvert n'a pas encore eu lieu.
+  const reprises = tauxRetouche(livresPeriode);
   const val = (code: string) =>
     code === "PONCTUALITE" ? ponctualité.pourcent
     : code === "FTQ" ? ftq
@@ -81,6 +89,7 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
     : code === "RAPIDITE_DIAG_JOURS" ? diag
     : code === "FIABILITE_APPRO" ? appro
     : code === "SATISFACTION_CLIENT" ? satisf
+    : code === "TAUX_REPRISE" ? reprises
     : null;
 
   // ÉTAPE 6 — LE DÉNOMINATEUR.
@@ -105,9 +114,10 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
     : code === "RAPIDITE_DIAG_JOURS" ? dossiersDiag.length
     : code === "FIABILITE_APPRO" ? demandes.length
     : code === "SATISFACTION_CLIENT" ? notes.length
+    : code === "TAUX_REPRISE" ? livresPeriode.length
     : 0;
 
-  const kpis = ["PONCTUALITE", "FTQ", "TAUX_RETOUR_SAV", "RAPIDITE_DIAG_JOURS", "FIABILITE_APPRO", "SATISFACTION_CLIENT"].map((code) => {
+  const kpis = ["PONCTUALITE", "FTQ", "TAUX_RETOUR_SAV", "RAPIDITE_DIAG_JOURS", "FIABILITE_APPRO", "SATISFACTION_CLIENT", "TAUX_REPRISE"].map((code) => {
     const cb = c(code);
     const valeur = val(code);
     const echantillon = n(code);

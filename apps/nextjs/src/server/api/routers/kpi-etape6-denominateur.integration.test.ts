@@ -162,6 +162,39 @@ describe("ÉTAPE 6 — un KPI sans dénominateur n'est pas une mesure", () => {
     expect(satisf!.significatif).toBe(false);
   });
 
+  it("5. TAUX_REPRISE : un dossier repris se voit, un dossier propre aussi", async () => {
+    const caller = atelierKpiRouter.createCaller(ctxSuperadmin());
+    const kpi = async () =>
+      (await caller.getSanteGarage({ periode: "trimestre" })).kpis.find(
+        (k: any) => k.code === "TAUX_REPRISE",
+      ) as any;
+
+    // Zéro dossier repris -> 0 %. C'est une MESURE, pas une absence : le
+    // dossier existe, on l'a ouvert, et il n'a pas été repris. L'écran doit
+    // donc afficher « 0 % », pas « aucune mesure ».
+    const avant = await kpi();
+    expect(avant).toBeDefined();
+    expect(avant!.n).toBeGreaterThanOrEqual(1);
+    expect(avant!.valeur).toBe(0);
+
+    // Une reprise se détecte par l'HISTORIQUE : un passage de
+    // CONTROLE_QUALITE vers EN_COURS signifie que le contrôle a renvoyé le
+    // dossier. C'est la trace, pas une colonne — donc rien à maintenir.
+    await db.execute(
+      sql`INSERT INTO or_historique (or_id, type, ancienne_valeur, nouvelle_valeur, commentaire)
+          VALUES (${orId}, 'STATUT', 'CONTROLE_QUALITE', 'EN_COURS', 'Reprise : contrôle qualité refusé')`,
+    );
+
+    const apres = await kpi();
+    expect(apres.valeur).toBe(100);
+    // Le dénominateur ne change pas : c'est le MÊME dossier, pas un nouveau.
+    // Un indicateur dont le dénominateur bouge quand la valeur bouge est
+    // impossible à lire.
+    expect(apres.n).toBe(avant!.n);
+
+    await db.execute(sql`DELETE FROM or_historique WHERE or_id = ${orId}`);
+  });
+
   it("4. la note est saisissable seulement une fois le dossier prêt ou livré", async () => {
     // Le garde existe côté serveur depuis le début ; on le vérifie parce
     // qu'une note prise AVANT la livraison ne mesurerait rien.
