@@ -873,7 +873,23 @@ export const orRouter = createTRPCRouter({
       chauffeur: z.object({ nom: z.string().optional(), telephone: z.string().optional() }).optional(),
       reception: z.object({
         dateReception: z.string().optional(),
-        kilometrageEntree: z.number().int().min(0),
+        // ÉTAPE 6 bis — le kilométrage devient OPTIONNEL.
+        //
+        // La colonne `kilometrage_entree` est NULLABLE en base ; c'est ce
+        // contrat, plus strict, qui imposait une valeur. Élevé lors de
+        // l'import du registre parking — où il n'y a **aucun** relevé : le
+        // garage note QUI et POURQUOI, pas COMBIEN.
+        //
+        // `NULL` n'est pas `0`. L'écran affiche « - » pour une absence, et
+        // « 0 km » pour un zéro : les deux se lisent différemment, et 0 est
+        // une MESURE qui se trouve être fausse. Un véhicule qui arrive à
+        // 180 000 km n'a pas 0 km — il n'est pas relevé.
+        //
+        // La donnée reste saisissable ensuite : la fiche permet de compléter
+        // le relevé, et la restitution comparera le km de sortie à celui
+        // d'entrée **seulement s'il existe** — ce que le code fait déjà
+        // (`kmEntree != null`).
+        kilometrageEntree: z.number().int().min(0).optional(),
         niveauCarburantEntree: z.string().optional(),
         pannesDeclarees: z.string().min(1),
         observationsReception: z.string().optional(),
@@ -1069,8 +1085,8 @@ export const orRouter = createTRPCRouter({
           emplacement:
             input.reception.emplacement ??
             (clientSansProprietaire ? "Wartier" : "Réception"),
-          kilometrageEntree: input.reception.kilometrageEntree,
-          kilometrageSortie: null,
+kilometrageEntree: input.reception.kilometrageEntree ?? null,
+        kilometrageSortie: null,
           niveauCarburantEntree: input.reception.niveauCarburantEntree ?? null,
           pannesDeclarees: input.reception.pannesDeclarees,
           observationsReception: input.reception.observationsReception ?? null,
@@ -1127,7 +1143,16 @@ export const orRouter = createTRPCRouter({
         // la visite suivante. Une seule valeur fait foi désormais.
         await tx
           .update(vehicules)
-          .set({ kilometrage: input.reception.kilometrageEntree, updatedAt: new Date() } as any)
+          .set({
+            // ÉTAPE 6 bis — n'écrase le kilométrage de la fiche que si un
+            // relevé a été fait. Sinon on y mettrait `0`, et la fiche
+            // afficherait « 0 km » pour un véhicule qui en compte 180 000.
+            // Une absence se propage : elle reste une absence.
+            ...(input.reception.kilometrageEntree != null
+              ? { kilometrage: input.reception.kilometrageEntree }
+              : {}),
+            updatedAt: new Date(),
+          } as any)
           .where(eq(vehicules.id, vehiculeId));
 
         // 5. Historique de réception (traçabilité)
