@@ -304,7 +304,7 @@ Ordre de suppression obtenu par **fermeture transitive du graphe FK** (57 tables
 | 4 | Restitutions — trace obligatoire, panneau partagé | ✅ |
 | 5 | Relances | ✅ **3/3** — table, vocabulaire, routeur, panneau, 1089 tests |
 | 6 | Statistiques et KPI fouillables | 🟡 **4/9** — dénominateur honnête, satisfaction saisissable, `TAUX_REPRISE` ; restent marge par dossier, productivité technicien, rétention, délai pièces, transformation devis, série d'occupation |
-| 7 | Qualité — tests de rendu React, purge des 339 erreurs TS | ⬜ à faire |
+| 7 | Qualité — tests de rendu React, purge des 229 erreurs TS | 🟡 **partiel** — invariant d'onglets en place ; **rendu React réel toujours absent** (`jsdom` non installé) |
 
 **P0, P1 et P5 sont closes.** Elles n'apportent plus de valeur : ce qui bloque
 maintenant n'est plus l'intégrité ni la liste, c'est l'absence de relance et de
