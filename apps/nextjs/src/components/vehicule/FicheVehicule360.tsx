@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
+import { RestituerVehicule } from "~/components/or/RestituerVehicule";
 import {
   ArrowLeft, ArrowRight, Car, FileSignature, Gauge, History, Phone, User, Wrench, ClipboardList,
 PackageSearch, Receipt, Camera, AlertTriangle, CalendarClock, Timer, MapPin, ChevronRight, Loader2, Image as ImageIcon,
@@ -885,6 +886,22 @@ export function FicheVehicule360({
                     </tfoot>
                   </table>
                 </div>
+              </div>
+            )}
+
+            {/* ─── Restitution — ÉTAPE 4 ───
+                Le garage vit ici, dans la 360. Avant ce lot, rendre un véhicule
+                exigeait de retrouver le dossier, de l'ouvrir, puis de changer
+                d'onglet : un détour, alors qu'au garage ce qu'on a sous les
+                yeux c'est la plaque et la place.
+
+                Le panneau est le MÊME que celui de la page OR — importé, pas
+                recopié. Deux formulaires de restitution qui divergent donneraient
+                deux réponses à « le véhicule est-il parti avec le plein ? », et
+                l'une des deux aurait tort sans qu'on le sache. */}
+            {orCourant && (
+              <div className="mt-5 border-t border-border pt-5">
+                <RestituerVehicule or={orCourant} />
               </div>
             )}
           </div>

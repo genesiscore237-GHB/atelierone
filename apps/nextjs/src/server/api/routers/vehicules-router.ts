@@ -347,9 +347,18 @@ techniciens: requirePermissionProcedure("vehicules.consulter")
           devisAccepte: ordresReparation.devisAccepte,
           factureTransmiseLe: ordresReparation.factureTransmiseLe,
           attenteBonCommande: ordresReparation.attenteBonCommande,
-          venteId: ordresReparation.venteId,
-          totalTTC: ordresReparation.totalTTC,
-          createdAt: ordresReparation.createdAt,
+venteId: ordresReparation.venteId,
+    totalTTC: ordresReparation.totalTTC,
+    // ÉTAPE 4 — la restitution est désormais accessible depuis la 360, et le
+    // formulaire compare le km de SORTIE au km d'ENTRÉE. Sans cette colonne,
+    // le contrôle était inerte sur cet écran : le champ acceptait une valeur
+    // inférieure, et c'était le serveur qui refusait — après que l'agent ait
+    // rempli tout le formulaire.
+    //
+    // Le même défaut que la colonne « Non défini » du parking : un contrôle
+    // qui a l'air d'exister et qui ne s'exerce pas.
+    kilometrageEntree: ordresReparation.kilometrageEntree,
+    createdAt: ordresReparation.createdAt,
         })
         .from(ordresReparation)
         .where(eq(ordresReparation.vehiculeId, input.id))
