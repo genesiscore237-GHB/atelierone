@@ -303,12 +303,64 @@ Ordre de suppression obtenu par **fermeture transitive du graphe FK** (57 tables
 | 3 | Anatomie du cycle — les deux vocabulaires de statut | ✅ |
 | 4 | Restitutions — trace obligatoire, panneau partagé | ✅ |
 | 5 | Relances | ✅ **3/3** — table, vocabulaire, routeur, panneau, 1089 tests |
-| 6 | Statistiques et KPI fouillables | 🟡 **4/9** — dénominateur honnête, satisfaction saisissable, `TAUX_REPRISE` ; restent marge par dossier, productivité technicien, rétention, délai pièces, transformation devis, série d'occupation |
+| 6 | Statistiques et KPI fouillables | 🟡 **4/9** — **bloquée par l'absence de données, pas par le code** : la production compte 1 dossier, 0 ligne, 0 vente, 0 achat. Voir § 5bis |
 | 7 | Qualité — tests de rendu React, purge des 229 erreurs TS | 🟡 **partiel** — invariant d'onglets en place ; **rendu React réel toujours absent** (`jsdom` non installé) |
 
 **P0, P1 et P5 sont closes.** Elles n'apportent plus de valeur : ce qui bloque
 maintenant n'est plus l'intégrité ni la liste, c'est l'absence de relance et de
 statistiques.
+
+### 5ter bis. L'étape 6 est bloquée par les données, pas par le code — 2026-10-17
+
+Volume **réel** en production, relevé :
+
+| Table | Lignes |
+|---|---|
+| `clients` | 31 |
+| `vehicules` | 55 |
+| `employes` | 38 |
+| **`ordres_reparation`** | **1** |
+| **`lignes_ordre_reparation`** | **0** |
+| `ventes` | 0 |
+| `achats_lignes` | 0 |
+| `or_restitutions` | 0 |
+| `relances` | 0 |
+
+Les 31 clients et les 55 véhicules viennent de `migrate-parking-clients` et
+`migrate-parking-vehicules` : ce sont des **fiches créées depuis le registre**,
+pas de l'exploitation. Il n'y a pas eu un seul cycle d'atelier terminé.
+
+Conséquence : **les six KPI restants s'afficheraient « aucune mesure ».**
+Le travail du dénominateur les rend au moins honnêtes — mais vides. Écrire six
+cartes de plus produirait six écrans vides, ce qui est pire que cinq : on
+peut alors croire que le tableau de bord fonctionne.
+
+Le moteur, lui, **est prouvé** : `kpi-etape6-denominateur.integration.test.ts`
+fait passer une note à 5, vérifie `valeur = 5`, `n = 1`, `significatif = false`,
+et fait varier `TAUX_REPRISE` sans que le dénominateur bouge. Quand la donnée
+arrivera, les KPI calculeront.
+
+#### La marge par dossier est bloquée par une décision métier
+
+`P3.3.1` est le premier des KPI manquants « par ordre de valeur ». Il n'est pas
+calculable aujourd'hui, et pas pour une raison de code :
+
+- **Coût des pièces : possible.** `achats_lignes` porte `or_id` et
+  `prix_unitaire` — le coût d'achat est raccrochable au dossier.
+- **Coût de la main-d'œuvre : impossible.** `lignes_ordre_reparation` a
+  `duree_heures`, mais **aucun taux horaire n'existe** — ni table, ni colonne,
+  nulle part. `employee_salary_history.base_salary` existe, mais un salaire
+  n'est pas un coût de main-d'œuvre : il faut un taux de charges, une
+  imputation des charges de structure, et une notion d'heures productives qui
+  n'existe pas.
+
+Une marge calculée avec un taux horaire inventé serait **fiable en apparence et
+fausse en réalité** — exactement le défaut que ce chantier traque depuis le
+départ. La marge sur les pièces seule est calculable et命名为 « marge pièces »,
+mais ce n'est pas la marge que le plan demande.
+
+> **Décision attendue :** quel est le coût d'une heure d'atelier ? Cette réponse
+> doit précéder la migration qui stockera le taux.
 
 **P0 est close.** C'est la phase qui bloquait tout le reste, et elle est vérifiée dans le code, pas seulement au journal : `or-p0-gardes-travaux.integration.test.ts` couvre les gardes travaux, les `CHECK` sont `VALIDATE`, le trigger `immat_norm` est actif en production.
 
