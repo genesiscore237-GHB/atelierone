@@ -5,6 +5,7 @@ import {
   statutOuvertureOR,
   STATUT_LABELS,
   STATUTS_IMMOBILISATION,
+  STATUT_STYLE,
 } from "./vehicule-service";
 
 describe("Véhicules & Atelier — cycle d'immobilisation", () => {
@@ -45,11 +46,22 @@ describe("Véhicules & Atelier — cycle d'immobilisation", () => {
     expect(transitionStatutVehiculeValide("abandonne_contentieux", "en_reparation")).toBe(false);
   });
 
-  it("toutes les transitions restent dans les 12 statuts", () => {
+  it("toutes les transitions restent dans la nomenclature", () => {
     for (const statut of STATUTS_IMMOBILISATION) {
-      expect(STATUT_LABELS[statut]).toBeDefined();
+      expect(STATUT_LABELS[statut], `libellé manquant pour ${statut}`).toBeDefined();
+      expect(STATUT_STYLE[statut], `style manquant pour ${statut}`).toBeDefined();
     }
-    expect(STATUTS_IMMOBILISATION).toHaveLength(11);
+    // Étape 3 : `accidente` et `en_vente` se sont ajoutés — le registre
+    // parking les connaissait, le vocabulaire d'immobilisation non. Sans eux,
+    // « ne rien écrire » laissait un véhicule accidenté affiché « en
+    // réception », en contradiction avec le parking.
+    //
+    // Le nombre est écrit EN DUR : c'est un compteur d'alerte. Un test qui
+    // dirait `toHaveLength(STATUTS_IMMOBILISATION.length)` ne verrait jamais
+    // qu'un statut disparaisse : il l'adopterait mecaniquement.
+    expect(STATUTS_IMMOBILISATION).toHaveLength(13);
+    expect(STATUTS_IMMOBILISATION).toContain("accidente");
+    expect(STATUTS_IMMOBILISATION).toContain("en_vente");
   });
 });
 

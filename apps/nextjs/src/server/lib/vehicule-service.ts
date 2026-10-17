@@ -15,6 +15,11 @@ export const STATUTS_IMMOBILISATION = [
   "terminee_client_non_venu",
   "transfere_site2",
   "abandonne_contentieux",
+  // ÉTAPE 3 : deux états réels du métier, longtemps absents — le registre
+  // parking ne savait pas les nommer, et « ne rien écrire » laissait le
+  // véhicule porter un statut FAUX et ancien. Invisible, donc jamais corrigé.
+  "accidente",
+  "en_vente",
   "sorti",
 ] as const;
 
@@ -29,6 +34,8 @@ export const STATUT_LABELS: Record<string, string> = {
   terminee_client_non_venu: "Terminée — client non venu",
   transfere_site2: "Transféré site 2",
   abandonne_contentieux: "Abandonné / contentieux",
+  accidente: "Accidenté",
+  en_vente: "En vente",
   sorti: "Sorti",
 };
 
@@ -44,6 +51,8 @@ export const STATUT_STYLE: Record<string, string> = {
   terminee_client_non_venu: "bg-muted text-muted-foreground",
   transfere_site2: "bg-violet-500/10 text-violet-400",
   abandonne_contentieux: "bg-destructive/10 text-destructive",
+  accidente: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+  en_vente: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
   sorti: "bg-muted text-muted-foreground line-through",
 };
 

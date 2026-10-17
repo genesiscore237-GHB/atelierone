@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { PARKING_VERS_IMMOBILISATION } from "./parking-vehicule-service";
+import { PARKING_VERS_IMMOBILISATION, IMMOBILISATION_VERS_PARKING } from "./parking-vehicule-service";
 
 /**
  * La traduction parking → immobilisation est écrite DEUX fois :
@@ -25,12 +25,19 @@ describe("Cohérence du mapping parking → immobilisation", () => {
   const chemin = resolve(process.cwd(), "../../packages/db/src/migrate-parking-vehicules.ts");
   const sql = readFileSync(chemin, "utf8");
 
-  const cas = sql.match(/CASE\s+c\.statut([\s\S]*?)END,/);
+  // TOUS les blocs CASE du fichier, pas seulement le premier : le script en a
+  // deux (avec et sans immatriculation), et n'analyser que le premier laissait
+  // le second diverger en silence.
+  const cas = [...sql.matchAll(/CASE\s+c\.statut([\s\S]*?)END,/g)].map((m) => m[1] ?? "").join('n');
+  expect(cas, 'le script doit contenir une traduction de statut').not.toBe('');
   expect(cas, "le CASE de traduction doit exister dans le script de migration").not.toBeNull();
-  const corps = cas ? cas[1] ?? "" : "";
+  const corps = cas;
 
-  const motif = /WHEN\s+'([A-Z_]+)'\s+THEN\s+(?:'([a-z_]+)'|NULL)/g;
-  const lignes: ReadonlyArray<readonly [string, string | null]> = [];
+  // Le motif accepte les CHIFFRES : `transfere_site2` en contient un, et une
+  // regex sans chiffres le faisait disparaître en silence — un statut manquant
+  // se lit exactement comme un statut qu'on aurait oublié.
+  const motif = /WHEN\s+'([A-Z_]+)'\s+THEN\s+(?:'([a-z_0-9]+)'|NULL)/g;
+  const lignes: Array<readonly [string, string | null]> = [];
   for (const m of corps.matchAll(motif)) {
     lignes.push([m[1]!, m[2] ?? null]);
   }
@@ -59,13 +66,46 @@ describe("Cohérence du mapping parking → immobilisation", () => {
     expect(ecarts, ecarts.join("\n")).toEqual([]);
   });
 
-  it("un statut sans équivalent reste NULL — pas de repli silencieux", () => {
-    // `EN_VENTE`, `ACCIDENTE`, `DONNEES_INCOMPLETES` : le véhicule est au garage
-    // mais pas en atelier. Les ramener à `en_reception` le ferait réapparaître
-    // dans le parc d'atelier alors qu'il n'y est plus. C'est une décision
-    // consciemment prise dans le service — le SQL ne doit pas la contredire.
-    for (const statut of ["EN_VENTE", "ACCIDENTE", "DONNEES_INCOMPLETES"]) {
-      expect(PARKING_VERS_IMMOBILISATION[statut]).toBeNull();
+  // Ce test affirmait l'INVERSE, et il avait raison de le faire tant que la
+  // decision etait « ne pas inventer d'equivalent ».
+  //
+  // Etape 3 : c'etait une decision de prudence, fausse par ses effets. Un
+  // `null` veut dire « ne rien ecrire » — donc garder le statut PRECEDENT. Un
+  // vehicule en ACCIDENTE restait `en_reception` : l'agent lisait « accident »
+  // au parking et « en reception » a l'atelier. Deux verites contradictoires,
+  // invisibles, donc jamais corrigees.
+  //
+  // Le refus d'inventer reste juste pour un statut qui n'existe pas. Mais
+  // ACCIDENTE et EN_VENTE sont des etats REELS du garage, pas des inventions.
+  it("tout statut parking a un equivalent nomme", () => {
+    for (const [parking, attendu] of [
+      ["ACCIDENTE", "accidente"],
+      ["EN_VENTE", "en_vente"],
+      // `transfere_site2` existait cote code, orphelin : personne ne l'a relie.
+      ["A_TRANSFERER", "transfere_site2"],
+      // La voiture EST recue ; c'est la fiche qui est incomplete. Inverser
+      // revient a inventer une absence de vehicule.
+      ["DONNEES_INCOMPLETES", "en_reception"],
+    ] as const) {
+      expect(PARKING_VERS_IMMOBILISATION[parking], `${parking} doit avoir un equivalent`).toBe(attendu);
+    }
+  });
+
+  it("aucun statut parking n'est plus ignore", () => {
+    // Un `null` restant signifierait qu'un vehicule garderait un statut faux.
+    // Le test le rend visible des que quelqu'un reintroduit le trou.
+    const ignores = Object.entries(PARKING_VERS_IMMOBILISATION)
+      .filter(([, v]) => v === null)
+      .map(([k]) => k);
+    expect(ignores, `statuts parking sans verite : [${ignores}]`).toEqual([]);
+  });
+
+  it("le mapping aller-retour ne perd rien", () => {
+    // Un statut projete vers `null` ferait un aller simple : le parking et
+    // l'atelier divergeraient a la premiere lecture.
+    for (const [immo, parking] of Object.entries(IMMOBILISATION_VERS_PARKING)) {
+      if (parking === null) continue;
+      expect(PARKING_VERS_IMMOBILISATION[parking], `${immo} -> ${parking} ne revient pas`).toBeDefined();
     }
   });
 });

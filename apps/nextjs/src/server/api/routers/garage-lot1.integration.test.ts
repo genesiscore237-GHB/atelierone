@@ -273,13 +273,23 @@ describe("Lot 1 — dé-duplication parking ↔ véhicules", () => {
     expect(v.statut_immobilisation).toBe("en_reparation");
   });
 
-  it("T1.5 — statut sans équivalent (EN_VENTE) : aucune écriture du canonique", async () => {
+  it("T1.5 — EN_VENTE : le canonique porte enfin l'état qu'il vivait", async () => {
     const caller = garageRouter.createCaller(ctxSuperadmin());
     await caller.update({ id: rowCreateId, statut: "EN_VENTE" });
 
-    // L'état atelier fait foi : aucun état inventé, aucune régression.
+    // ÉTAPE 3. Ce test affirmait `en_reparation` — c'est-à-dire « le parking
+    // dit EN_VENTE, l'atelier dit en réparation ». Deux vérités contradictoires
+    // sur le même véhicule, et rien ne le signalait.
+    //
+    // L'ancien raisonnement était « n'invente pas d'état qui n'a pas
+    // d'équivalent ». Le sophisme : `null` ne veut pas dire « n'invente rien »,
+    // il veut dire « n'écris rien » — donc GARDER le statut précédent, qui est
+    // lui faux. Le pire des deux, parce qu'invisible.
+    //
+    // EN_VENTE est une situation réelle du garage, pas une invention. Elle a
+    // maintenant un nom.
     const v = await vehiculeDe(canonCreateId);
-    expect(v.statut_immobilisation).toBe("en_reparation");
+    expect(v.statut_immobilisation).toBe("en_vente");
     const p = await parkingDe(rowCreateId);
     expect(p.statut).toBe("EN_VENTE");
   });

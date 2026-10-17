@@ -17,8 +17,32 @@ type Exec = { execute(query: SQL): Promise<unknown> };
 
 type Lignes = { id: number | string }[];
 
-// ─── Projection parking → immobilisation ─────────────────────────────────────
-
+// ─── Projection parking → immobilisation · SENS QUI FAIT FOI ──────────────
+//
+// ÉTAPE 3 — les quatre statuts qui n'avaient pas de vérité.
+//
+// Le mapping renvoyait `null` pour EN_VENTE, ACCIDENTE, A_TRANSFERER et
+// DONNEES_INCOMPLETES, avec ce commentaire : « pas d'équivalent franc ».
+//
+// C'était une décision de prudence, et elle était fausse par ses effets. Un
+// `null` veut dire « ne rien écrire » : le véhicule CONSERVE son dernier statut
+// connu. Un véhicule passé en ACCIDENTE gardait donc `en_reception`, et l'agent
+// lisait « accidenté » au parking et « en réception » à l'atelier — deux
+// vérités contradictoires, sur le même véhicule, au même instant.
+//
+// Le refus d'inventer un statut est juste. Mais « ne rien écrire » n'est pas
+// « ne rien inventer » : c'est laisser un statut faux subsister. Le pire des
+// deux, parce qu'il est invisible.
+//
+// Les équivalents retenus sont des états RÉELS du métier, pas un remplissage :
+//
+//   ACCIDENTE           → accidente        immobilisé PAR SON ÉTAT ;
+//                                         l'invisibiliser était absurde
+//   EN_VENTE            → en_vente         hors flux atelier, mais au parc
+//   A_TRANSFERER        → transfere_site2  la valeur existait déjà, orpheline
+//   DONNEES_INCOMPLETES → en_reception     la voiture EST reçue ; c'est la
+//                                         fiche qui est incomplète, pas la
+//                                         présence au garage
 export const PARKING_VERS_IMMOBILISATION: Readonly<Record<string, string | null>> = {
   EN_PARKING: "en_reception",
   EN_ATTENTE_DEVIS: "attente_validation_client",
@@ -26,11 +50,11 @@ export const PARKING_VERS_IMMOBILISATION: Readonly<Record<string, string | null>
   EN_ATTENTE_PIECE: "attente_piece_locale",
   EN_TRAVAUX: "en_reparation",
   TERMINE_A_RECUPERER: "terminee_client_non_venu",
-  EN_VENTE: null,
-  ACCIDENTE: null,
-  A_TRANSFERER: null,
+  EN_VENTE: "en_vente",
+  ACCIDENTE: "accidente",
+  A_TRANSFERER: "transfere_site2",
   SORTI: "sorti",
-  DONNEES_INCOMPLETES: null,
+  DONNEES_INCOMPLETES: "en_reception",
 };
 
 // ─── Projection immobilisation → parking (sens retour) ──────────────────────
@@ -44,8 +68,10 @@ export const IMMOBILISATION_VERS_PARKING: Readonly<Record<string, string | null>
   piece_commandee_import: "EN_ATTENTE_PIECE",
   terminee_attente_paiement: "TERMINE_A_RECUPERER",
   terminee_client_non_venu: "TERMINE_A_RECUPERER",
-  transfere_site2: null,
+  transfere_site2: "A_TRANSFERER",
   abandonne_contentieux: null,
+  accidente: "ACCIDENTE",
+  en_vente: "EN_VENTE",
   sorti: "SORTI",
 };
 

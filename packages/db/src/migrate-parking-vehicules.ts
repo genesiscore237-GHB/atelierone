@@ -84,16 +84,14 @@ requireLocalOrForced("lien parking_vehicles -> vehicules (migrate-parking-vehicu
              WHEN 'EN_TRAVAUX' THEN 'en_reparation'
              WHEN 'TERMINE_A_RECUPERER' THEN 'terminee_client_non_venu'
              WHEN 'SORTI' THEN 'sorti'
-              -- Ces quatre statuts n'ont AUCUN équivalent véhicule : le véhicule
-              -- est au garage mais pas dans le flux atelier. Les ramener à
-              -- en_reception le ferait réapparaître dans le parc d'atelier
-              -- alors qu'il n'y est plus. NULL = « ne rien inventer », ce qui
-              -- préserve la dernière valeur connue. Décision identique à celle de
-              -- PARKING_VERS_IMMOBILISATION, tenue par un test de cohérence.
-              WHEN 'EN_VENTE' THEN NULL
-              WHEN 'ACCIDENTE' THEN NULL
-              WHEN 'A_TRANSFERER' THEN NULL
-              WHEN 'DONNEES_INCOMPLETES' THEN NULL
+              -- Ces quatre statuts sont des situations RÉELLES du garage. Ils etaient
+              -- « sans equivalent », donc NULL, donc le vehicule gardait son statut
+              -- PRECEDENT : un accidente restait « en reception ». Deux verites
+              -- contradictoires sur le meme vehicule, et invisibles (etape 3).
+              WHEN 'EN_VENTE' THEN 'en_vente'
+              WHEN 'ACCIDENTE' THEN 'accidente'
+              WHEN 'A_TRANSFERER' THEN 'transfere_site2'
+              WHEN 'DONNEES_INCOMPLETES' THEN 'en_reception'
              ELSE NULL
            END,
            'Créé depuis le registre parking (Lot 1) — n° ' || c.num_registre
@@ -136,16 +134,14 @@ requireLocalOrForced("lien parking_vehicles -> vehicules (migrate-parking-vehicu
              WHEN 'EN_TRAVAUX' THEN 'en_reparation'
              WHEN 'TERMINE_A_RECUPERER' THEN 'terminee_client_non_venu'
              WHEN 'SORTI' THEN 'sorti'
-              -- Ces quatre statuts n'ont AUCUN équivalent véhicule : le véhicule
-              -- est au garage mais pas dans le flux atelier. Les ramener à
-              -- en_reception le ferait réapparaître dans le parc d'atelier
-              -- alors qu'il n'y est plus. NULL = « ne rien inventer », ce qui
-              -- préserve la dernière valeur connue. Décision identique à celle de
-              -- PARKING_VERS_IMMOBILISATION, tenue par un test de cohérence.
-              WHEN 'EN_VENTE' THEN NULL
-              WHEN 'ACCIDENTE' THEN NULL
-              WHEN 'A_TRANSFERER' THEN NULL
-              WHEN 'DONNEES_INCOMPLETES' THEN NULL
+              -- Ces quatre statuts sont des situations RÉELLES du garage. Ils etaient
+              -- « sans equivalent », donc NULL, donc le vehicule gardait son statut
+              -- PRECEDENT : un accidente restait « en reception ». Deux verites
+              -- contradictoires sur le meme vehicule, et invisibles (etape 3).
+              WHEN 'EN_VENTE' THEN 'en_vente'
+              WHEN 'ACCIDENTE' THEN 'accidente'
+              WHEN 'A_TRANSFERER' THEN 'transfere_site2'
+              WHEN 'DONNEES_INCOMPLETES' THEN 'en_reception'
              ELSE NULL
            END,
            'Créé depuis le registre parking (Lot 1) — n° ' || c.num_registre
