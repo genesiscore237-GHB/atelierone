@@ -177,7 +177,7 @@ export const stockRouter = createTRPCRouter({
         produitId: String(a.produitId),
         titre: a.titre,
         codeBarre: a.codeBarre,
-        quantite: a.quantite,
+        quantite: Number(a.quantite),
         message: `Ajustement sans motif: ${a.titre ?? "produit #" + a.produitId}, qte=${a.quantite}`,
         date: a.dateMouvement,
       });
@@ -189,9 +189,14 @@ export const stockRouter = createTRPCRouter({
         const pid = Number(m.produitId);
         if (!countMap.has(pid)) countMap.set(pid, { count: 0, totalQte: 0, rows: [] });
         const entry = countMap.get(pid)!;
-        entry.count++;
-        entry.totalQte += m.quantite;
-        entry.rows.push(m);
+entry.count++;
+          // `mouvements_stock.quantite` est un `numeric` : PostgreSQL le rend
+          // en CHAÎNE, et `0 + "150"` vaut "0150" — pas 150. Sans ce `Number`,
+          // les totaux de cette carte étaient une concaténation de chiffres.
+          // C'est le genre d'erreur que le type-check signalait et que
+          // personne n'avait lue.
+          entry.totalQte += Number(m.quantite);
+          entry.rows.push(m);
       }
     }
     for (const [pid, data] of countMap) {
@@ -210,7 +215,7 @@ export const stockRouter = createTRPCRouter({
       }
     }
 
-    const sortiesImportantes = ajustementsRecents.filter(m => m.type === "sortie" && m.quantite > 100);
+    const sortiesImportantes = ajustementsRecents.filter(m => m.type === "sortie" && Number(m.quantite) > 100);
     for (const s of sortiesImportantes) {
       alertesAntiVol.push({
         id: `si-${s.id}`,
@@ -218,7 +223,7 @@ export const stockRouter = createTRPCRouter({
         produitId: String(s.produitId),
         titre: s.titre,
         codeBarre: s.codeBarre,
-        quantite: s.quantite,
+        quantite: Number(s.quantite),
         message: `Sortie volumineuse: ${s.titre ?? "produit #" + s.produitId}, ${s.quantite} unitÃ©s`,
         date: s.dateMouvement,
       });
@@ -305,7 +310,7 @@ export const stockRouter = createTRPCRouter({
       seuilCritique: r.seuilCritique ?? 0,
       categorie: r.categorieNom,
       typeProduit: r.typeProduit,
-      niveau: r.quantite < (r.seuilCritique ?? 2) ? "critique" : "faible",
+      niveau: Number(r.quantite) < (r.seuilCritique ?? 2) ? "critique" : "faible",
     }));
   }),
 
@@ -391,7 +396,7 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(stocks.produitId, Number(input.produitId)), eq(stocks.agenceId, ctx.user.agenceId)))
           .limit(1);
 
-        if (!stockRow || stockRow.quantite < input.quantiteSource) {
+        if (!stockRow || Number(stockRow.quantite) < input.quantiteSource) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Stock source insuffisant" });
         }
 
@@ -418,7 +423,7 @@ export const stockRouter = createTRPCRouter({
           quantiteGeneree: String(input.quantiteGeneree),
           effectuePar: Number(ctx.user.id),
           motif: input.motif || null,
-        }) as any;
+        } as any) as any;
       }) as any;
     }),
 
@@ -465,7 +470,7 @@ export const stockRouter = createTRPCRouter({
         statut: "brouillon",
         effectuePar: Number(ctx.user.id),
         notes: input.notes || null,
-      }).returning() as any;
+      } as any).returning() as any;
       return { id: String(session.id), statut: "brouillon" };
     }) as any,
 
@@ -558,33 +563,35 @@ export const stockRouter = createTRPCRouter({
           .where(and(eq(stocks.produitId, Number(input.produitId)), eq(stocks.agenceId, ctx.user.agenceId)))
           .limit(1);
 
-        const qteTheorique = stockRow?.quantite ?? 0;
+        // stocks.quantite est un numeric : PostgreSQL le rend en chaine. Sans
+      // Number, la soustraction ci-dessous concatene au lieu de calculer.
+      const qteTheorique = Number(stockRow?.quantite ?? 0);
         const ecart = input.quantiteReelle - qteTheorique;
         const [existing] = await tx.select().from(inventaires).where(and(
           eq(inventaires.sessionId, Number(input.sessionId)),
           eq(inventaires.produitId, Number(input.produitId))
         )).limit(1);
 
-        if (existing) {
-          await tx.update(inventaires).set({
-            quantiteTheorique: qteTheorique,
-            quantiteReelle: input.quantiteReelle,
-            ecart: ecart,
-            commentaire: input.commentaire || null,
-          }).where(eq(inventaires.id, existing.id)) as any;
-        } else {
-          await tx.insert(inventaires).values({
-            sessionId: Number(input.sessionId),
-            produitId: Number(input.produitId),
-            agenceId: ctx.user.agenceId,
-            quantiteTheorique: qteTheorique,
-            quantiteReelle: input.quantiteReelle,
-            ecart: ecart,
-            commentaire: input.commentaire || null,
-            effectuePar: Number(ctx.user.id),
-          }) as any;
+if (existing) {
+            await tx.update(inventaires).set({
+              quantiteTheorique: String(qteTheorique),
+              quantiteReelle: String(input.quantiteReelle),
+              ecart: String(ecart),
+              commentaire: input.commentaire || null,
+            } as any).where(eq(inventaires.id, existing.id)) as any;
+          } else {
+            await tx.insert(inventaires).values({
+              sessionId: Number(input.sessionId),
+              produitId: Number(input.produitId),
+              agenceId: ctx.user.agenceId,
+              quantiteTheorique: String(qteTheorique),
+              quantiteReelle: String(input.quantiteReelle),
+              ecart: String(ecart),
+              commentaire: input.commentaire || null,
+              effectuePar: Number(ctx.user.id),
+            } as any) as any;
         }
-        return { quantiteTheorique: qteTheorique, quantiteReelle: input.quantiteReelle, ecart };
+        return { quantiteTheorique: String(qteTheorique), quantiteReelle: String(input.quantiteReelle), ecart };
       }) as any;
     }) as any,
 
@@ -604,7 +611,7 @@ export const stockRouter = createTRPCRouter({
           .where(eq(inventaires.sessionId, session.id));
 
         for (const c of comptages) {
-          if (c.ecart === 0 || !c.produitId) continue;
+          if (Number(c.ecart) === 0 || !c.produitId) continue;
 
           const [stockRow] = await tx.select()
             .from(stocks)
@@ -614,7 +621,7 @@ export const stockRouter = createTRPCRouter({
           const stockAvant = Number(stockRow?.quantite ?? 0);
           const stockApres = stockAvant + Number(c.ecart);
 
-          await tx.update(stocks).set({ quantite: String(stockApres) }).where(eq(stocks.id, stockRow!.id)) as any;
+          await tx.update(stocks).set({ quantite: String(stockApres) } as any).where(eq(stocks.id, stockRow!.id));
 
           const fifoAllocs = Number(c.ecart) < 0
             ? await sortirStockFIFO(tx, {
@@ -633,8 +640,8 @@ export const stockRouter = createTRPCRouter({
             await tx.insert(mouvementsStock).values({
               produitId: c.produitId,
               agenceId: ctx.user.agenceId,
-              type: c.ecart > 0 ? "AJUSTEMENT_INVENTAIRE_POSITIF" : "AJUSTEMENT_INVENTAIRE_NEGATIF",
-              sens: c.ecart > 0 ? "E" : "S",
+              type: Number(c.ecart) > 0 ? "AJUSTEMENT_INVENTAIRE_POSITIF" : "AJUSTEMENT_INVENTAIRE_NEGATIF",
+              sens: Number(c.ecart) > 0 ? "E" : "S",
               quantite: String(Math.abs(Number(c.ecart))),
               stockAvant: String(stockAvant),
               stockApres: String(stockApres),
@@ -642,7 +649,7 @@ export const stockRouter = createTRPCRouter({
               referenceType: "INVENTAIRE",
               motif: `Correction inventaire session #${session.id}`,
               effectuePar: Number(ctx.user.id),
-            }) as any;
+            } as any) as any;
           }
 
           if (Number(c.ecart) < 0) {
@@ -669,7 +676,7 @@ export const stockRouter = createTRPCRouter({
           statut: "valide",
           dateFin: new Date(),
           validePar: ctx.user.id,
-        }).where(eq(inventairesSessions.id, session.id)) as any;
+        } as any).where(eq(inventairesSessions.id, session.id)) as any;
       }) as any;
     }),
 
@@ -703,13 +710,13 @@ export const stockRouter = createTRPCRouter({
         const ecart = stockApres - stockAvant;
 
         if (stockRow) {
-          await tx.update(stocks).set({ quantite: String(stockApres) }).where(eq(stocks.id, stockRow.id)) as any;
+          await tx.update(stocks).set({ quantite: String(stockApres) } as any).where(eq(stocks.id, stockRow.id));
         } else {
           await tx.insert(stocks).values({
             produitId: Number(input.produitId),
             agenceId: ctx.user.agenceId,
             quantite: String(stockApres),
-          }) as any;
+          } as any) as any;
         }
 
         await tx.insert(mouvementsStock).values({
@@ -722,7 +729,7 @@ export const stockRouter = createTRPCRouter({
           stockApres: String(stockApres),
           motif: input.motif || "Ajustement manuel",
           effectuePar: Number(ctx.user.id),
-        }) as any;
+        } as any) as any;
 
         return { stockAvant, stockApres, ecart };
       }) as any;
@@ -1054,7 +1061,7 @@ export const stockRouter = createTRPCRouter({
         });
 
         await tx.update(stocks)
-          .set({ quantiteRayon: sql`COALESCE(${stocks.quantiteRayon}, 0) + ${input.quantite}` })
+          .set({ quantiteRayon: sql`COALESCE(${stocks.quantiteRayon}, 0) + ${Number(input.quantite)}` } as any)
           .where(and(
             eq(stocks.produitId, Number(input.produitId)),
             eq(stocks.agenceId, ctx.user.agenceId),
@@ -1883,7 +1890,10 @@ export const stockRouter = createTRPCRouter({
           uniteId: input.uniteId,
           emplacementId: input.emplacementId,
           vehiculeId: input.vehiculeId ?? null,
-          documentLie: input.vehiculeId ? `UTILISATION-VEH-${input.vehiculeId}` : "UTILISATION_INTERNE",
+            // sortirPourOR ne prend pas documentLie : il le fabrique lui-meme
+            // a partir du numero d'OR. Passer ce champ ici ne produisait AUCUNE
+            // erreur et perdait silencieusement le lien avec le vehicule.
+          commentaire: input.vehiculeId ? `UTILISATION-VEH-${input.vehiculeId}` : "UTILISATION_INTERNE",
           motif: input.motif,
           effectuePar: Number(ctx.user.id),
         });
