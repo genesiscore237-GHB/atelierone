@@ -112,7 +112,7 @@ montré le contraire** : le module existait déjà à environ 70 %.
 | # | Tâche | Taille |
 |---|---|---|
 | R4 | ~~Champs occasion dans le wizard (C7)~~ — **fait** (Lot F2) | ✅ |
-| R5 | Afficher la qualification sur la **fiche** et non seulement à la saisie | M |
+| R5 | ~~Afficher la qualification sur la **fiche**~~ — **fait** : badges sur les compatibilités et les références équivalentes, et la fiche peut désormais *poser* le niveau (elle ne le pouvait pas — tout ce qui était ajouté depuis la fiche retombait sur « non vérifié » sans recours) | ✅ |
 | R6 | ~~Galerie de photos — l'onglet Documents exigeait une URL collée~~ — **fait** (Lot E) | ✅ |
 | R7 | ~~Upload dans l'onglet Documents~~ — **fait** (Lot E) | ✅ |
 | R8 | Bouton « réutiliser cette fiche » quand un doublon est détecté | M |
@@ -175,6 +175,15 @@ complètes.
 **Ce que je n'ai pas fait :** je n'ai **pas** trouvé la cause exacte. Répéter
 l'exécution jusqu'à obtenir deux verts serait l'erreur que le document de
 branchement met en garde. **La cause reste ouverte (R13).**
+
+**Second cas, même famille** — le 2026-10-18, en suite complète :
+`vehicules-u0a-regle-unique.integration.test.ts`, test « PARITÉ — les 3
+endpoints réconcilient la même plaque ». Il **passe isolément** (9/9, vérifié),
+et il **passait** dans la suite complète une heure plus tôt. Il n'importe
+aucun des fichiers modifiés par ce chantier. La base de test est partagée et
+les fichiers s'exécutent en parallèle : la cause la plus probable est
+l'entrelacement des données entre fichiers, pas le code testé. Non tranché —
+à traiter comme un défaut d'infrastructure de test, pas comme un détail.
 
 ---
 
