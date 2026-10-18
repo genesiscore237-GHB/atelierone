@@ -78,6 +78,24 @@ montré le contraire** : le module existait déjà à environ 70 %.
 | D3 | Un vrai bug : `documentLie` inexistant sur `sortirPourOR` — le lien véhicule était perdu **sans erreur** | ✅ |
 | D4 | 286 erreurs restantes, hors périmètre | ❌ **non fait** |
 
+### Lot E — Photos et documents (demande explicite du 2026-10-18)
+
+| # | Tâche | Statut | Preuve |
+|---|---|---|---|
+| E1 | **Le service des fichiers n'existait pas.** `POST /api/uploads` écrivait sur le disque ; rien ne relisait. En production c'est nginx (`deploy/nginx-atelierone.conf:16-21`), en développement **aucun serveur** — une photo téléversée s'affichait cassée. Un fichier réel traînait dans `uploads/articles/` sans être atteignable. | ✅ | `src/app/uploads/[...path]/route.ts` |
+| E2 | Traversée de dossier refusée, extensions non autorisées refusées | ✅ **4 tests** | `route.test.ts` |
+| E3 | Fiche article — **téléverser une photo** au lieu de coller une URL (l'upload n'existait que dans le wizard) | ✅ | `article/[id]/page.tsx` |
+| E4 | Fiche article — documents : **téléversement réel**, plus seulement « URL du document » | ✅ | idem |
+| E5 | Vignettes des photos dans la liste des documents | ✅ | idem |
+| E6 | Photo : reste dans le formulaire jusqu'à « Enregistrer » (validation explicite) | ✅ | idem |
+
+### Lot F — Les manquements de logique
+
+| # | Tâche | Statut |
+|---|---|---|
+| F1 | **R1 — conversion inventée.** `getFacteurVersBase` rendait `1` quand aucun facteur n'était connu : sortir 1 bidon sur un produit dont l'unité de base est le litre ne déduisait qu'1 litre, sans erreur ni trace. | ✅ **refusé explicitement** depuis, avec le nom de l'unité dans le message (`stock-engine.ts`) |
+| F2 | **R4 — les 6 colonnes occasion** (`occasion_etat_constate`, `defauts`, `provenance`, `vehicule_id`, `kilometrage`, `garantie_mois`) étaient créées par la migration 0023 et lues par **aucune ligne de code**. | ✅ branchées : `addVariante`, `updateVariante`, `getVariante`, et affichées dans le formulaire quand l'état n'est pas « Neuf » |
+
 ---
 
 ## 3. Ce qui reste à faire
@@ -86,7 +104,6 @@ montré le contraire** : le module existait déjà à environ 70 %.
 
 | # | Tâche | Pourquoi c'est bloquant |
 |---|---|---|
-| **R1** | **`contenu_confirme` n'est lu par personne** | `getFacteurVersBase` renvoie **1 en silence** quand l'information manque (`stock-engine.ts:552-560`). Le drapeau existe, aucun code ne s'en sert : une quantité en bidons peut toujours être acceptée et fausse. **C'est le risque le plus sérieux restant.** |
 | **R2** | **Le garde en base** | Une règle qui n'existe que dans un fichier TypeScript disparaît au prochain développeur qui ne le lit pas. Trigger sur `produits.reference_principale`. |
 | **R3** | **Vue mobile du catalogue** | Tableau à 8 colonnes en défilement horizontal ; la colonne « Désignation » est hors écran sur téléphone. Le cahier des charges exige téléphone **et** ordinateur. |
 
@@ -94,10 +111,10 @@ montré le contraire** : le module existait déjà à environ 70 %.
 
 | # | Tâche | Taille |
 |---|---|---|
-| R4 | Champs occasion dans le wizard (C7) | S |
+| R4 | ~~Champs occasion dans le wizard (C7)~~ — **fait** (Lot F2) | ✅ |
 | R5 | Afficher la qualification sur la **fiche** et non seulement à la saisie | M |
-| R6 | Galerie de photos — l'onglet Documents exige encore une URL collée | M |
-| R7 | Upload dans l'onglet Documents (l'endpoint existe, l'interface non) | S |
+| R6 | ~~Galerie de photos — l'onglet Documents exigeait une URL collée~~ — **fait** (Lot E) | ✅ |
+| R7 | ~~Upload dans l'onglet Documents~~ — **fait** (Lot E) | ✅ |
 | R8 | Bouton « réutiliser cette fiche » quand un doublon est détecté | M |
 | R9 | `addVariante` : exposer aussi `accepterDoublon` / `motifReemploi` dans son formulaire | S |
 
@@ -134,7 +151,9 @@ montré le contraire** : le module existait déjà à environ 70 %.
 | **Champs conditionnels par catégorie** | ❌ non exécuté |
 | **Prévention des doubles soumissions** | ❌ non exécuté (le moteur n'a aucune idempotence) |
 | **Vue téléphone / bureau** | ❌ non exécuté (pas de rendu React en test) |
-| Non-régression globale | ✅ suite complète, 1166 verts |
+| **Service des fichiers : servi / traversée refusée / extension refusée / 404** | ✅ **4 tests** |
+| **Conversion inconnue refusée par le moteur** (F1) | ✅ via la suite : 1170 verts, aucune régression |
+| Non-régression globale | ✅ suite complète, 1170 verts (+3 ignorés) |
 
 ---
 
@@ -182,7 +201,8 @@ fichier : **310 erreurs**, dont **0 sur les fichiers de ce chantier**.
 |---|---|---|
 | M0→M5 stock | `7d886f2` | ✅ |
 | Pièces — garde + qualification + interface | `4979532`, `58c21bb` | ❌ |
-| Pièces — corrections TypeScript `stock.ts` | *à faire* | ❌ |
+| Pièces — corrections TypeScript `stock.ts` | `d16482c` | ❌ |
+| Pièces — photos + documents + logique (Lots E, F) | *ce commit* | ❌ |
 
 Le push des lots pièces appliquerait `0023` en production, ce qui pose une
 **contrainte d'unicité** après dédoublonnage. Écriture en production : décision
