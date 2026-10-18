@@ -36,6 +36,8 @@ import { normalizeTypeAttribut, statutValeurSchema, provenanceSchema, niveauConf
  * ARTICLE = produit conceptuel · VARIANTE/SKU = référence stockable ·
  * EXEMPLAIRE (niveau) = actif physique outillage/équipement.
  * GF1 : séparation métier stricte (validations backend impossibles à contourner).
+ * GF2 : une référence ne peut pas porter deux fiches sans le dire — voir
+ *      `~/server/lib/garde-doublons`.
  */
 
 const POSITION_OPTIONS = ["GAUCHE", "DROITE", "CENTRAL", "LES_DEUX", "N_A"] as const;
