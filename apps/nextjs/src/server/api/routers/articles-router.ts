@@ -991,15 +991,32 @@ export const articlesRouter = createTRPCRouter({
     }),
 
   // ─── Références équivalentes ───
-  addReferenceEquiv: requirePermissionProcedure("stock.modifier")
-    .input(z.object({ articleId: z.number().int(), marque: z.string().optional(), reference: z.string().min(1), note: z.string().optional() }))
-    .mutation(async ({ ctx, input }) => {
-      await db
-        .insert(produitReferencesEquiv)
-        .values({ articleId: input.articleId, marque: input.marque ?? null, reference: input.reference.trim(), note: input.note ?? null } as any)
-        .onConflictDoNothing();
-      return { success: true };
-    }),
+    addReferenceEquiv: requirePermissionProcedure("stock.modifier")
+      .input(z.object({
+        articleId: z.number().int(),
+        marque: z.string().optional(),
+        reference: z.string().min(1),
+        note: z.string().optional(),
+        // La qualification n'était pas transmissible par ce chemin : tout ce
+        // qui était ajouté depuis la fiche retombait sur « non vérifié » par
+        // défaut, sans que l'utilisateur puisse dire le contraire.
+        source: z.string().max(60).optional(),
+        niveauVerification: z.enum(["CONFIRME", "CONDITIONNEL", "NON_VERIFIE"]).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await db
+          .insert(produitReferencesEquiv)
+          .values({
+            articleId: input.articleId,
+            marque: input.marque ?? null,
+            reference: input.reference.trim(),
+            note: input.note ?? null,
+            source: input.source ?? null,
+            niveauVerification: input.niveauVerification ?? "NON_VERIFIE",
+          } as any)
+          .onConflictDoNothing();
+        return { success: true };
+      }),
   removeReferenceEquiv: requirePermissionProcedure("stock.modifier")
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {

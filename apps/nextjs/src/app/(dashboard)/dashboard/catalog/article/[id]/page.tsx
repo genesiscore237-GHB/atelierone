@@ -123,8 +123,8 @@ export default function ArticleDetailPage() {
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
-  const [refEq, setRefEq] = useState({ marque: "", reference: "", note: "" });
-  const [comp, setComp] = useState<any>({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "" });
+  const [refEq, setRefEq] = useState({ marque: "", reference: "", note: "", niveauVerification: "NON_VERIFIE" });
+  const [comp, setComp] = useState<any>({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "", niveauVerification: "NON_VERIFIE" });
 
   const addVariante = api.articles.addVariante.useMutation({
     onSuccess: () => {
@@ -150,7 +150,7 @@ export default function ArticleDetailPage() {
     onError: (e) => toast.error(e.message),
   });
   const addRef = api.articles.addReferenceEquiv.useMutation({
-    onSuccess: () => { toast.success("Référence équivalente ajoutée"); setRefEq({ marque: "", reference: "", note: "" }); utils.articles.getArticle.invalidate(); },
+    onSuccess: () => { toast.success("Référence équivalente ajoutée"); setRefEq({ marque: "", reference: "", note: "", niveauVerification: "NON_VERIFIE" }); utils.articles.getArticle.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
   const removeRef = api.articles.removeReferenceEquiv.useMutation({
@@ -158,7 +158,7 @@ export default function ArticleDetailPage() {
     onError: (e) => toast.error(e.message),
   });
   const addComp = api.articles.addCompatibilite.useMutation({
-    onSuccess: () => { toast.success("Compatibilité ajoutée"); setComp({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "" }); utils.articles.getArticle.invalidate(); },
+    onSuccess: () => { toast.success("Compatibilité ajoutée"); setComp({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "", niveauVerification: "NON_VERIFIE" }); utils.articles.getArticle.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
   const removeComp = api.articles.removeCompatibilite.useMutation({
@@ -694,9 +694,16 @@ export default function ArticleDetailPage() {
                   <Input value={comp.anneeA} onChange={(e) => setComp({ ...comp, anneeA: e.target.value })} placeholder="Année fin" />
                   <Input value={comp.version} onChange={(e) => setComp({ ...comp, version: e.target.value })} placeholder="Version" />
                   <Input value={comp.codeMoteur} onChange={(e) => setComp({ ...comp, codeMoteur: e.target.value })} placeholder="Code moteur" />
+                  <div>
+                    <select value={comp.niveauVerification} onChange={(e) => setComp({ ...comp, niveauVerification: e.target.value })} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" title="D'où vient cette compatibilité — et jusqu'où elle est sûre.">
+                      <option value="NON_VERIFIE">À vérifier (défaut)</option>
+                      <option value="CONDITIONNEL">Conditionnelle</option>
+                      <option value="CONFIRME">Confirmée (source sûre)</option>
+                    </select>
+                  </div>
                 </div>
                 <div className="mt-2 flex justify-end">
-                  <Button size="sm" className="gap-1 text-xs" disabled={addComp.isPending || !comp.marque || !comp.modele} onClick={() => addComp.mutate({ articleId: id, compat: { marque: comp.marque, modele: comp.modele, motorisation: comp.motorisation || undefined, position: comp.position || undefined, anneeDe: comp.anneeDe ? Number(comp.anneeDe) : undefined, anneeA: comp.anneeA ? Number(comp.anneeA) : undefined, version: comp.version || undefined, codeMoteur: comp.codeMoteur || undefined } })}>
+                  <Button size="sm" className="gap-1 text-xs" disabled={addComp.isPending || !comp.marque || !comp.modele} onClick={() => addComp.mutate({ articleId: id, compat: { marque: comp.marque, modele: comp.modele, motorisation: comp.motorisation || undefined, position: comp.position || undefined, anneeDe: comp.anneeDe ? Number(comp.anneeDe) : undefined, anneeA: comp.anneeA ? Number(comp.anneeA) : undefined, version: comp.version || undefined, codeMoteur: comp.codeMoteur || undefined, niveauVerification: comp.niveauVerification } })}>
                     <Plus size={13} /> Ajouter
                   </Button>
                 </div>
@@ -707,9 +714,18 @@ export default function ArticleDetailPage() {
             ) : (
               <div className="mt-3 flex flex-wrap gap-2">
                 {compatibilites.map((c: any) => (
-                  <span key={c.id} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-xs">
+                  <span key={c.id} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-xs" title={`Source : ${c.source ?? "saisie manuelle"}`}>
                     <Car size={12} className="text-primary" />
                     {c.marque} {c.modele}{c.anneeDe ? ` ${c.anneeDe}${c.anneeA ? `–${c.anneeA}` : ""}` : ""}{c.motorisation ? ` · ${c.motorisation}` : ""}{c.position ? ` · ${c.position}` : ""}{c.codeMoteur ? ` · ${c.codeMoteur}` : ""}
+                    {/* Une compatibilité non vérifiée ne doit JAMAIS s'afficher comme
+                        une certitude : le niveau se voit sur chaque ligne. */}
+                    {c.niveauVerification === "CONFIRME" ? (
+                      <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-600">Vérifiée</span>
+                    ) : c.niveauVerification === "CONDITIONNEL" ? (
+                      <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-600">Conditionnelle</span>
+                    ) : (
+                      <span className="rounded-full border border-dashed border-muted-foreground/50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-muted-foreground">À vérifier</span>
+                    )}
                     {canModifier && <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => removeComp.mutate({ id: c.id })}><Trash2 size={11} /></button>}
                   </span>
                 ))}
@@ -797,7 +813,12 @@ export default function ArticleDetailPage() {
               <div className="flex flex-wrap gap-2">
                 <Input value={refEq.marque} onChange={(e) => setRefEq({ ...refEq, marque: e.target.value })} placeholder="Marque (MANN, Bosch, OEM Toyota…)" className="min-w-48 flex-1" />
                 <Input value={refEq.reference} onChange={(e) => setRefEq({ ...refEq, reference: e.target.value })} placeholder="Référence (W 712/95, 90915-YZZD2…)" className="min-w-40 flex-1" />
-                <Button size="sm" className="gap-1" disabled={addRef.isPending || !refEq.reference} onClick={() => addRef.mutate({ articleId: id, marque: refEq.marque || undefined, reference: refEq.reference })}>
+                <select value={refEq.niveauVerification} onChange={(e) => setRefEq({ ...refEq, niveauVerification: e.target.value })} className="rounded-lg border border-border bg-background px-2 py-1.5 text-xs" title="Une équivalence non vérifiée reste une piste, pas une preuve.">
+                  <option value="NON_VERIFIE">À vérifier (défaut)</option>
+                  <option value="CONDITIONNEL">Conditionnelle</option>
+                  <option value="CONFIRME">Confirmée (source sûre)</option>
+                </select>
+                <Button size="sm" className="gap-1" disabled={addRef.isPending || !refEq.reference} onClick={() => addRef.mutate({ articleId: id, marque: refEq.marque || undefined, reference: refEq.reference, niveauVerification: refEq.niveauVerification as "CONFIRME" | "CONDITIONNEL" | "NON_VERIFIE" })}>
                   <Plus size={13} /> Ajouter
                 </Button>
               </div>
@@ -809,6 +830,13 @@ export default function ArticleDetailPage() {
                 {referencesEquiv.map((r: any) => (
                   <span key={r.id} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-mono">
                     {r.marque ? `${r.marque} : ` : ""}{r.reference}
+                    {r.niveauVerification === "CONFIRME" ? (
+                      <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase text-emerald-600">Vérifiée</span>
+                    ) : r.niveauVerification === "CONDITIONNEL" ? (
+                      <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase text-amber-600">Conditionnelle</span>
+                    ) : (
+                      <span className="rounded-full border border-dashed border-muted-foreground/50 px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase text-muted-foreground">À vérifier</span>
+                    )}
                     {canModifier && <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => removeRef.mutate({ id: r.id })}><Trash2 size={11} /></button>}
                   </span>
                 ))}
