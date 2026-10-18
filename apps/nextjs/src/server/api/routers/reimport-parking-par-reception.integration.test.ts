@@ -50,6 +50,7 @@ import { resolve } from "node:path";
 import { sql } from "drizzle-orm";
 import { db } from "~/server/db";
 import { orRouter } from "~/server/api/routers/or-router";
+import { garageRouter } from "~/server/api/routers/garage-router";
 
 /** Sans cette variable, tout le fichier est ignoré. */
 const ACTIF = process.env.IMPORT_PARKING === "1";
@@ -215,9 +216,11 @@ describe.skipIf(!ACTIF)("ÉTAPE 6 bis — reconstruction par le chemin métier",
     expect(Number(apres.n), "la purge n'a pas vidé les dossiers").toBe(proteges);
 
     const caller = orRouter.createCaller(ctx());
+    const garage = garageRouter.createCaller(ctx());
     const clientsParNom = new Map<string, number>();
     const refuses: string[] = [];
     const erreurs: string[] = [];
+  const parkingsEnEchec: string[] = [];
     let reconstruits = 0;
 
     for (const l of avecPlaque()) {
@@ -235,7 +238,7 @@ describe.skipIf(!ACTIF)("ÉTAPE 6 bis — reconstruction par le chemin métier",
         `Statut au registre : ${l.statut ?? "non précisé"}.`;
 
       try {
-        const r = await caller.receptionner({
+const r = await caller.receptionner({
           client: clientId ? { id: clientId } : { nom: nomPropre ?? undefined },
           vehicule: {
             immatriculation: l.immatriculation!,
@@ -252,6 +255,42 @@ describe.skipIf(!ACTIF)("ÉTAPE 6 bis — reconstruction par le chemin métier",
         });
         reconstruits++;
         crees.push(Number((r as any).id));
+
+        // ── L'AUTRE MOITIÉ DU RÉCORD ──
+        //
+        // La réception crée le dossier côté ATELIER. Le registre PARKING est
+        // le même événement vu du côté GARAGE, et il se crée par une autre
+        // porte : `garageRouter.create`. Les deux doivent être faits, sinon
+        // le véhicule est reçu au dossier mais invisible au registre — et le
+        // registre est justement la vérité du parc.
+        //
+        // `garage.create` résout lui-même le véhicule canonique et le
+        // client : on ne réécrit rien, on appelle.
+        try {
+        await garage.create({
+          numRegistre: l.num_registre ?? undefined,
+          immatriculation: l.immatriculation!,
+          marque: l.marque ?? undefined,
+          modele: l.modele ?? undefined,
+          version: l.version ?? undefined,
+          couleur: l.couleur ?? undefined,
+          vin: l.vin ?? undefined,
+          clientNom: nomPropre ?? undefined,
+          motif: (l.motif ?? "").trim() || "Non précisé au registre",
+        });
+        } catch (gerr) {
+          // CONSTAT, PAS UNE ERREUR À AVALER : les deux portes d'entrée se
+          // marchent dessus. La réception crée déjà le véhicule ;
+          // `garage.create` tente de le recréer et se heurte à l'index
+          // unique `uq_vehicules_agence_immat_norm`.
+          //
+          // On le REMONTE au lieu de l'ignorer : un parking muet laisserait
+          // croire le registre rempli.
+          parkingsEnEchec.push(
+            `garage.create #${l.num_registre}: ` +
+              String((gerr as any)?.message ?? gerr).slice(0, 70),
+          );
+        }
 
         // Mémorise la fiche créée pour les véhicules suivants du même
         // client — c'est ce que ferait un agent qui relirait le dossier au
@@ -272,6 +311,10 @@ describe.skipIf(!ACTIF)("ÉTAPE 6 bis — reconstruction par le chemin métier",
     console.log(`  reconstruits : ${reconstruits} / ${avecPlaque().length}`);
     if (erreurs.length) console.log("  refus :\n    " + erreurs.join("\n    "));
     if (refuses.length) console.log("  exclus : " + refuses.join(", "));
+    if (parkingsEnEchec.length) {
+      console.log(`  parking en echec : ${parkingsEnEchec.length}`);
+      for (const e of parkingsEnEchec.slice(0, 3)) console.log("    " + e);
+    }
 
     // Le chantier a réussi s'il n'a rien laissé de côté SANS LE DIRE.
     expect(erreurs, `${erreurs.length} véhicule(s) ont été refusés par la réception`).toEqual([]);
