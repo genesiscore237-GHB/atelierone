@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import { createTRPCRouter, requirePermissionProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
 import {
@@ -28,6 +28,7 @@ import {
 import { eq, and, desc, asc, sql, or, ilike, isNull, inArray, ne } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { enregistrerMouvement, TYPES_MOUVEMENT } from "~/server/lib/stock-engine";
+import { chercherDoublons } from "~/server/lib/garde-doublons";
 import { normalizeTypeAttribut, statutValeurSchema, provenanceSchema, niveauConfianceSchema, typeAttributsSchemaLegacy } from "@atelierone/validators";
 
 /**
@@ -179,6 +180,14 @@ const VARIANTE_INPUT = z.object({
     estPrincipal: z.boolean().optional(),
     uniteConditionnement: z.string().uuid().optional(),
     facteurConditionnement: z.number().optional(),
+    /**
+     * « J'ai vérifié ce que contient ce conditionnement. »
+     *
+     * Défaut FALSE côté serveur, même si le formulaire ne dit rien : une
+     * absence de réponse n'est pas une confirmation. Le nombre est
+     * enregistré, l'autorisation de convertir ne l'est pas.
+     */
+    contenuConfirme: z.boolean().optional(),
   })).optional(),
   // Attributs différenciants par variante (EAV variante_attributs)
   attributs: z.array(ATTRIBUT_INPUT).optional(),
@@ -186,6 +195,10 @@ const VARIANTE_INPUT = z.object({
 
 const COMPAT_INPUT = z.object({
   typeCompat: z.enum(["POSITIVE", "NEGATIVE"]).default("POSITIVE"),
+  /** D'où vient la ligne. Défaut : saisie manuelle — on ne suppose jamais un catalogue. */
+  sourceCompat: z.string().max(60).optional(),
+  /** CONFIRME | CONDITIONNEL | NON_VERIFIE. Défaut : NON_VERIFIE. */
+  niveauVerification: z.enum(["CONFIRME", "CONDITIONNEL", "NON_VERIFIE"]).optional(),
   marque: z.string().min(1),
   modele: z.string().min(1),
   anneeDe: z.number().int().optional(),
@@ -332,6 +345,10 @@ async function creerVariante(tx: any, article: { id: number; typeProduit: string
           estPrincipal: f.estPrincipal ?? false,
           uniteConditionnement: f.uniteConditionnement ?? null,
           facteurConditionnement: f.facteurConditionnement != null ? String(f.facteurConditionnement) : null,
+          // Défaut FALSE même en l'absence du champ : une case non cochée
+          // n'est pas une confirmation, et le formulaire ne dit pas
+          // forcément s'il a été répondu.
+          contenuConfirme: f.contenuConfirme === true,
         } as any)
         .onConflictDoNothing();
     }
@@ -712,7 +729,25 @@ export const articlesRouter = createTRPCRouter({
         marque: z.string().optional(),
         reference: z.string().min(1),
         note: z.string().optional(),
+        /** Même prudence : une équivalence non qualifiée reste une piste. */
+        source: z.string().max(60).optional(),
+        niveauVerification: z.enum(["CONFIRME", "CONDITIONNEL", "NON_VERIFIE"]).optional(),
       })).optional(),
+      /**
+       * Réemploi ASSUMÉ d'une pièce existante qui porte la même référence.
+       *
+       * Le garde serveur refuse une correspondance certaine (voir
+       * `~/server/lib/garde-doublons`). Ce drapeau ne sert pas à contourner le
+       * garde : il déclare que la nouvelle variante est RÉELLEMENT distincte,
+       * et il oblige à dire pourquoi — « numéro de lot différent » n'est pas
+       * recevable pour deux fois la même référence.
+       *
+       * Le serveur ne peut pas décider seul : une référence peut légitimement
+       * être portée par deux articles différents quand le fournisseur l'a
+       * réattribuée. Le magasinier tranche, mais il doit le faire explicitement.
+       */
+      accepterDoublon: z.boolean().optional(),
+      motifReemploi: z.string().max(500).optional(),
     })
     .superRefine((input, ctx) => {
       for (const v of input.variantes ?? []) {
@@ -737,6 +772,44 @@ export const articlesRouter = createTRPCRouter({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Un service n'a pas de variantes ni de stock." });
       }
       return db.transaction(async (tx) => {
+        // ─── LE GARDE ANTI-DOUBLONS, AVANT TOUT ÉCRITURE ─────────────────
+        // Il doit tourner DANS la transaction et AVANT l'insert : après, il
+        // verrait la ligne qu'on est en train de créer et verrait lui-même.
+        //
+        // `createArticle` ne lisait pas l'existant : dix appels en dix
+        // secondes donnaient dix SKU concurrents pour la même pièce.
+        const suspects: { titre: string; motif: string }[] = [];
+        for (const v of input.variantes ?? []) {
+          suspects.push(
+            ...(await chercherDoublons(tx, {
+              titre: input.designation,
+              designationCourte: v.designationCourte ?? input.designationCourte ?? input.designation,
+              marque: v.marque,
+              referencePrincipale: v.referencePrincipale,
+              referenceFabricant: v.referenceFabricant,
+              refOem: v.refOem,
+              codeArticle: v.codeArticle,
+              codeBarre: v.codeBarre,
+              referenceFournisseur: v.fournisseurs?.[0]?.referenceFournisseur,
+            })).exacts.map((d) => ({ titre: d.titre, motif: d.motif })),
+          );
+        }
+        if (suspects.length && !input.accepterDoublon) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message:
+              `Cette pièce semble déjà exister : ${suspects.slice(0, 3).map((s) => `« ${s.titre} » — ${s.motif}`).join(" ; ")}. ` +
+              `Utilisez la fiche existante, ou déclarez explicitement qu'il s'agit d'une variante distincte et dites pourquoi.`,
+          });
+        }
+        if (suspects.length && input.accepterDoublon && (input.motifReemploi ?? "").trim().length < 10) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Réemploi accepté, mais le motif est obligatoire (10 caractères minimum) : il explique pourquoi cette variante est distincte de la pièce existante.",
+          });
+        }
+
         const [article] = await tx
           .insert(produitArticles)
           .values({
@@ -767,7 +840,17 @@ export const articlesRouter = createTRPCRouter({
         }
         let compatibilitesCrees = 0;
         for (const c of input.compatibilites ?? []) {
-          await tx.insert(compatibilitesProduits).values({ articleId: article.id, ...c } as any);
+          // On écrit la qualification EXPLICITEMENT, même quand le
+          // formulaire ne l'a pas envoyée : la colonne a un défaut en base,
+          // mais une application qui l'ignore laisserait passer une valeur
+          // absente si le défaut venait à changer.
+          await tx.insert(compatibilitesProduits).values({
+            articleId: article.id,
+            ...c,
+            source: c.sourceCompat ?? "MANUELLE",
+            niveauVerification: c.niveauVerification ?? "NON_VERIFIE",
+            creePar: Number(ctx.user.id),
+          } as any);
           compatibilitesCrees++;
         }
         let referencesEquivCrees = 0;
@@ -777,6 +860,8 @@ export const articlesRouter = createTRPCRouter({
             marque: r.marque ?? null,
             reference: r.reference.trim(),
             note: r.note ?? null,
+            source: r.source ?? "MANUELLE",
+            niveauVerification: r.niveauVerification ?? "NON_VERIFIE",
           } as any).onConflictDoNothing();
           referencesEquivCrees++;
         }
@@ -800,18 +885,63 @@ export const articlesRouter = createTRPCRouter({
 
   // ─── Ajouter une variante (ou un exemplaire) à un article ───
   addVariante: requirePermissionProcedure("stock.modifier")
-    .input(z.object({ articleId: z.number().int(), variante: VARIANTE_INPUT }))
+    .input(z.object({
+      articleId: z.number().int(),
+      variante: VARIANTE_INPUT,
+      /** Cf. `createArticle.accepterDoublon` : réemploi ASSUMÉ, avec motif. */
+      accepterDoublon: z.boolean().optional(),
+      motifReemploi: z.string().max(500).optional(),
+    }))
     .mutation(async ({ ctx, input }) => {
       const [article] = await db
-        .select({ id: produitArticles.id, typeProduit: produitArticles.typeProduit })
+        .select({ id: produitArticles.id, typeProduit: produitArticles.typeProduit, designation: produitArticles.designation })
         .from(produitArticles)
         .where(eq(produitArticles.id, input.articleId))
         .limit(1);
       if (!article) throw new TRPCError({ code: "NOT_FOUND", message: "Article introuvable." });
       if (article.typeProduit === "SERVICE") throw new TRPCError({ code: "BAD_REQUEST", message: "Un service n'a pas de variantes." });
       return db.transaction(async (tx) => {
-        const id = await creerVariante(tx, article, input.variante, ctx.user.agenceId, Number(ctx.user.id));
-        return { varianteId: id };
+        // Le garde tourne ici aussi. `addVariante` est le chemin par lequel
+        // l'écran « Ajouter une variante » crée une pièce — et il n'avait
+        // AUCUN contrôle : c'était la porte de service du garde du wizard.
+        const v = input.variante;
+        const verdict = await chercherDoublons(tx, {
+          titre: article.designation,
+          designationCourte: v.designationCourte ?? article.designation,
+          marque: v.marque,
+          referencePrincipale: v.referencePrincipale,
+          referenceFabricant: v.referenceFabricant,
+          refOem: v.refOem,
+          codeArticle: v.codeArticle,
+          codeBarre: v.codeBarre,
+          referenceFournisseur: v.fournisseurs?.[0]?.referenceFournisseur,
+        });
+
+        if (verdict.exacts.length && !input.accepterDoublon) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message:
+              `Cette variante semble déjà exister : ${verdict.exacts.slice(0, 3).map((d) => `« ${d.titre} » — ${d.motif}`).join(" ; ")}. ` +
+              `Utilisez la variante existante, ou déclarez qu'elle est réellement distincte et dites pourquoi.`,
+          });
+        }
+        if (verdict.exacts.length && (input.motifReemploi ?? "").trim().length < 10) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Réemploi accepté, mais le motif est obligatoire (10 caractères minimum).",
+          });
+        }
+
+        const id = await creerVariante(tx, article, v, ctx.user.agenceId, Number(ctx.user.id));
+        return {
+          varianteId: id,
+          // Les correspondances PROBABLES ne bloquent pas : elles sont
+          // renvoyées pour que l'écran puisse proposer « réutiliser cette
+          // fiche ». Une simple ressemblance de nom n'a jamais de raison
+          // d'empêcher une création.
+          probables: verdict.probables,
+        };
       }) as any;
     }),
 

@@ -162,6 +162,13 @@
       "when": 1792800000009,
       "tag": "0022_outils_exemplaires",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792800000010,
+      "tag": "0023_pieces_qualification_et_offres",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,7 @@ import { modelesEmballage } from "./modeles_emballage";
 import { emplacements } from "./emplacements";
 import { employes } from "./employes";
 import { produitArticles } from "./produit_articles";
+import { vehicules } from "./vehicules";
 
 export const produits = pgTable("produits", {
   id: serial("id").primaryKey(),
@@ -106,6 +107,25 @@ export const produits = pgTable("produits", {
   referencePrincipale: varchar("reference_principale", { length: 160 }),
   // Nature du produit en 3 dimensions (GF : etat × origine × relation)
   etatProduit: varchar("etat_produit", { length: 20 }), // NEUF | OCCASION | RECONDITIONNE | REMANUFACTURE
+
+  /**
+   * « Occasion » sans rien dire de l'occasion (migration 0023).
+   *
+   * `etat_produit` suffisait à étiqueter, pas à juger. Une pièce de reprise ne
+   * se juge pas sur son état commercial mais sur ses défauts, sa provenance et
+   * sa garantie — et aucune de ces informations n'avait de colonne.
+   *
+   * Tous les champs restent NULL tant que personne ne les connaît. On ne
+   * déduit pas le kilométrage du véhicule donneur, on ne suppose pas une
+   * garantie, on n'invente pas une provenance.
+   */
+  occasionEtatConstate: varchar("occasion_etat_constate", { length: 60 }),
+  occasionDefauts: text("occasion_defauts"),
+  occasionProvenance: varchar("occasion_provenance", { length: 200 }),
+  occasionVehiculeId: integer("occasion_vehicule_id").references(() => vehicules.id, { onDelete: "set null" }),
+  /** Kilométrage du véhicule DONNEUR — information distincte du véhicule. */
+  occasionKilometrage: integer("occasion_kilometrage"),
+  occasionGarantieMois: integer("occasion_garantie_mois"),
   origineProduit: varchar("origine_produit", { length: 20 }), // CONSTRUCTEUR | OEM | AFTERMARKET | ADAPTABLE
   relationProduit: varchar("relation_produit", { length: 20 }), // EQUIVALENT | SUBSTITUT | ECHANGE_STANDARD
   // Position de montage structurée (avec N_A = non applicable)

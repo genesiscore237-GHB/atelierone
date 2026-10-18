@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, varchar, text, date } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, varchar, text, date, timestamp } from "drizzle-orm/pg-core";
 import { produits } from "./produits";
 import { produitArticles } from "./produit_articles";
 
@@ -44,4 +44,26 @@ export const compatibilitesProduits = pgTable("compatibilites_produits", {
   refEquivalente: varchar("ref_equivalente", { length: 160 }),
   restrictions: text("restrictions"),
   notes: text("notes"),
+
+  // ── Qualification (migration 0023) ────────────────────────────────────────
+  // Cette table est la plus riche du dépôt (35 colonnes) et ne disait RIEN de
+  // la fiabilité de ce qu'elle contient : pas de source, pas de niveau de
+  // vérification, et même pas d'horodatage. Une compatibilité saisie au doigt
+  // s'affichait comme une équivalence de catalogue.
+
+  /** Saisie au doigt, catalogue importé, documentation, VIN décodé… */
+  source: varchar("source", { length: 60 }),
+
+  /**
+   * CONFIRME | CONDITIONNEL | NON_VERIFIE.
+   *
+   * La distinction exigée est « saisie par un utilisateur » vs « catalogue
+   * fiable ». Elle est portée par le couple (source, niveau) : une saisie
+   * manuelle ne peut pas être CONFIRMEE sans document qui la motive.
+   */
+  niveauVerification: varchar("niveau_verification", { length: 20 }),
+
+  /** La table n'était pas horodatée : on ne savait ni QUAND ni PAR QUI. */
+  dateCreation: timestamp("date_creation").notNull().defaultNow(),
+  creePar: integer("cree_par"),
 });

@@ -65,7 +65,7 @@ export type VarianteForm = {
   // Conversions d'unités (unité de base + secondaires)
   unites: { uniteId: string; facteurVersBase: string; prixAchat: string; prixVente: string; estUniteBase: boolean; estUniteAchatDefaut: boolean; estUniteVenteDefaut: boolean }[];
   // Fournisseurs secondaires
-  fournisseurs: { fournisseurId: string; referenceFournisseur: string; prixAchat: string; delaiApprovisionnement: string; estPrincipal: boolean; uniteConditionnement: string; facteurConditionnement: string }[];
+  fournisseurs: { fournisseurId: string; referenceFournisseur: string; prixAchat: string; delaiApprovisionnement: string; estPrincipal: boolean; uniteConditionnement: string; facteurConditionnement: string; contenuConfirme?: boolean }[];
 };
 
 export type SectionsVariante = ("identite" | "attributs" | "prix" | "fournisseurs" | "stock")[];
@@ -330,9 +330,34 @@ export function VarianteCard({ index, value, typeArticle, optUnites, optEmplacem
                   <button type="button" className="col-span-1 flex justify-center text-muted-foreground hover:text-destructive" onClick={() => set({ fournisseurs: value.fournisseurs.filter((_, idx) => idx !== i) })}><Trash2 size={12} /></button>
                 </div>
                 <div className="mt-1 flex items-center gap-3 text-[10px] text-muted-foreground">
-                  <label className="flex items-center gap-1"><input type="checkbox" checked={f.estPrincipal} onChange={(e) => setFournisseur(i, { estPrincipal: e.target.checked })} className="size-3" /> fournisseur principal</label>
-                  <SelectSearch value={f.uniteConditionnement || null} onChange={(v) => setFournisseur(i, { uniteConditionnement: String(v) })} options={optUnites} placeholder="Conditionnement…" searchPlaceholder="Rechercher…" size="sm" className="w-40" />
+<label className="flex items-center gap-1"><input type="checkbox" checked={f.estPrincipal} onChange={(e) => setFournisseur(i, { estPrincipal: e.target.checked })} className="size-3" /> fournisseur principal</label>
+                  <SelectSearch value={f.uniteConditionnement || null} onChange={(v) => setFournisseur(i, { uniteConditionnement: String(v) })} options={optUnites} placeholder="Conditionnement." searchPlaceholder="Rechercher." size="sm" className="w-40" />
+                  {/* ── LE POINT QUI EMPÊCHE UNE CONVERSION INVENTÉE ──────────
+                      « carton de 12 » ne dit pas d'où vient le 12. Coché, cela
+                      veut dire : j'ai vu le contenu (le bon du fournisseur, la
+                      fiche). Non coché, le chiffre reste enregistré mais
+                      personne n'a le droit d'en déduire une conversion. */}
+                  <label
+                    className={`flex items-center gap-1 ${f.facteurConditionnement ? "text-amber-700 dark:text-amber-400" : ""}`}
+                    title="Un facteur non confirmé ne déclenchera aucune conversion automatique"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(f.contenuConfirme)}
+                      disabled={!f.facteurConditionnement}
+                      onChange={(e) => setFournisseur(i, { contenuConfirme: e.target.checked })}
+                      className="size-3"
+                    />
+                    contenu vérifié
+                  </label>
                 </div>
+                {f.facteurConditionnement && !f.contenuConfirme && (
+                  <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-400">
+                    Factor {f.facteurConditionnement} enregistré mais NON confirmé : aucune
+                    conversion automatique ne s&apos;appliquera. Vérifiez le contenu avant de
+                    cocher.
+                  </p>
+                )}
               </div>
             ))}
           </div>

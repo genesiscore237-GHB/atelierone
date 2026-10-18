@@ -24,6 +24,32 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // DÉPOSER UN FICHIER EST UNE ÉCRITURE, ET ELLE ÉTAIT OUVERTE À TOUT LE MONDE
+  //
+  // Le seul garde était « session ouverte ». Un compte en lecture seule pouvait
+  // donc déposer 10 Mo sur le disque toutes les minutes — alors que tout le
+  // reste du module exige `stock.modifier` pour écrire quoi que ce soit.
+  //
+  // Le contrôle est fait ICI, côté serveur, et non dans le formulaire : un
+  // contrôle d'interface se contourne avec curl.
+  //
+  // `superadmin` passe par la même porte que n'importe quel rôle : on vérifie
+  // le rôle explicite, sinon un administrateur ne pourrait plus joindre un
+  // document.
+  // ───────────────────────────────────────────────────────────────────────────
+  const role = (session.user as { role?: string }).role;
+  const peutEcrire =
+    role === "superadmin" ||
+    (session.user as { permissions?: string[] }).permissions?.includes("stock.modifier") === true;
+
+  if (!peutEcrire) {
+    return NextResponse.json(
+      { error: "Permission manquante : stock.modifier (déposer un fichier est une écriture)" },
+      { status: 403 },
+    );
+  }
+
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;

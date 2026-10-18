@@ -15,6 +15,9 @@ export const produitReferencesEquiv = pgTable(
     marque: varchar("marque", { length: 100 }),
     reference: varchar("reference", { length: 160 }).notNull(),
     note: varchar("note", { length: 255 }),
+    /** Migration 0023 — qualification, comme sur `produit_references`. */
+    source: varchar("source", { length: 60 }),
+    niveauVerification: varchar("niveau_verification", { length: 20 }),
     createdAt: timestamp("created_at").defaultNow(),
   },
   (t) => [unique("unq_ref_equiv_article").on(t.articleId, t.reference)]

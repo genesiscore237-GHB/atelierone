@@ -7,7 +7,7 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { SelectSearch } from "~/components/ui/select-search";
-import { ArrowLeft, ArrowRight, Loader2, Plus, PackagePlus, AlertTriangle, Trash2, CheckCircle2, Car, BadgeCheck, ClipboardCheck, Boxes, Truck, ShieldCheck, Ruler, ListChecks, Tag } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Plus, PackagePlus, AlertTriangle, Trash2, CheckCircle2, Car, BadgeCheck, ClipboardCheck, Boxes, Truck, ShieldCheck, Ruler, ListChecks, Tag, HelpCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { usePermissions } from "~/hooks/usePermissions";
 import { VarianteCard, varianteVide, type VarianteForm } from "./VarianteCard";
@@ -33,7 +33,21 @@ const TYPES_ATTRIBUT_VALIDES = ["TEXTE", "LONG_TEXT", "NOMBRE", "INTEGER", "DECI
 
 type AttributCommun = { cle: string; valeur: string; unite: string; statutValeur?: string };
 type TypeProduit = "PIECE" | "CONSOMMABLE" | "OUTIL" | "EQUIPEMENT" | "SERVICE" | "FOURNITURE" | "MANUEL" | "LIQUIDE" | "BIDON" | "AUTRE";
-type CompatForm = { typeCompat: string; marque: string; modele: string; anneeDe: string; anneeA: string; motorisation: string; version: string; position: string };
+/**
+ * Une compatibilité telle que le magasinier la déclare.
+ *
+ * `sourceCompat` et `niveauVerification` ne sont pas décoratifs : sans eux,
+ * une ligne saisie au doigt s'afficherait exactement comme une équivalence de
+ * catalogue. Les deux défauts par défaut sont les plus prudents — « saisie
+ * manuelle », « non vérifiée » — parce qu'une information qu'on n'a pas ne
+ * doit pas se déguiser en information vérifiée.
+ */
+type CompatForm = {
+  typeCompat: string; marque: string; modele: string; anneeDe: string; anneeA: string;
+  motorisation: string; version: string; position: string;
+  sourceCompat?: string;
+  niveauVerification?: string;
+};
 
 const ETAPES = [
   { n: 1, label: "Identification" },
@@ -56,6 +70,8 @@ export function NouvelArticleWizard() {
   const [etape, setEtape] = useState<number>(1);
   const [doublonsParRef, setDoublonsParRef] = useState<Record<string, ResultatDoublon>>({});
   const [doublonAccepte, setDoublonAccepte] = useState(false);
+  /** Pourquoi cette pièce est RÉELLEMENT distincte de celle qui existe déjà. */
+  const [motifReemploi, setMotifReemploi] = useState("");
 
   const { data: categories } = api.catalog.listCategories.useQuery();
   const { data: unites } = api.catalog.listUnites.useQuery();
@@ -76,9 +92,16 @@ export function NouvelArticleWizard() {
   const [origineDefaut, setOrigineDefaut] = useState("AFTERMARKET");
   const [attributsCommuns, setAttributsCommuns] = useState<AttributCommun[]>([]);
   const [compatibilites, setCompatibilites] = useState<CompatForm[]>([]);
-  const [equivRefs, setEquivRefs] = useState<{ marque: string; reference: string }[]>([]);
+  const [equivRefs, setEquivRefs] = useState<
+    { marque: string; reference: string; source?: string; niveauVerification?: string }[]
+  >([]);
   const [comp, setComp] = useState<CompatForm>({ typeCompat: "POSITIVE", marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", position: "" });
-  const [eqRef, setEqRef] = useState({ marque: "", reference: "" });
+  const [eqRef, setEqRef] = useState({
+    marque: "",
+    reference: "",
+    source: "MANUELLE",
+    niveauVerification: "NON_VERIFIE",
+  });
   const [template, setTemplate] = useState("");
 
   const categorieSelectionnee = Number(article3Id || sousCategorieId || familleId) || undefined;
@@ -108,9 +131,9 @@ export function NouvelArticleWizard() {
     setEtatDefaut("NEUF"); setOrigineDefaut("AFTERMARKET");
     setAttributsCommuns([]); setCompatibilites([]); setEquivRefs([]);
     setComp({ typeCompat: "POSITIVE", marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", position: "" });
-    setEqRef({ marque: "", reference: "" }); setTemplate("");
+    setEqRef({ marque: "", reference: "", source: "MANUELLE", niveauVerification: "NON_VERIFIE" }); setTemplate("");
     setVariantes([varianteVide()]);
-    setDoublonsParRef({}); setDoublonAccepte(false);
+setDoublonsParRef({}); setDoublonAccepte(false); setMotifReemploi("");
   };
 
   const uploadPhoto = async (file: File | null) => {
@@ -198,7 +221,7 @@ export function NouvelArticleWizard() {
   const addEqRef = () => {
     if (!eqRef.reference) { toast.error("Référence requise"); return; }
     setEquivRefs([...equivRefs, { ...eqRef }]);
-    setEqRef({ marque: "", reference: "" });
+    setEqRef({ marque: "", reference: "", source: "MANUELLE", niveauVerification: "NON_VERIFIE" });
   };
 
   const setV = (i: number, patch: Partial<VarianteForm>) => setVariantes((vs) => vs.map((v, idx) => (idx === i ? { ...v, ...patch } : v)));
@@ -226,6 +249,12 @@ export function NouvelArticleWizard() {
   const enregistrer = (continuer1: boolean) => {
     if (doublonsExacts > 0 && !doublonAccepte) {
       toast.error(`Doublon(s) exact(s) détecté(s) (${doublonsExacts}) — cochez la confirmation pour créer quand même.`);
+      return;
+    }
+    // Le serveur exige un MOTIF dès qu'un réemploi est assumé. Un garde qui
+    // refuse sans laisser de sortie est un mur, pas une règle.
+    if (doublonAccepte && motifReemploi.trim().length < 10) {
+      toast.error("Expliquez en une phrase pourquoi cette pièce est distincte (10 caractères minimum).");
       return;
     }
     if (designation.trim().length < 2) { toast.error("Désignation requise"); return; }
@@ -271,8 +300,20 @@ export function NouvelArticleWizard() {
         motorisation: c.motorisation || undefined,
         version: c.version || undefined,
         position: c.position || undefined,
+        // Ce que le magasinier déclare avoir vérifié — et comment.
+        // Sans ces deux champs, tout resterait « non vérifié » : honnête,
+        // mais la donnée existe et serait perdue.
+        sourceCompat: c.sourceCompat || "MANUELLE",
+        niveauVerification: (c.niveauVerification || "NON_VERIFIE") as any,
       })),
-      referencesEquiv: equivRefs.filter((r) => r.reference.trim()).map((r) => ({ marque: r.marque || undefined, reference: r.reference.trim() })),
+      accepterDoublon: doublonAccepte || undefined,
+      motifReemploi: doublonAccepte ? motifReemploi.trim() : undefined,
+      referencesEquiv: equivRefs.filter((r) => r.reference.trim()).map((r) => ({
+        marque: r.marque || undefined,
+        reference: r.reference.trim(),
+        source: r.source || "MANUELLE",
+        niveauVerification: (r.niveauVerification || "NON_VERIFIE") as any,
+      })),
       variantes: vs.map((v) => ({
         marque: v.marque || undefined,
         referencePrincipale: v.referencePrincipale || undefined,
@@ -309,6 +350,10 @@ export function NouvelArticleWizard() {
           estPrincipal: f.estPrincipal,
           uniteConditionnement: f.uniteConditionnement || undefined,
           facteurConditionnement: f.facteurConditionnement ? Number(f.facteurConditionnement) : undefined,
+          // « J'ai vu le contenu de ce conditionnement » — ou je ne l'ai pas
+          // vu. Sans cette case, un « carton de 12 » reste une supposition,
+          // et aucune conversion automatique n'a le droit d'y croire.
+          contenuConfirme: Boolean(f.contenuConfirme),
         })),
         uniteStockId: v.uniteStockId || undefined,
         stockInitial: v.stockInitial ? Number(v.stockInitial) : undefined,
@@ -386,6 +431,28 @@ export function NouvelArticleWizard() {
       {etape === 1 && (
         <div className="space-y-4">
           <Cabec n={1} icone={<Tag size={14} className="text-primary" />} titre="Identification" hint="Ce que l'on voit en premier : le nom affiché, le nom court, la nature (type de produit), l'état et l'origine par défaut." />
+
+          {/* L'AIDE À LA SAISIE, AU MOMENT OÙ ELLE SERT.
+              L'outil existe, il est bon (score de similarité, tolérance aux
+              fautes de frappe, 18 tables), et il n'était accessible que par le
+              bouton « ? » du header — c'est-à-dire pas au moment où l'on
+              cherche. Il manquait le lien depuis le formulaire lui-même. */}
+          <a
+            href="/dashboard/catalog/aide"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+          >
+            <HelpCircle size={14} className="shrink-0" />
+            <span>
+              <strong className="font-medium text-foreground">Vous hésitez ?</strong>{" "}
+              L&apos;aide à la saisie distingue les variantes d&apos;une même
+              pièce (spin-on ou cartouche, jeu de 2 ou de 4) et dit quels champs
+              remplir — sans rien inventer sur une référence que vous ne
+              connaissez pas.
+            </span>
+          </a>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="sm:col-span-2">
               <Label className="text-xs text-muted-foreground">Désignation *</Label>
@@ -572,12 +639,46 @@ export function NouvelArticleWizard() {
                 <Input value={eqRef.reference} onChange={(e) => setEqRef({ ...eqRef, reference: e.target.value })} placeholder="Référence (W 712/95…)" className="flex-1" />
                 <Button size="sm" className="gap-1" disabled={!eqRef.reference} onClick={addEqRef}><Plus size={12} /> Ajouter</Button>
               </div>
+
+              {/* Une équivalence NON VÉRIFIÉE ne doit jamais être présentée comme
+                  une compatibilité acquise : c'est une piste, pas une vérité. */}
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Source</Label>
+                  <select
+                    value={eqRef.source ?? "MANUELLE"}
+                    onChange={(e) => setEqRef({ ...eqRef, source: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-2 text-xs"
+                  >
+                    <option value="MANUELLE">Saisie à la main</option>
+                    <option value="BON_FOURNISSEUR">Bon de fournisseur</option>
+                    <option value="CATALOGUE">Catalogue fabricant</option>
+                    <option value="DOCUMENTATION">Documentation / manuel</option>
+                  </select>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Vérification</Label>
+                  <select
+                    value={eqRef.niveauVerification ?? "NON_VERIFIE"}
+                    onChange={(e) => setEqRef({ ...eqRef, niveauVerification: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-2 text-xs"
+                  >
+                    <option value="NON_VERIFIE">Non vérifiée</option>
+                    <option value="CONDITIONNEL">Conditionnelle</option>
+                    <option value="CONFIRME">Confirmée</option>
+                  </select>
+                </div>
+              </div>
+
               {equivRefs.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {equivRefs.map((r, i) => (
                     <span key={i} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-mono">
                       {r.marque ? `${r.marque} : ` : ""}{r.reference}
-                      <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => setEquivRefs(equivRefs.filter((_, idx) => idx !== i))}><Trash2 size={11} /></button>
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${r.niveauVerification === "CONFIRME" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" : r.niveauVerification === "CONDITIONNEL" ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" : "bg-muted text-muted-foreground"}`}>
+                        {r.niveauVerification === "CONFIRME" ? "confirmée" : r.niveauVerification === "CONDITIONNEL" ? "conditionnelle" : "à vérifier"}
+                      </span>
+                      <button type="button" onClick={() => setEquivRefs(equivRefs.filter((_, idx) => idx !== i))} aria-label="Retirer"><Trash2 size={11} /></button>
                     </span>
                   ))}
                 </div>
@@ -611,12 +712,74 @@ export function NouvelArticleWizard() {
                 <Input value={comp.position} onChange={(e) => setComp({ ...comp, position: e.target.value })} placeholder="Position (essieu avant…)" />
                 <Button size="sm" className="gap-1" disabled={!comp.marque || !comp.modele} onClick={addComp}><Plus size={12} /> Ajouter</Button>
               </div>
+
+              {/* ── LA QUESTION QUI EMPÊCHE LE MENTIER ──────────────────────
+                  Une compatibilité sert à proposer une pièce à un client. Si
+                  elle a été devinée, le client reçoit une pièce qui ne va pas.
+                  On demande donc d'où elle vient, et si on l'a vérifiée —
+                  et on affiche la réponse ensuite. */}
+              <div className="mt-3 grid gap-2 rounded-lg border border-border bg-muted/30 p-3 sm:grid-cols-2">
+                <div>
+                  <Label className="text-xs text-muted-foreground">D'où vient cette compatibilité ?</Label>
+                  <select
+                    value={comp.sourceCompat ?? "MANUELLE"}
+                    onChange={(e) => setComp({ ...comp, sourceCompat: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-2 text-xs"
+                  >
+                    <option value="MANUELLE">Saisie à la main (moi / le magasin)</option>
+                    <option value="BON_FOURNISSEUR">Bon de fournisseur</option>
+                    <option value="CATALOGUE">Catalogue fabricant</option>
+                    <option value="DOCUMENTATION">Documentation / manuel</option>
+                  </select>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">A-t-elle été vérifiée ?</Label>
+                  <select
+                    value={comp.niveauVerification ?? "NON_VERIFIE"}
+                    onChange={(e) => setComp({ ...comp, niveauVerification: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-2 text-xs"
+                  >
+                    <option value="NON_VERIFIE">Non vérifiée — à confirmer</option>
+                    <option value="CONDITIONNEL">Conditionnelle (selon un critère)</option>
+                    <option value="CONFIRME">Confirmée (document à l'appui)</option>
+                  </select>
+                </div>
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                  « Confirmée » sans document est une affirmation, pas une
+                  vérification. En cas de doute, laissez « non vérifiée » :
+                  l&apos;écran affichera « à vérifier » plutôt qu&apos;une
+                  garantie fausse.
+                </p>
+              </div>
+
               {compatibilites.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {compatibilites.map((c, i) => (
                     <span key={i} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs ${c.typeCompat === "NEGATIVE" ? "border-destructive/30 bg-destructive/5 text-destructive" : "border-border bg-background"}`}>
                       {c.typeCompat === "NEGATIVE" ? "⚠ sauf " : ""}{c.marque} {c.modele}{c.anneeDe ? ` ${c.anneeDe}${c.anneeA ? `–${c.anneeA}` : ""}` : ""}{c.motorisation ? ` · ${c.motorisation}` : ""}{c.position ? ` · ${c.position}` : ""}
-                      <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => setCompatibilites(compatibilites.filter((_, idx) => idx !== i))}><Trash2 size={11} /></button>
+                      <span
+                        title={
+                          (c.niveauVerification ?? "NON_VERIFIE") === "CONFIRME"
+                            ? "Compatibilité confirmée"
+                            : (c.niveauVerification ?? "NON_VERIFIE") === "CONDITIONNEL"
+                              ? "Compatibilité conditionnelle"
+                              : "Compatibilité à vérifier"
+                        }
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                          c.niveauVerification === "CONFIRME"
+                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                            : c.niveauVerification === "CONDITIONNEL"
+                              ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                              : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {c.niveauVerification === "CONFIRME"
+                          ? "confirmée"
+                          : c.niveauVerification === "CONDITIONNEL"
+                            ? "conditionnelle"
+                            : "à vérifier"}
+                      </span>
+                      <button type="button" onClick={() => setCompatibilites(compatibilites.filter((_, idx) => idx !== i))} className="text-muted-foreground hover:text-destructive" aria-label="Retirer"><Trash2 size={11} /></button>
                     </span>
                   ))}
                 </div>
@@ -732,11 +895,33 @@ export function NouvelArticleWizard() {
           {doublonsExacts > 0 && (
             <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-sm">
               <input type="checkbox" checked={doublonAccepte} onChange={(e) => setDoublonAccepte(e.target.checked)} className="mt-0.5 size-4 accent-destructive" />
-              <span>
+<span>
                 <b>{doublonsExacts} référence(s) exacte(s) déjà existante(s).</b>
-                <span className="block text-xs text-muted-foreground">Je confirme que cette référence est réellement distincte (autre marque, prix, fournisseur…) et je souhaite la créer quand même. Les doublons génèrent des ventes manquées : vérifiez avant de confirmer.</span>
+                <span className="block text-xs text-muted-foreground">Cette pièce porte une référence déjà portée ailleurs. Si c'est la même chose, ouvrez la fiche existante : deux SKU pour une pièce, c'est du stock invisible.</span>
               </span>
             </label>
+          )}
+
+          {doublonsExacts > 0 && doublonAccepte && (
+            /* Le serveur exige ce motif. Une case cochée seule ne dit rien de
+             * ce que le magasinier a cru voir — or c'est précisément ce qui
+             * distingue « j'ai vérifié » de « ça se ressemble ». */
+            <div className="rounded-xl border border-destructive/40 bg-background p-3">
+              <Label className="text-xs font-semibold text-destructive">
+                Pourquoi est-ce une pièce distincte ? *
+              </Label>
+              <Input
+                value={motifReemploi}
+                onChange={(e) => setMotifReemploi(e.target.value)}
+                placeholder="Ex : le fournisseur a réattribué cette référence après reprise de son stock"
+                className="mt-1"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                {motifReemploi.trim().length < 10
+                  ? `Encore ${10 - motifReemploi.trim().length} caractère(s). Ce motif est conservé.`
+                  : "Ce motif est conservé sur la fiche."}
+              </p>
+            </div>
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-2">

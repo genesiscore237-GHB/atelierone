@@ -22,6 +22,32 @@ export const produitReferences = pgTable(
     // recherche de doublons rapide et déterministe (moteur catalogue universel).
     valeurNormalisee: varchar("valeur_normalisee", { length: 160 }),
     isPrincipale: boolean("is_principale").default(false),
+
+    /**
+     * D'où vient cette référence ? (migration 0023)
+     *
+     * Saisie au doigt, bon du fournisseur, catalogue importé, documentation
+     * fabricant. Sans cette colonne, une référence recopiée d'un bon de
+     * commande s'affichait exactement comme une référence de catalogue.
+     */
+    source: varchar("source", { length: 60 }),
+
+    /** La référence telle qu'elle apparaît sur la source (casse, tirets). */
+    referenceSource: varchar("reference_source", { length: 160 }),
+
+    /**
+     * CONFIRME | CONDITIONNEL | NON_VERIFIE (migration 0023)
+     *
+     * Défaut prudent : une référence qui entre aujourd'hui n'a pas été
+     * vérifiée contre une source. « Une équivalence non vérifiée ne doit
+     * jamais être affichée comme une compatibilité garantie » — donc la
+     * valeur par défaut est « non vérifiée », pas « confirmée ».
+     */
+    niveauVerification: varchar("niveau_verification", { length: 20 }),
+
+    /** Ce qui a permis de qualifier, ou ce qui empêche de le faire. */
+    note: text("note"),
+
     createdAt: timestamp("created_at").defaultNow(),
   },
   (t) => [unique("unq_ref_variante_valeur").on(t.varianteId, t.valeur)]
