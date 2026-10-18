@@ -242,7 +242,11 @@ export default function CatalogueArticlesPage() {
         </div>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-xl border border-border bg-card">
+          {/* Sur téléphone, un tableau de 8 colonnes se parcourt en défilant
+              de côté : la désignation — la seule colonne qui compte — sort de
+              l'écran. Sous `md`, on remplace par des cartes ; le tableau
+              reste tel quel sur ordinateur. */}
+          <div className="hidden overflow-x-auto rounded-xl border border-border bg-card md:block">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
@@ -316,6 +320,59 @@ export default function CatalogueArticlesPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* Cartes — téléphone uniquement. */}
+          <div className="space-y-2 md:hidden">
+            {data.articles.map((a) => (
+              <div
+                key={a.id}
+                onClick={() => router.push(`/dashboard/catalog/article/${a.id}`)}
+                className="cursor-pointer rounded-xl border border-border bg-card p-3 transition-colors hover:bg-accent/30"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-foreground">{a.designation}</p>
+                    {a.designationCourte && (
+                      <p className="truncate text-xs text-muted-foreground">{a.designationCourte}</p>
+                    )}
+                    <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">{a.code ?? "—"}</p>
+                  </div>
+                  <ChevronRight size={15} className="mt-1 shrink-0 text-muted-foreground" />
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <TypeBadge type={a.typeProduit} />
+                  {a.categorieNom && <span className="text-xs text-muted-foreground">{a.categorieNom}</span>}
+                  <span className="ml-auto text-xs text-muted-foreground">{a.nVariantes} var.</span>
+                  <span className={`text-sm font-semibold tabular-nums ${Number(a.stockTotal) === 0 && a.nVariantes > 0 ? "text-destructive" : ""}`}>
+                    {Number(a.stockTotal).toLocaleString("fr-FR")}
+                  </span>
+                </div>
+                {a.problemes.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {a.problemes.map((code) => {
+                      const meta = PROBLEM_META[code];
+                      if (!meta) return null;
+                      const Icon = meta.icon;
+                      return (
+                        <button
+                          key={code}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            update({ problem: code, page: undefined });
+                          }}
+                          title={meta.label}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${meta.badge}`}
+                        >
+                          <Icon size={10} />
+                          {meta.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
 
           {/* ─── PAGINATION ─── */}

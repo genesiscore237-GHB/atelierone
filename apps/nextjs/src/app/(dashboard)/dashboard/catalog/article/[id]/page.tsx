@@ -123,6 +123,7 @@ export default function ArticleDetailPage() {
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
+  const [reemploi, setReemploi] = useState({ actif: false, motif: "" });
   const [refEq, setRefEq] = useState({ marque: "", reference: "", note: "", niveauVerification: "NON_VERIFIE" });
   const [comp, setComp] = useState<any>({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "", niveauVerification: "NON_VERIFIE" });
 
@@ -130,6 +131,7 @@ export default function ArticleDetailPage() {
     onSuccess: () => {
       toast.success("Variante ajoutée");
       setShowVariante(false);
+      setReemploi({ actif: false, motif: "" });
       setNv({ marque: "", referenceFabricant: "", referencePrincipale: "", codeArticle: "", conditionnement: "", prixAchat: "", prixVente: "", prixPro: "", prixParticulier: "", tva: "", uniteStockId: "", stockInitial: "", emplacementStockId: "", fournisseurId: 0, typeOutil: "INDIVIDUEL", etatEquipement: "", etatProduit: "NEUF", origineProduit: "AFTERMARKET", positionCote: "N_A", positionEssieu: "N_A", seuilAlerte: "5", stockSecurite: "", pointCommande: "", qteMinCommande: "", numeroSerie: "", numeroLot: "", garantieMois: "", estCore: false, valeurCore: "", calibrable: false, numeroImmobilisation: "",
     occasionEtatConstate: "", occasionDefauts: "", occasionProvenance: "", occasionKilometrage: "", occasionGarantieMois: "" });
       utils.articles.getArticle.invalidate();
@@ -294,8 +296,18 @@ export default function ArticleDetailPage() {
 
   const doVariante = () => {
     if (!nv.marque && !nv.referenceFabricant && !nv.conditionnement && !nv.referencePrincipale) { toast.error("Renseignez au moins la marque, la référence ou le conditionnement"); return; }
+    // Le garde anti-doublons vit côté serveur. Quand il refuse, la fiche doit
+    // offrir le même recours que le wizard : déclarer le réemploi ET dire
+    // pourquoi. Sans cela, « Ajouter une variante » était une impasse — le
+    // serveur refusait, et rien dans l'écran ne permettait de répondre.
+    if (reemploi.actif && reemploi.motif.trim().length < 10) {
+      toast.error("Réemploi assumé : le motif est obligatoire (10 caractères minimum)");
+      return;
+    }
     addVariante.mutate({
       articleId: id,
+      accepterDoublon: reemploi.actif || undefined,
+      motifReemploi: reemploi.actif ? reemploi.motif.trim() : undefined,
       variante: {
         marque: nv.marque || undefined,
         referenceFabricant: nv.referenceFabricant || undefined,
@@ -1015,6 +1027,15 @@ export default function ArticleDetailPage() {
                   )}
                   <label className="flex items-center gap-1.5 pt-1 text-xs"><input type="checkbox" checked={nv.calibrable} onChange={(e) => setNv({ ...nv, calibrable: e.target.checked })} className="size-3.5" /> Soumis à calibration</label>
                 </>
+              )}
+            </div>
+            <div className="rounded-lg border border-border bg-muted/30 p-3">
+              <label className="flex items-center gap-1.5 text-xs font-medium">
+                <input type="checkbox" checked={reemploi.actif} onChange={(e) => setReemploi({ ...reemploi, actif: e.target.checked })} className="size-3.5" />
+                Cette référence existe déjà — c&apos;est un réemploi assumé
+              </label>
+              {reemploi.actif && (
+                <Textarea value={reemploi.motif} onChange={(e) => setReemploi({ ...reemploi, motif: e.target.value })} rows={2} className="mt-2" placeholder="Pourquoi est-ce une pièce réellement distincte ? (10 caractères minimum — « lot différent » ne suffit pas)" />
               )}
             </div>
             <div className="flex justify-end gap-2">

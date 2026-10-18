@@ -104,8 +104,8 @@ montré le contraire** : le module existait déjà à environ 70 %.
 
 | # | Tâche | Pourquoi c'est bloquant |
 |---|---|---|
-| **R2** | **Le garde en base** | Une règle qui n'existe que dans un fichier TypeScript disparaît au prochain développeur qui ne le lit pas. Trigger sur `produits.reference_principale`. |
-| **R3** | **Vue mobile du catalogue** | Tableau à 8 colonnes en défilement horizontal ; la colonne « Désignation » est hors écran sur téléphone. Le cahier des charges exige téléphone **et** ordinateur. |
+| **R2** | **Le garde en base — à trancher, pas à écrire tel quel.** Un unicit/trigger sur `reference_principale` contredirait le **réemploi assumé** : deux références identiques *sont* créées volontairement après motif. Le garde correct exige une colonne `doublon_assume` posée quand le motif est fourni, puis un index unique *partiel* sur les références normalisées des lignes non assumées. Deux inconnues avant d'écrire : la production contient-elle déjà des doublons antérieurs au garde (l'index échouerait et bloquerait `db:sync`) ? Décision produit requise. |
+| **R3** | ~~Vue mobile du catalogue~~ — **fait** : sous `md`, le tableau (8 colonnes) est remplacé par des cartes — désignation, code, type, catégorie, variantes, stock, pastilles filtrables. Le tableau reste sur ordinateur. |
 
 ### 3.2 Fonctionnel
 
@@ -116,7 +116,8 @@ montré le contraire** : le module existait déjà à environ 70 %.
 | R6 | ~~Galerie de photos — l'onglet Documents exigeait une URL collée~~ — **fait** (Lot E) | ✅ |
 | R7 | ~~Upload dans l'onglet Documents~~ — **fait** (Lot E) | ✅ |
 | R8 | Bouton « réutiliser cette fiche » quand un doublon est détecté | M |
-| R9 | `addVariante` : exposer aussi `accepterDoublon` / `motifReemploi` dans son formulaire | S |
+| R9 | ~~`addVariante` : exposer `accepterDoublon` / `motifReemploi` dans son formulaire~~ — **fait** : la fiche offre la case « réemploi assumé » + motif (10 caractères min), comme le wizard. Sans cela, le garde transformait « Ajouter une variante » en impasse : le serveur refusait, l'écran ne permettait pas de répondre. | ✅ |
+| R14 | Occasion **affichée et éditable sur la fiche variante** (R4 ne couvrait que la création) ; repasser une pièce en « neuf » efface ses champs d'occasion (`null` explicite, pas un mot laissé en place). | ✅ |
 
 ### 3.3 Qualité — hors module, mais réel
 
@@ -211,7 +212,9 @@ fichier : **310 erreurs**, dont **0 sur les fichiers de ce chantier**.
 | M0→M5 stock | `7d886f2` | ✅ |
 | Pièces — garde + qualification + interface | `4979532`, `58c21bb` | ❌ |
 | Pièces — corrections TypeScript `stock.ts` | `d16482c` | ❌ |
-| Pièces — photos + documents + logique (Lots E, F) | *ce commit* | ❌ |
+| Pièces — photos + documents + logique (Lots E, F) | `0681dde` | ❌ |
+| Pièces — qualification visible et posable (R5) | `30c1086`, `a1cd14e` | ❌ |
+| Pièces — interfaces : réemploi (R9), mobile (R3), occasion fiche variante (R14) | *ce commit* | ❌ |
 
 Le push des lots pièces appliquerait `0023` en production, ce qui pose une
 **contrainte d'unicité** après dédoublonnage. Écriture en production : décision

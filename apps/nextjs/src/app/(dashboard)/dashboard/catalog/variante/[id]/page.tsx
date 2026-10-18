@@ -89,6 +89,11 @@ export default function VarianteDetailPage() {
       calibrable: v?.calibrable ?? false,
       numeroImmobilisation: v?.numeroImmobilisation ?? "",
       valeurAcquisition: v?.valeurAcquisition ?? "",
+      occasionEtatConstate: v?.occasionEtatConstate ?? "",
+      occasionDefauts: v?.occasionDefauts ?? "",
+      occasionProvenance: v?.occasionProvenance ?? "",
+      occasionKilometrage: v?.occasionKilometrage ?? "",
+      occasionGarantieMois: v?.occasionGarantieMois ?? "",
     });
     setEditingBasique(true);
   };
@@ -131,6 +136,24 @@ export default function VarianteDetailPage() {
       calibrable: editV.calibrable,
       numeroImmobilisation: str(editV.numeroImmobilisation),
       valeurAcquisition: num(editV.valeurAcquisition),
+      // Occasion : le formulaire fait foi. Repasser la pièce en « neuf » efface
+      // ces champs (null explicite) — une donnée d'occasion sur une pièce neuve
+      // serait un mensonge de plus, pas une donnée de plus.
+      ...(editV.etatProduit && editV.etatProduit !== "NEUF"
+        ? {
+            occasionEtatConstate: str(editV.occasionEtatConstate) ?? null,
+            occasionDefauts: str(editV.occasionDefauts) ?? null,
+            occasionProvenance: str(editV.occasionProvenance) ?? null,
+            occasionKilometrage: num(editV.occasionKilometrage) ?? null,
+            occasionGarantieMois: num(editV.occasionGarantieMois) ?? null,
+          }
+        : {
+            occasionEtatConstate: null,
+            occasionDefauts: null,
+            occasionProvenance: null,
+            occasionKilometrage: null,
+            occasionGarantieMois: null,
+          }),
     });
   };
 
@@ -278,6 +301,15 @@ export default function VarianteDetailPage() {
             <div><Label className="text-xs text-muted-foreground">Date fabrication</Label><Input type="date" value={editV.dateFabrication} onChange={(e) => setEditV({ ...editV, dateFabrication: e.target.value })} className="mt-1" /></div>
             <div><Label className="text-xs text-muted-foreground">Date expiration</Label><Input type="date" value={editV.dateExpiration} onChange={(e) => setEditV({ ...editV, dateExpiration: e.target.value })} className="mt-1" /></div>
             <div><Label className="text-xs text-muted-foreground">Garantie (mois)</Label><Input type="number" min={0} value={editV.garantieMois} onChange={(e) => setEditV({ ...editV, garantieMois: e.target.value })} className="mt-1" /></div>
+            {editV.etatProduit && editV.etatProduit !== "NEUF" && (
+              <>
+                <div><Label className="text-xs text-muted-foreground">État constaté (occasion)</Label><Input value={editV.occasionEtatConstate} onChange={(e) => setEditV({ ...editV, occasionEtatConstate: e.target.value })} placeholder="Ex. : rayures carter" className="mt-1" /></div>
+                <div><Label className="text-xs text-muted-foreground">Défauts constatés</Label><Input value={editV.occasionDefauts} onChange={(e) => setEditV({ ...editV, occasionDefauts: e.target.value })} placeholder="Optionnel" className="mt-1" /></div>
+                <div><Label className="text-xs text-muted-foreground">Provenance</Label><Input value={editV.occasionProvenance} onChange={(e) => setEditV({ ...editV, occasionProvenance: e.target.value })} placeholder="Ex. : véhicule repris" className="mt-1" /></div>
+                <div><Label className="text-xs text-muted-foreground">Kilométrage au démontage</Label><Input type="number" min={0} value={editV.occasionKilometrage} onChange={(e) => setEditV({ ...editV, occasionKilometrage: e.target.value })} className="mt-1" /></div>
+                <div><Label className="text-xs text-muted-foreground">Garantie occasion (mois)</Label><Input type="number" min={0} value={editV.occasionGarantieMois} onChange={(e) => setEditV({ ...editV, occasionGarantieMois: e.target.value })} className="mt-1" /></div>
+              </>
+            )}
             {estExemplaire && (
               <>
                 <div><Label className="text-xs text-muted-foreground">Valeur d'acquisition (F)</Label><Input type="number" min={0} value={editV.valeurAcquisition} onChange={(e) => setEditV({ ...editV, valeurAcquisition: e.target.value })} className="mt-1" /></div>
@@ -324,6 +356,15 @@ export default function VarianteDetailPage() {
           {v.numeroLot && <div><span className="text-xs text-muted-foreground">N° lot</span><p className="font-mono">{v.numeroLot}</p></div>}
           {v.dateExpiration && <div><span className="text-xs text-muted-foreground">Expiration</span><p>{new Date(v.dateExpiration).toLocaleDateString("fr-FR")}</p></div>}
           {v.estCore && <div><span className="text-xs text-muted-foreground">Échange standard</span><p className="font-medium">Core {v.valeurCore ? `· ${Number(v.valeurCore).toLocaleString("fr-FR")} F` : ""}</p></div>}
+          {v.etatProduit && v.etatProduit !== "NEUF" && (v.occasionEtatConstate || v.occasionDefauts || v.occasionProvenance || v.occasionKilometrage != null || v.occasionGarantieMois != null) && (
+            <>
+              {v.occasionEtatConstate && <div><span className="text-xs text-muted-foreground">État constaté</span><p className="font-medium">{v.occasionEtatConstate}</p></div>}
+              {v.occasionDefauts && <div><span className="text-xs text-muted-foreground">Défauts</span><p className="font-medium">{v.occasionDefauts}</p></div>}
+              {v.occasionProvenance && <div><span className="text-xs text-muted-foreground">Provenance</span><p className="font-medium">{v.occasionProvenance}</p></div>}
+              {v.occasionKilometrage != null && <div><span className="text-xs text-muted-foreground">Kilométrage</span><p className="font-medium">{Number(v.occasionKilometrage).toLocaleString("fr-FR")} km</p></div>}
+              {v.occasionGarantieMois != null && <div><span className="text-xs text-muted-foreground">Garantie occasion</span><p className="font-medium">{v.occasionGarantieMois} mois</p></div>}
+            </>
+          )}
         </div>
         {estExemplaire && (
           <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3 text-xs">
