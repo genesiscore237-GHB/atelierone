@@ -81,7 +81,13 @@ apps/nextjs/playwright-*-report/
 apps/nextjs/playwright-report*/
 
 # fichiers uploades a l'execution (contenu utilisateur, pas du code)
-uploads/
+#
+# Ancré à la racine (`/uploads/`) et non `uploads/` : sans le slash initial, la
+# règle ignorait TOUT dossier nommé « uploads », y compris celui de la route
+# `src/app/uploads/` qui sert ces fichiers. Le service aurait fonctionné en
+# local et serait resté absent du dépôt — un déploiement propre aurait rendu
+# chaque image téléversée introuvable.
+/uploads/
 
 # PIDs de serveurs de dev
 *.pid

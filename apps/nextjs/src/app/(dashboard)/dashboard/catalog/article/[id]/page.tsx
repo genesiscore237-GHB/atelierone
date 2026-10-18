@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
@@ -15,7 +15,7 @@ import { ErrorState } from "~/components/ui/error-state";
 import { EmptyState } from "~/components/ui/empty-state";
 import {
   ArrowLeft, Package, Plus, Loader2, Trash2, Wrench, Car, BookOpen, FileText, BadgeCheck,
-  Save, Info, Warehouse, X, Search, RefreshCcw, GitCompareArrows,
+  Save, Info, Warehouse, X, Search, RefreshCcw, GitCompareArrows, Upload,
 } from "lucide-react";
 
 const TYPE_LABELS: Record<string, string> = { PIECE: "Pièce", CONSOMMABLE: "Consommable", OUTIL: "Outillage", EQUIPEMENT: "Équipement", SERVICE: "Service" };
@@ -113,11 +113,16 @@ export default function ArticleDetailPage() {
     emplacementStockId: "", fournisseurId: 0, typeOutil: "INDIVIDUEL", etatEquipement: "", etatProduit: "NEUF", origineProduit: "AFTERMARKET",
     positionCote: "N_A", positionEssieu: "N_A", seuilAlerte: "5", stockSecurite: "", pointCommande: "", qteMinCommande: "",
     numeroSerie: "", numeroLot: "", garantieMois: "", estCore: false, valeurCore: "", calibrable: false, numeroImmobilisation: "",
+    occasionEtatConstate: "", occasionDefauts: "", occasionProvenance: "", occasionKilometrage: "", occasionGarantieMois: "",
   });
   const [attributs, setAttributs] = useState<Attribut[]>([]);
   const [preset, setPreset] = useState("");
   const [editing, setEditing] = useState(false);
   const [doc, setDoc] = useState({ type: "FICHE_TECHNIQUE", titre: "", url: "" });
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const docInputRef = useRef<HTMLInputElement>(null);
   const [refEq, setRefEq] = useState({ marque: "", reference: "", note: "" });
   const [comp, setComp] = useState<any>({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "" });
 
@@ -125,7 +130,8 @@ export default function ArticleDetailPage() {
     onSuccess: () => {
       toast.success("Variante ajoutée");
       setShowVariante(false);
-      setNv({ marque: "", referenceFabricant: "", referencePrincipale: "", codeArticle: "", conditionnement: "", prixAchat: "", prixVente: "", prixPro: "", prixParticulier: "", tva: "", uniteStockId: "", stockInitial: "", emplacementStockId: "", fournisseurId: 0, typeOutil: "INDIVIDUEL", etatEquipement: "", etatProduit: "NEUF", origineProduit: "AFTERMARKET", positionCote: "N_A", positionEssieu: "N_A", seuilAlerte: "5", stockSecurite: "", pointCommande: "", qteMinCommande: "", numeroSerie: "", numeroLot: "", garantieMois: "", estCore: false, valeurCore: "", calibrable: false, numeroImmobilisation: "" });
+      setNv({ marque: "", referenceFabricant: "", referencePrincipale: "", codeArticle: "", conditionnement: "", prixAchat: "", prixVente: "", prixPro: "", prixParticulier: "", tva: "", uniteStockId: "", stockInitial: "", emplacementStockId: "", fournisseurId: 0, typeOutil: "INDIVIDUEL", etatEquipement: "", etatProduit: "NEUF", origineProduit: "AFTERMARKET", positionCote: "N_A", positionEssieu: "N_A", seuilAlerte: "5", stockSecurite: "", pointCommande: "", qteMinCommande: "", numeroSerie: "", numeroLot: "", garantieMois: "", estCore: false, valeurCore: "", calibrable: false, numeroImmobilisation: "",
+    occasionEtatConstate: "", occasionDefauts: "", occasionProvenance: "", occasionKilometrage: "", occasionGarantieMois: "" });
       utils.articles.getArticle.invalidate();
     },
     onError: (e) => toast.error(e.message),
@@ -167,6 +173,51 @@ export default function ArticleDetailPage() {
     onSuccess: () => { utils.articles.getArticle.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
+
+  // ─── Téléversement de fichiers ────────────────────────────────────────────
+  // Le dépôt se fait via POST /api/uploads, dont le contrôle d'écriture est
+  // serveur (`stock.modifier`). Le dossier « articles » regroupe photos et
+  // pièces jointes ; c'est le même dossier que celui utilisé par le wizard,
+  // pour que tout se retrouve au même endroit.
+  const televerserFichier = async (file: File): Promise<string> => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("folder", "articles");
+    const res = await fetch("/api/uploads", { method: "POST", body: fd });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error ?? "Échec du téléversement");
+    return data.url as string;
+  };
+
+  const televerserPhoto = async (file: File) => {
+    setUploadingPhoto(true);
+    try {
+      const url = await televerserFichier(file);
+      setIdentForm((f) => ({ ...f, imageUrl: url }));
+      toast.success("Photo téléversée — enregistrez pour confirmer");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Échec du téléversement");
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const televerserDoc = async (file: File) => {
+    setUploadingDoc(true);
+    try {
+      const url = await televerserFichier(file);
+      // Un fichier image déposé sans avoir touché au sélecteur de type est une
+      // photo : c'est la lecture la plus probable. Dès que l'utilisateur a
+      // choisi un autre type, son choix est respecté tel quel.
+      const type =
+        file.type.startsWith("image/") && doc.type === "FICHE_TECHNIQUE" ? "PHOTO" : doc.type;
+      addDoc.mutate({ articleId: id, type, titre: doc.titre || file.name, url });
+    } catch (e: any) {
+      toast.error(e?.message ?? "Échec du téléversement");
+    } finally {
+      setUploadingDoc(false);
+    }
+  };
 
   const article = data?.article;
   const variantes = useMemo(() => data?.variantes ?? [], [data?.variantes]);
@@ -277,6 +328,17 @@ export default function ArticleDetailPage() {
         garantieMois: nv.garantieMois ? Number(nv.garantieMois) : undefined,
         estCore: nv.estCore,
         valeurCore: nv.estCore && nv.valeurCore ? Number(nv.valeurCore) : undefined,
+        // Occasion : renseigné seulement quand la pièce n'est pas neuve. Un
+        // champ laissé vide reste NULL en base — c'est « inconnu », pas « zéro ».
+        ...(nv.etatProduit && nv.etatProduit !== "NEUF"
+          ? {
+              occasionEtatConstate: nv.occasionEtatConstate || undefined,
+              occasionDefauts: nv.occasionDefauts || undefined,
+              occasionProvenance: nv.occasionProvenance || undefined,
+              occasionKilometrage: nv.occasionKilometrage ? Number(nv.occasionKilometrage) : undefined,
+              occasionGarantieMois: nv.occasionGarantieMois ? Number(nv.occasionGarantieMois) : undefined,
+            }
+          : {}),
       },
     });
   };
@@ -380,7 +442,35 @@ export default function ArticleDetailPage() {
                   <Label className="text-xs text-muted-foreground">Catégorie</Label>
                   <SelectSearch value={identForm.categorieId || null} onChange={(v) => setIdentForm({ ...identForm, categorieId: v ? String(v) : "" })} options={optCategories} placeholder="—" searchPlaceholder="Rechercher…" size="sm" className="mt-1" />
                 </div>
-                <div><Label className="text-xs text-muted-foreground">Image (URL)</Label><Input value={identForm.imageUrl} onChange={(e) => setIdentForm({ ...identForm, imageUrl: e.target.value })} placeholder="https://…" className="mt-1" /></div>
+                <div className="sm:col-span-2">
+                  <Label className="text-xs text-muted-foreground">Photo de l&apos;article</Label>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <input
+                      ref={photoInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void televerserPhoto(f);
+                        e.target.value = "";
+                      }}
+                    />
+                    <Button type="button" size="sm" variant="outline" className="gap-1.5 text-xs" disabled={uploadingPhoto} onClick={() => photoInputRef.current?.click()}>
+                      {uploadingPhoto ? <Loader2 className="size-3 animate-spin" /> : <Upload size={13} />} Téléverser une photo
+                    </Button>
+                    {identForm.imageUrl && (
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={identForm.imageUrl} alt="" className="h-12 w-12 rounded-lg border border-border object-cover" />
+                        <Button type="button" size="sm" variant="ghost" className="text-xs text-destructive" onClick={() => setIdentForm({ ...identForm, imageUrl: "" })}>
+                          Retirer
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                  <Input value={identForm.imageUrl} onChange={(e) => setIdentForm({ ...identForm, imageUrl: e.target.value })} placeholder="ou coller une URL https://…" className="mt-2" />
+                </div>
                 <div className="sm:col-span-2"><Label className="text-xs text-muted-foreground">Description</Label><Textarea value={identForm.description} onChange={(e) => setIdentForm({ ...identForm, description: e.target.value })} rows={3} className="mt-1" /></div>
               </div>
               <label className="mt-3 flex items-center gap-1.5 text-xs">
@@ -752,21 +842,43 @@ export default function ArticleDetailPage() {
                 <Button size="sm" className="gap-1" disabled={addDoc.isPending || !doc.url} onClick={() => addDoc.mutate({ articleId: id, type: doc.type, titre: doc.titre || undefined, url: doc.url })}>
                   <Plus size={13} /> Ajouter
                 </Button>
+                <input
+                  ref={docInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,application/pdf,video/mp4"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void televerserDoc(f);
+                    e.target.value = "";
+                  }}
+                />
+                <Button size="sm" variant="outline" className="gap-1" disabled={uploadingDoc} onClick={() => docInputRef.current?.click()}>
+                  {uploadingDoc ? <Loader2 className="size-3 animate-spin" /> : <Upload size={13} />} Téléverser
+                </Button>
               </div>
             )}
             {documents.length === 0 ? (
               <p className="mt-3 text-sm text-muted-foreground">Aucun document.</p>
             ) : (
               <div className="mt-3 space-y-1.5">
-                {documents.map((d: any) => (
+                {documents.map((d: any) => {
+                  const estImage = d.type === "PHOTO" || /\.(jpe?g|png|webp)$/i.test(d.url);
+                  return (
                   <div key={d.id} className="flex items-center gap-2 rounded-lg bg-muted/30 px-3 py-1.5 text-sm">
-                    <BookOpen size={13} className="text-primary" />
+                    {estImage ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img src={d.url} alt="" className="h-9 w-9 shrink-0 rounded object-cover" />
+                    ) : (
+                      <BookOpen size={13} className="shrink-0 text-primary" />
+                    )}
                     <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">{d.type}</span>
                     <span className="min-w-0 flex-1 truncate">{d.titre ?? d.url}</span>
                     <a href={d.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Ouvrir</a>
                     {canModifier && <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => removeDoc.mutate({ id: d.id })}><Trash2 size={12} /></button>}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -807,6 +919,21 @@ export default function ArticleDetailPage() {
                   {["N_A", "AVANT", "ARRIERE"].map((t) => <option key={t} value={t}>{t === "N_A" ? "— non applicable —" : t}</option>)}
                 </select>
               </div>
+              {/* Occasion : ces renseignements n'apparaissent que pour une pièce
+                  qui n'est pas neuve. Un champ vide reste NULL en base — inconnu,
+                  jamais zéro. Aucune valeur n'est préremplie. */}
+              {!estOutil && nv.etatProduit && nv.etatProduit !== "NEUF" && (
+                <>
+                  <div className="sm:col-span-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                    Pièce d&apos;occasion : renseignez ce qui est <strong>constaté ou connu</strong>. Laissez vide ce qui ne l&apos;est pas — une case vide vaut « non connu », pas « aucun défaut ».
+                  </div>
+                  <div><Label className="text-xs text-muted-foreground">État constaté</Label><Input value={nv.occasionEtatConstate} onChange={(e) => setNv({ ...nv, occasionEtatConstate: e.target.value })} placeholder="Bon, traces d'usure, fissuré…" className="mt-1" /></div>
+                  <div><Label className="text-xs text-muted-foreground">Garantie (mois)</Label><Input type="number" min={0} value={nv.occasionGarantieMois} onChange={(e) => setNv({ ...nv, occasionGarantieMois: e.target.value })} placeholder="Vide si aucune garantie définie" className="mt-1" /></div>
+                  <div><Label className="text-xs text-muted-foreground">Provenance / véhicule donneur</Label><Input value={nv.occasionProvenance} onChange={(e) => setNv({ ...nv, occasionProvenance: e.target.value })} placeholder="Véhicule repris, lot, don…" className="mt-1" /></div>
+                  <div><Label className="text-xs text-muted-foreground">Kilométrage du donneur</Label><Input type="number" min={0} value={nv.occasionKilometrage} onChange={(e) => setNv({ ...nv, occasionKilometrage: e.target.value })} placeholder="Vide si inconnu" className="mt-1" /></div>
+                  <div className="sm:col-span-2"><Label className="text-xs text-muted-foreground">Défauts connus</Label><Textarea value={nv.occasionDefauts} onChange={(e) => setNv({ ...nv, occasionDefauts: e.target.value })} rows={2} placeholder="Décrivez seulement ce qui est visible ou mesuré." className="mt-1" /></div>
+                </>
+              )}
               <div><Label className="text-xs text-muted-foreground">Prix achat (F)</Label><Input type="number" min={0} value={nv.prixAchat} onChange={(e) => setNv({ ...nv, prixAchat: e.target.value })} className="mt-1" /></div>
               <div><Label className="text-xs text-muted-foreground">Prix vente (F)</Label><Input type="number" min={0} value={nv.prixVente} onChange={(e) => setNv({ ...nv, prixVente: e.target.value })} className="mt-1" /></div>
               <div><Label className="text-xs text-muted-foreground">Prix pro (F)</Label><Input type="number" min={0} value={nv.prixPro} onChange={(e) => setNv({ ...nv, prixPro: e.target.value })} className="mt-1" /></div>

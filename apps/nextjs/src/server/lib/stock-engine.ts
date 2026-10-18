@@ -1,4 +1,4 @@
-import { db, stocks, stocksUnites, mouvementsStock, produitUnites, unitesMesureProduits, produits } from "@atelierone/db";
+import { db, stocks, stocksUnites, mouvementsStock, produitUnites, unitesMesureProduits, unitesMesure, produits } from "@atelierone/db";
 import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 
@@ -548,18 +548,52 @@ export async function getFacteurVersBase(
       eq(produitUnites.uniteId, uniteId),
     ))
     .limit(1);
-  if (!pu || !pu.facteurVersBase) {
-    const [ump] = await tx
-      .select({ facteur: unitesMesureProduits.facteurConversion })
-      .from(unitesMesureProduits)
-      .where(and(
-        eq(unitesMesureProduits.produitId, produitId),
-        eq(unitesMesureProduits.uniteId, uniteId),
-      ))
-      .limit(1);
-    return ump ? Number(ump.facteur) : 1;
-  }
-  return Number(pu.facteurVersBase);
+  if (pu?.facteurVersBase) return Number(pu.facteurVersBase);
+
+  const [ump] = await tx
+    .select({ facteur: unitesMesureProduits.facteurConversion })
+    .from(unitesMesureProduits)
+    .where(and(
+      eq(unitesMesureProduits.produitId, produitId),
+      eq(unitesMesureProduits.uniteId, uniteId),
+    ))
+    .limit(1);
+  if (ump?.facteur) return Number(ump.facteur);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // AUCUN FACTEUR CONNU — ET C'EST ICI QUE LE STOCK SE FAUSSAIT EN SILENCE.
+  //
+  // Ce chemin rendait `1`. Un appelant qui demandait le facteur du « bidon »
+  // sur un produit dont l'unité de base est le litre recevait donc 1 : sortir
+  // un bidon ne déduisait qu'un litre. Aucune erreur, aucune trace — juste un
+  // stock faux, et personne pour le voir.
+  //
+  // Le cahier des charges est explicite : « si une conversion n'est pas connue,
+  // empêche toute conversion automatique non justifiée ». La seule conversion
+  // qui reste légitime sans facteur est celle où l'unité demandée EST l'unité
+  // de base (facteur 1 par définition), ou celle d'un produit sans unité de
+  // base déclarée — dont les quantités sont, par convention documentée,
+  // exprimées dans leur unité de saisie.
+  //
+  // Tout le reste est refusé, avec le nom de l'unité pour que l'opérateur
+  // sache quoi corriger.
+  // ─────────────────────────────────────────────────────────────────────────
+  const base = await uniteBaseId(tx, produitId);
+  if (!base || base === uniteId) return 1;
+
+  const [unite] = await tx
+    .select({ libelle: unitesMesure.libelle })
+    .from(unitesMesure)
+    .where(eq(unitesMesure.id, uniteId))
+    .limit(1);
+
+  throw new TRPCError({
+    code: "BAD_REQUEST",
+    message:
+      `Conversion inconnue : « ${unite?.libelle ?? uniteId} » n'a pas de facteur ` +
+      `vers l'unité de base de ce produit. Renseignez le facteur de conversion ` +
+      `de cette unité — aucune conversion implicite n'est autorisée.`,
+  });
 }
 
 /**
