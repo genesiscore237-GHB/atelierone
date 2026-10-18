@@ -99,13 +99,69 @@
       "when": 1792700000002,
       "tag": "0013_statuts_immobilisation_nommes",
       "breakpoints": true
-    }
-    ,
+    },
     {
       "idx": 14,
       "version": "7",
-      "when": 1790000000000,
-      "tag": "0014_relances_tracables"
+      "when": 1792800000001,
+      "tag": "0014_relances_tracables",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792800000002,
+      "tag": "0015_parametres_stock",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792800000003,
+      "tag": "0016_stock_agregat",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792800000004,
+      "tag": "0017_stock_quarantaine",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792800000005,
+      "tag": "0018_lots_contenants_ouverture",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792800000006,
+      "tag": "0019_lots_statut_vocabulaire",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792800000007,
+      "tag": "0020_inventaires_localisation",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792800000008,
+      "tag": "0021_deconditionnement_produit_cible",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792800000009,
+      "tag": "0022_outils_exemplaires",
+      "breakpoints": true
     }
   ]
 }

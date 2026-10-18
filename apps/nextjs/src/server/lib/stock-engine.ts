@@ -1,5 +1,5 @@
 import { db, stocks, stocksUnites, mouvementsStock, produitUnites, unitesMesureProduits, produits } from "@atelierone/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 
 type Tx = Parameters<Parameters<(typeof db)["transaction"]>[0]>[0];
@@ -65,6 +65,21 @@ type MouvementParams = {
   uniteId?: string;
   emplacementId?: number;
   lotId?: number;
+  /**
+   * Lot à PORTER sur le mouvement, sans servir à choisir la ligne de stock.
+   *
+   * `lotId` fait les deux choses : il filtre la ligne sur laquelle le stock
+   * va bouger, ET il est recopié dans le mouvement. Or `stocks.lot_id` est
+   * systématiquement NULL en pratique — un produit suivi par lot a sa ligne
+   * globale sans lot, et le détail vit dans `stocks_lots`. Filtrer sur
+   * `lotId` ne trouve donc RIEN, et l'écriture est refusée à tort.
+   *
+   * D'où ce champ : on trace le lot sans exiger qu'il pilote la ligne de
+   * stock. C'est ce qu'il faut pour un déconditionnement — le mouvement dit
+   * « ces 208 litres sortent du lot L1 », mais le stock à débiter est la ligne
+   * globale du produit.
+   */
+  lotPourTracabilite?: number;
   orId?: number; // lien OR (specs V2 : Sortie_OR, traÃƒÂ§abilitÃƒÂ©)
   vehiculeId?: number; // lien vÃƒÂ©hicule (specs V2 : traÃƒÂ§abilitÃƒÂ©)
   coutUnitaireBase?: number | string;
@@ -83,6 +98,26 @@ type MouvementParams = {
   synchroniserStocksUnites?: boolean;
 };
 
+/**
+ * Ligne de stock sur laquelle un mouvement doit porter.
+ *
+ * AVANT : `const [row] = await tx.select(…).where(where).for("update")`
+ * Pas de `.limit(1)` — la requête renvoyait TOUTES les lignes du produit,
+ * verrouillées, et `[row]` prenait la première dans un ordre que
+ * PostgreSQL ne garantit pas. Une pièce rangée dans trois rayons pouvait
+ * donc se voir refuser une sortie, ou en autoriser une, selon le plan
+ * d'exécution du jour. C'était la garde de TOUTES les sorties et de TOUTES
+ * les réservations du module.
+ *
+ * MAINTENANT : l'ordre est explicite et déterministe.
+ *
+ *  · emplacement et lot fournis → une seule ligne, aucune ambiguïté ;
+ *  · emplacement non fourni → la ligne qui porte le plus de stock, puis
+ *    la plus petite id. On sort d'où il y a du stock, et toujours de la
+ *    même ligne. Un mouvement sans emplacement reste un raccourci
+ *    volontaire : les flux qui doivent toucher une ligne précise
+ *    (inventaire, transfert) passent l'emplacement.
+ */
 async function verifierStockDisponible(
   tx: Tx,
   produitId: number,
@@ -98,16 +133,37 @@ async function verifierStockDisponible(
     lotId ? eq(stocks.lotId, lotId) : undefined,
   );
   const [row] = await tx
-    .select({ id: stocks.id, quantite: stocks.quantite, cmup: stocks.coutUnitaireMoyen, reserve: stocks.quantiteReservee })
+    .select({
+      id: stocks.id,
+      quantite: stocks.quantite,
+      cmup: stocks.coutUnitaireMoyen,
+      reserve: stocks.quantiteReservee,
+      bloque: stocks.quantiteBloquee,
+    })
     .from(stocks)
     .where(where)
+    .orderBy(desc(sql`${stocks.quantite}`), asc(stocks.id))
+    .limit(1)
     .for("update");
   return row;
 }
 
-/** Stock disponible = stock actuel Ã¢Ë†â€™ stock rÃƒÂ©servÃƒÂ© (specs V2 Ã‚Â§05 rÃƒÂ¨gle 4) */
-export function stockDisponible(stockActuel: number, stockReserve: number | null): number {
-  return stockActuel - (stockReserve ?? 0);
+/**
+ * Stock DISPONIBLE — règle unique, appliquée partout (cadrage §7.7).
+ *
+ *   disponible = quantité − réservée − bloquée
+ *
+ * Le terme « bloquée » manquait. La colonne `stocks.quantite_bloquee`
+ * existe depuis le schéma initial et n'a jamais été lue par ce calcul :
+ * une pièce mise en quarantaine — contrôle qualité, litige, consignation —
+ * restait annoncée comme disponible alors qu'elle ne pouvait pas sortir.
+ */
+export function stockDisponible(
+  stockActuel: number,
+  stockReserve: number | null,
+  stockBloque: number | null = 0,
+): number {
+  return stockActuel - (stockReserve ?? 0) - (stockBloque ?? 0);
 }
 
 async function getCoutUnitaireMoyen(tx: Tx, produitId: number, agenceId: number): Promise<string | null> {
@@ -139,14 +195,24 @@ export async function enregistrerMouvement(tx: Tx, params: MouvementParams) {
   );
   const stockAvant = stockRow ? Number(stockRow.quantite) : 0;
   const reservee = stockRow ? Number(stockRow.reserve ?? 0) : 0;
+  const bloquee = stockRow ? Number(stockRow.bloque ?? 0) : 0;
 
-  // Specs V2 Ã‚Â§05 rÃƒÂ¨gle 4 : une sortie ne peut pas dÃƒÂ©passer le stock DISPONIBLE (actuel Ã¢Ë†â€™ rÃƒÂ©servÃƒÂ©)
+  // Cadrage §7.7 : une sortie ne peut pas dépasser le DISPONIBLE, c'est-à-dire
+  // la quantité réelle moins ce qui est déjà engagé ailleurs (réservation pour
+  // un autre OR) et ce qui est retenu (quarantaine, litige).
+  //
+  // La quarantinecounts désormais : `quantite_bloquee` existe depuis le
+  // schéma initial et n'était pas lu. Une pièce bloquée était donc proposée
+  // à la vente alors qu'elle ne pouvait pas sortir.
   if (params.sens === "S") {
-    const disponible = stockDisponible(stockAvant, reservee);
+    const disponible = stockDisponible(stockAvant, reservee, bloquee);
     if (disponible < qte) {
       throw new TRPCError({
         code: "BAD_REQUEST",
-        message: `Stock disponible insuffisant: ${disponible} disponible (${stockAvant} en stock, ${reservee} rÃƒÂ©servÃƒÂ©) < ${qte} (produit ${params.produitId})`,
+        message:
+          `Stock disponible insuffisant: ${disponible} disponible ` +
+          `(${stockAvant} en stock, ${reservee} réservé, ${bloquee} bloqué) ` +
+          `< ${qte} (produit ${params.produitId})`,
       });
     }
   }
@@ -179,7 +245,7 @@ export async function enregistrerMouvement(tx: Tx, params: MouvementParams) {
       quantite: String(qte),
       uniteId: params.uniteId || null,
       emplacementId: params.emplacementId || null,
-      lotId: params.lotId || null,
+      lotId: params.lotId ?? params.lotPourTracabilite ?? null,
       orId: params.orId || null,
       vehiculeId: params.vehiculeId || null,
       coutUnitaireBase: params.coutUnitaireBase ? String(params.coutUnitaireBase) : null,
@@ -466,8 +532,14 @@ export async function operationDouble(
 export async function getFacteurVersBase(
   tx: Tx,
   produitId: number,
-  uniteId: string,
+  uniteId?: string | null,
 ): Promise<number> {
+  // Aucun produit n'a d'unité de base configurée (210 sur 319 au relevé) :
+  // ses quantités sont déjà exprimées dans l'unité de base, donc le facteur
+  // de conversion vaut 1. On le dit explicitement plutôt que de laisser
+  // PostgreSQL rejeter une comparaison sur « NULL ».
+  if (!uniteId) return 1;
+
   const [pu] = await tx
     .select({ facteurVersBase: produitUnites.facteurVersBase })
     .from(produitUnites)
@@ -550,7 +622,94 @@ export async function sortirPourOR(
     effectuePar: params.effectuePar,
     coutUnitaireBase: params.coutUnitaireBase,
   });
+
+  // La sortie CONSOMME la réservation : sans cette étape, une pièce
+  // réservée puis sortie gardait sa quantité réservée positive pour
+  // toujours. Voir `consommerReservation`.
+  await consommerReservation(tx, {
+    produitId: params.produitId,
+    agenceId: params.agenceId,
+    quantiteBase: qteBase,
+    orId: params.orId ?? null,
+    vehiculeId: params.vehiculeId ?? null,
+    numeroOR: params.numeroOR ?? null,
+    emplacementId: params.emplacementId ?? null,
+    effectuePar: params.effectuePar ?? null,
+  });
+
   return res;
+}
+
+/**
+ * CONSOMMATION D'UNE RÉSERVATION au moment où la pièce sort.
+ *
+ * AVANT : `sortirPourOR` décrémentait `quantite` et laissait
+ * `quantite_reservee` intacte. Une pièce réservée puis sortie conservait
+ * donc une quantité réservée positive POUR TOUS — seul `libererStock`
+ * pouvait la corriger, et rien ne l'appelait automatiquement à la sortie.
+ * Le stock disponible baissait à chaque sortie, indéfiniment.
+ *
+ * C'est le défaut le plus coûteux du module parce qu'il est invisible :
+ * la quantité affichée reste juste, seule la DISPONIBILITÉ se dégrade, et
+ * le magasinier conclut qu'il n'a plus de pièces.
+ *
+ * Le mouvement tracé est un LIBERATION_RESERVATION, avec `stock_avant` et
+ * `stock_apres` identiques : un engagement qui se libère n'est pas une
+ * quantité qui rentre. C'est la convention déjà utilisée par les autres
+ * mouvements de réservation, et elle évite qu'un rapport de flux
+ * interpretent cette ligne comme une entrée de marchandise.
+ */
+async function consommerReservation(
+  tx: Tx,
+  params: {
+    produitId: number;
+    agenceId: number;
+    quantiteBase: number;
+    orId?: number | null;
+    vehiculeId?: number | null;
+    numeroOR?: string | null;
+    emplacementId?: number | null;
+    motif?: string;
+    effectuePar?: number | null;
+  },
+) {
+  // Même ligne que celle ciblée par la sortie : même règle de sélection.
+  const stockRow = await verifierStockDisponible(
+    tx, params.produitId, params.agenceId, params.quantiteBase,
+    params.emplacementId ?? undefined,
+  );
+  if (!stockRow) return { libere: 0, reserveeRestante: 0 };
+
+  const reservee = Number(stockRow.reserve ?? 0);
+  if (reservee <= 0) return { libere: 0, reserveeRestante: reservee };
+
+  // Jamais plus que la réservation réellement ouverte.
+  const libere = Math.min(reservee, params.quantiteBase);
+  const reste = Math.max(0, reservee - libere);
+
+  await tx.update(stocks)
+    .set({ quantiteReservee: String(reste) } as any)
+    .where(eq(stocks.id, stockRow.id)) as any;
+
+  await tx.insert(mouvementsStock).values({
+    produitId: params.produitId,
+    agenceId: params.agenceId,
+    type: TYPES_MOUVEMENT.LIBERATION_RESERVATION as any,
+    sens: "E",
+    quantite: String(libere),
+    emplacementId: params.emplacementId || null,
+    orId: params.orId ?? null,
+    vehiculeId: params.vehiculeId ?? null,
+    stockAvant: String(stockRow.quantite),
+    stockApres: String(stockRow.quantite),
+    documentLie: params.numeroOR ? `OR-${params.numeroOR}` : null,
+    motif: params.motif ?? (params.numeroOR
+      ? `Reservation consommee par la sortie OR-${params.numeroOR}`
+      : "Reservation consommee par la sortie"),
+    effectuePar: params.effectuePar ?? null,
+  } as any);
+
+  return { libere, reserveeRestante: reste };
 }
 
 /**
@@ -594,7 +753,7 @@ export async function retourAtelier(
   return res;
 }
 
-async function uniteBaseId(tx: Tx, produitId: number): Promise<string> {
+async function uniteBaseId(tx: Tx, produitId: number): Promise<string | null> {
   const [pu] = await tx
     .select({ uniteId: produitUnites.uniteId })
     .from(produitUnites)
@@ -606,7 +765,16 @@ async function uniteBaseId(tx: Tx, produitId: number): Promise<string> {
     .from(produits)
     .where(eq(produits.id, produitId))
     .limit(1);
-  return p?.uniteBaseId ?? "";
+  // NULL, et surtout pas « » : cette valeur partait ensuite dans une
+  // comparaison sur une colonne `uuid`, et PostgreSQL répondait
+  // « syntaxe en entrée invalide pour le type uuid : "" ».
+  //
+  // Le relevé compte 210 produits sur 319 sans `unite_base_id` : toutes
+  // leurs sorties, réservations et libérations échouaient. Le défaut n'était
+  // pas visible parce qu'il concernait la majorité du catalogue et que les
+  // quelques produits pourvus d'une unité fonctionnaient — ce qui donne
+  // l'impression que le module marche, à moitié.
+  return p?.uniteBaseId ?? null;
 }
 
 /**
@@ -635,7 +803,8 @@ export async function reserverStock(
   const stockRow = await verifierStockDisponible(tx, params.produitId, params.agenceId, qteBase, params.emplacementId);
   const stockActuel = stockRow ? Number(stockRow.quantite) : 0;
   const reservee = stockRow ? Number(stockRow.reserve ?? 0) : 0;
-  const disponible = stockDisponible(stockActuel, reservee);
+  const bloquee = stockRow ? Number(stockRow.bloque ?? 0) : 0;
+  const disponible = stockDisponible(stockActuel, reservee, bloquee);
 
   if (disponible < qteBase) {
     throw new TRPCError({
@@ -706,17 +875,22 @@ export async function libererStock(
   const stockRow = await verifierStockDisponible(tx, params.produitId, params.agenceId, qteBase, params.emplacementId);
   const stockActuel = stockRow ? Number(stockRow.quantite) : 0;
   const reservee = stockRow ? Number(stockRow.reserve ?? 0) : 0;
+  const bloquee = stockRow ? Number(stockRow.bloque ?? 0) : 0;
+  const reserveeApres = reservee - qteBase;
 
+  // Garde-fau : on ne libère jamais plus que ce qui est réservé. Sans ce
+  // contrôle, une double libération rendrait la quantité réservée négative
+  // et le disponible supérieur au stock réel.
   if (reservee < qteBase) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: `QuantitÃ© rÃ©servÃ©e insuffisante pour libÃ©ration: ${reservee} rÃ©servÃ© < ${qteBase}`,
+      message: `Quantite reservee insuffisante pour liberation: ${reservee} reserve < ${qteBase}`,
     });
   }
 
   if (stockRow) {
     await tx.update(stocks)
-      .set({ quantiteReservee: String(reservee - qteBase) } as any)
+      .set({ quantiteReservee: String(reserveeApres) } as any)
       .where(eq(stocks.id, stockRow.id)) as any;
   }
 
@@ -737,5 +911,5 @@ export async function libererStock(
     effectuePar: params.effectuePar || null,
   } as any);
 
-  return { stockActuel, reservee: reservee - qteBase, disponible: stockDisponible(stockActuel, reservee - qteBase) };
+  return { stockActuel, reservee: reserveeApres, disponible: stockDisponible(stockActuel, reserveeApres, bloquee) };
 }

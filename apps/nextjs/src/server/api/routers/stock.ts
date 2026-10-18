@@ -1128,6 +1128,222 @@ export const stockRouter = createTRPCRouter({
       }) as any;
     }),
 
+  /**
+   * TRANSFERT PAR LOT — déplacer plusieurs pièces d'un emplacement à un autre.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * POURQUOI UN SECOND POINT D'ENTRÉE
+   *
+   * `transferer` (ci-dessus) fonctionne ligne par ligne. L'écran de transfert
+   * appelait donc N fois en PARALLÈLE : si la troisième ligne échouait, les
+   * deux premières étaient déjà appliquées, dans des transactions séparées. Le
+   * magasinier voyait « transfert effectué » et le stock ne correspondait
+   * plus. Un déplacement de rayon est UNE opération : il réussit ou il
+   * échoue en entier.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * LA QUANTITÉ EST CONVERTIE EN UNITÉ DE BASE
+   *
+   * `transferer` écrit dans `stocks` la quantité BRUTE — 1 pour un fût, alors
+   * qu'un fût de 208 L vaut 208 litres — pendant que `stocks_unites` reçoit
+   * la quantité convertie. Les deux tables divergent à chaque transfert d'un
+   * article à conditionnement non unitaire. C'est le même défaut que celui
+   * rencontré sur le déconditionnement, et la même correction : on convertit
+   * une fois, et le moteur écrit tout.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `stocks_unites` N'EST PAS TOUCHÉ — ET C'EST DÉLIBÉRÉ
+   *
+   * `stocks_unites` est global : il n'a pas de dimension `emplacement_id`. Il
+   * décrit donc « combien ce produit existe dans cet atelier », pas « combien
+   * dans ce rayon ». Déplacer un fût du bureau vers le bac ne change pas le
+   * nombre de fûts du garage.
+   *
+   * L'ancien `transferer` décrémentait `stocks_unites` à la sortie puis
+   * l'incrémentait à l'entrée : le solde revenait à sa valeur, mais le
+   * décrément exigeait une ligne existante. Conséquence mesurée : transférer
+   * un produit qui n'avait jamais eu de ligne `stocks_unites` — soit 112 des
+   * 135 lignes du stock réel — était IMPOSSIBLE, avec un message trompeur
+   * (« stock insuffisant ») alors que la pièce était bien là. Ici, la
+   * relocation ne touche qu'à `stocks` : la quantité totale est inchangée,
+   * seule sa répartition change.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `quantite_rayon` EST ENTRETENUE
+   *
+   * La colonne est incrémentée à la mise en rayon et n'était jamais
+   * décrémentée : après un transfert sortant, le rayon source continuait
+   * d'annoncer son contenu. Ici la source passe à zéro et la cible reçoit ce
+   * qu'elle peut accueillir.
+   */
+  transfererLot: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      emplacementSourceId: z.number().int(),
+      emplacementCibleId: z.number().int(),
+      motif: z.string().max(255).optional(),
+      lignes: z.array(z.object({
+        produitId: z.number().int(),
+        uniteId: z.string().uuid().nullish(),
+        quantite: z.number().positive(),
+      })).min(1).max(100),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.emplacementSourceId === input.emplacementCibleId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La source et la destination sont le même emplacement.",
+        });
+      }
+
+      const [source] = await db
+        .select({ id: emplacements.id, type: emplacements.type, code: emplacements.code })
+        .from(emplacements)
+        .where(and(eq(emplacements.id, input.emplacementSourceId), eq(emplacements.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      const [cible] = await db
+        .select({ id: emplacements.id, type: emplacements.type, code: emplacements.code })
+        .from(emplacements)
+        .where(and(eq(emplacements.id, input.emplacementCibleId), eq(emplacements.agenceId, ctx.user.agenceId)))
+        .limit(1);
+
+      if (!source || !cible) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Emplacement introuvable." });
+      }
+
+      return db.transaction(async (tx) => {
+        // Un groupe par transfert : les mouvements d'une ligne sont
+        // reconnaissables comme un seul geste.
+        const groupeOperationId = crypto.randomUUID();
+
+        // Un transfert sans motif libre reste traçable par ses deux
+        // emplacements : le motif n'est jamais vide, seulement facultatif.
+        const motifLibre = input.motif?.trim();
+        const motifSuffixe = motifLibre ? ` — ${motifLibre}` : "";
+
+        for (const ligne of input.lignes) {
+          const facteur = await getFacteurVersBase(tx as any, ligne.produitId, ligne.uniteId);
+          const qteBase = ligne.quantite * facteur;
+
+          // Les deux motifs sont calculés une fois : un transfert sans motif
+          // libre reste traçable (« Sortie de RAYON-A vers BUREAU »), jamais
+          // vide. Et ils partagent le même suffixe, pour qu'une recherche par
+          // motif retrouve les deux moitiés du geste.
+          const sortie = `Sortie de ${source.code} vers ${cible.code}${motifSuffixe}`;
+          const entree = `Entrée dans ${cible.code} depuis ${source.code}${motifSuffixe}`;
+
+          // 1. SORTIE de la source. `emplacementId` cible la ligne EXACTE —
+          //    `enregistrerMouvement` filtre dessus, donc pas de ligne
+          //    arbitraire.
+          await enregistrerMouvement(tx as any, {
+            type: TYPES_MOUVEMENT.TRANSFERT_SORTIE as any,
+            sens: "S",
+            produitId: ligne.produitId,
+            agenceId: ctx.user.agenceId,
+            quantite: qteBase,
+            uniteId: ligne.uniteId ?? undefined,
+            emplacementId: input.emplacementSourceId,
+            groupeOperationId,
+            reference: groupeOperationId,
+            referenceType: "TRANSFERT",
+            motif: sortie,
+            effectuePar: Number(ctx.user.id),
+          });
+
+          // 2. ENTRÉE dans la destination.
+          await enregistrerMouvement(tx as any, {
+            type: TYPES_MOUVEMENT.TRANSFERT_ENTREE as any,
+            sens: "E",
+            produitId: ligne.produitId,
+            agenceId: ctx.user.agenceId,
+            quantite: qteBase,
+            uniteId: ligne.uniteId ?? undefined,
+            emplacementId: input.emplacementCibleId,
+            groupeOperationId,
+            reference: groupeOperationId,
+            referenceType: "TRANSFERT",
+            motif: entree,
+            effectuePar: Number(ctx.user.id),
+          });
+        }
+
+        // ── `quantite_rayon` ──────────────────────────────────────────────
+        // Ce qui sort d'un rayon n'y est plus. Ce qui y entre y est.
+        // Un BAC ou un BUREAU n'est pas un rayon : la quantité y reste, mais
+        // hors rayon — ce qui est exactement ce que la colonne compte.
+        const idsPropres = [...new Set(input.lignes.map((l) => l.produitId))];
+        const produitsRacine = idsPropres.map((id) => sql`${stocks.produitId} = ${id}`).reduce(
+          (a, b) => sql`(${a} OR ${b})`,
+        );
+
+        await tx
+          .update(stocks)
+          .set({ quantiteRayon: "0" } as any)
+          .where(
+            and(
+              eq(stocks.agenceId, ctx.user.agenceId),
+              eq(stocks.emplacementId, input.emplacementSourceId),
+              produitsRacine,
+            ),
+          );
+
+        if (cible.type === "RAYON") {
+          for (const ligne of input.lignes) {
+            const facteur = await getFacteurVersBase(tx as any, ligne.produitId, ligne.uniteId);
+            const qteBase = ligne.quantite * facteur;
+            const [ligneCible] = (await tx
+              .select({ id: stocks.id, quantiteRayon: stocks.quantiteRayon })
+              .from(stocks)
+              .where(
+                and(
+                  eq(stocks.produitId, ligne.produitId),
+                  eq(stocks.agenceId, ctx.user.agenceId),
+                  eq(stocks.emplacementId, input.emplacementCibleId),
+                ),
+              )
+              .limit(1)) as unknown as { id: number; quantiteRayon: string }[];
+            if (ligneCible) {
+              await tx
+                .update(stocks)
+                .set({ quantiteRayon: String(Number(ligneCible.quantiteRayon ?? 0) + qteBase) } as any)
+                .where(eq(stocks.id, ligneCible.id));
+            }
+          }
+        }
+
+        return { groupeOperationId, lignes: input.lignes.length };
+      }) as any;
+    }),
+
+  /** Le contenu d'un emplacement, pour DIMENSIONNER un transfert avant de le faire. */
+  stockParEmplacement: stockProcedure
+    .input(z.object({ emplacementId: z.number().int() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await db
+        .select({
+          produitId: stocks.produitId,
+          titre: produits.titre,
+          codeBarre: produits.codeBarre,
+          quantite: stocks.quantite,
+          quantiteReservee: stocks.quantiteReservee,
+          lotId: stocks.lotId,
+        })
+        .from(stocks)
+        .innerJoin(produits, eq(stocks.produitId, produits.id))
+        .where(
+          and(
+            eq(stocks.agenceId, ctx.user.agenceId),
+            eq(stocks.emplacementId, input.emplacementId),
+          ),
+        )
+        .orderBy(produits.titre);
+      return rows.map((r) => ({
+        ...r,
+        quantite: Number(r.quantite),
+        quantiteReservee: Number(r.quantiteReservee),
+        disponible: Number(r.quantite) - Number(r.quantiteReservee),
+      }));
+    }),
+
   getPrevisionsAchat: requirePermissionProcedure("stock.consulter")
     .input(z.object({
       joursHistorique: z.number().default(30),
@@ -1379,17 +1595,86 @@ export const stockRouter = createTRPCRouter({
       if (existing) {
         throw new TRPCError({ code: "BAD_REQUEST", message: `L'emplacement Â« ${input.code} Â» existe dÃ©jÃ .` });
       }
+      // La profondeur est celle du PARENT, plus un — pas « 1 dès qu'il y a
+      // un parent ». L'ancien code plate les niveaux : « Magasin › Allee A ›
+      // Rayon 3 › Etage 2 » et « Magasin › Allee A » sortaient tous deux à 1,
+      // donc une arborescence à trois niveaux était impossible à représenter.
+      //
+      // Un garage avec cinq magasins ne rangera pas ses pièces en deux
+      // étages : la profondeur sert à trier l'affichage, et une profondeur
+      // fausse produit un arbre faux — c'est-à-dire une liste de pièces
+      // affichée dans le mauvais rayon.
+      let profondeur = 0;
+      if (input.parentId) {
+        const [parent] = await db
+          .select({ profondeur: emplacements.profondeur, agenceId: emplacements.agenceId })
+          .from(emplacements)
+          .where(eq(emplacements.id, input.parentId))
+          .limit(1);
+        if (!parent) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Emplacement parent introuvable (#${input.parentId}).`,
+          });
+        }
+        if (parent.agenceId !== ctx.user.agenceId) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Un emplacement ne peut pas être rangé sous l'emplacement d'une autre agence.",
+          });
+        }
+        profondeur = parent.profondeur + 1;
+      }
+
       const [row] = await db.insert(emplacements).values({
         agenceId: ctx.user.agenceId,
         code: input.code,
         libelle: input.libelle ?? null,
         type: input.type,
         parentId: input.parentId ?? null,
-        profondeur: input.parentId ? 1 : 0,
+        profondeur,
         categorieId: input.categorieId ?? null,
         isActive: input.isActive,
       } as any).returning();
       return row;
+    }),
+
+  /**
+   * EMPLACEMENTS, À PLAT — l'arbre se reconstruit côté client.
+   *
+   * Une version antérieure renvoyait un type RÉCURSIF (`Noeud` contenant
+   * `enfants: Noeud[]`). Elle fonctionnait… et cassait 29 typecheck dans
+   * tout le projet, à des fichiers qui n'ont rien à voir avec le stock :
+   * cash, finance, catalogue, approvisionnement. Un type récursif dans la
+   * valeur de retour d'un router fait exploser l'inférence de tRPC, et
+   * l'`AppRouter` dégénère — les hooks `useMutation` cessent d'exister sur
+   * le proxy client.
+   *
+   * On renvoie donc une liste triée par profondeur puis par code, avec le
+   * `parentId` et la `profondeur` déjà calculés par la base. Le client n'a
+   * qu'à empiler une liste plate, ce qu'il fait déjà pour afficher.
+   */
+  arborescenceEmplacements: stockProcedure
+    .input(z.object({ racine: z.boolean().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const rows = await db
+        .select({
+          id: emplacements.id,
+          parentId: emplacements.parentId,
+          profondeur: emplacements.profondeur,
+          code: emplacements.code,
+          libelle: emplacements.libelle,
+          type: emplacements.type,
+          categorieId: emplacements.categorieId,
+          isActive: emplacements.isActive,
+        })
+        .from(emplacements)
+        .where(eq(emplacements.agenceId, ctx.user.agenceId))
+        .orderBy(asc(emplacements.profondeur), asc(emplacements.code));
+
+      if (!input?.racine) return rows;
+
+      return rows.filter((r) => r.parentId == null || !rows.some((p) => p.id === r.parentId));
     }),
 
   updateEmplacement: requirePermissionProcedure("stock.modifier")

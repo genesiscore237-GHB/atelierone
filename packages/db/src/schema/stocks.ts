@@ -15,6 +15,12 @@ export const stocks = pgTable("stocks", {
   quantiteReservee: numeric("quantite_reservee", { precision: 12, scale: 2 }).default("0"),
   // V3 : quantité bloquée (contrôle qualité, litige, consignation…) — jamais disponible
   quantiteBloquee: numeric("quantite_bloquee", { precision: 12, scale: 2 }).default("0"),
+  // Migration 0016 : une quantité bloquée sans motif est une anomalie, pas un état.
+  // Elle n'est pas dans le disponible (cf. vue `stock_agregat`) mais rien ne
+  // pouvait la lever : on ne sait pas ce qu'il faut lever.
+  motifBlocage: varchar("motif_blocage", { length: 200 }),
+  dateBlocage: timestamp("date_blocage"),
+  bloquePar: integer("bloque_par"),
   quantiteRayon: numeric("quantite_rayon", { precision: 12, scale: 2 }).default("0"),
   // Seuil d'alerte local à cet emplacement (ex. bureau : huile < 3) — NULL = seuil global du produit
   seuilAlerteLocal: integer("seuil_alerte_local"),

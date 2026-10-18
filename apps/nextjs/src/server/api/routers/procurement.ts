@@ -3,7 +3,7 @@ import { createTRPCRouter, protectedProcedure, stockProcedure, requirePermission
 import { db, achats, achatsLignes, fournisseurs, stocks, stocksUnites, produits, bonsReception, lignesBonReception, mouvementsStock, produitsFournisseurs, dettesFournisseurs, remboursementsFournisseurs, auditLogs, facturesFournisseur, caisses, produitUnites, prixHistorique, unitesMesure, utilisateurs, tarifs, ecartsReception, ordresReparation, atelierNotifications } from "@atelierone/db";
 import { eq, and, desc, sql, lt, isNull, lte, gte, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { getFacteurVersBase } from "~/server/lib/stock-engine";
+import { getFacteurVersBase, enregistrerMouvement, TYPES_MOUVEMENT } from "~/server/lib/stock-engine";
 import { CaisseService } from "~/server/lib/caisse-service";
 import { PertesService } from "~/server/lib/pertes-service";
 import { creerLotEtStock, sortirLotSpecifique, trouverLotParReference } from "~/server/lib/lot-service";
@@ -1441,6 +1441,15 @@ export const procurementRouter = createTRPCRouter({
         quantiteRecue: z.number().min(0),
         prixUnitaire: z.string(),
         uniteId: z.string().optional(),
+        /**
+         * Où la pièce est rangée en réception.
+         *
+         * C'est ce qui manquait pour que « les pièces sont éparpillées dans 5
+         * magasins et dans les bureaux » soit saisissable : sans lui, toute
+         * pièce reçue atterrissait sur la ligne globale, et le rangement se
+         * faisait ensuite — en transfert, donc en mouvement inutile.
+         */
+        emplacementId: z.number().int().optional(),
         facteurConversion: z.number().default(1),
         appliquerPrixCatalogue: z.boolean().default(false),
         prixVente: z.union([z.string(), z.number()]).nullish(),
@@ -1545,72 +1554,63 @@ export const procurementRouter = createTRPCRouter({
               fournisseurId: Number(input.fournisseurId),
               numeroLot: ligne.numeroLot || `LOT-${ref}-${ligneIndex}`,
               reference: ref,
-              datePeremption: ligne.datePeremption ? new Date(`${ligne.datePeremption}T00:00:00`) : null,
-              dateFabrication: ligne.dateFabrication ? new Date(`${ligne.dateFabrication}T00:00:00`) : null,
+              // `date_fabrication` et `date_peremption` sont des colonnes
+              // `date`, que Drizzle lit en mode CHAINE. Y passer un objet
+              // `Date` fait échouer l'écriture — « The "string" argument
+              // must be of type string » — donc TOUTE réception portant une
+              // date de lot était cassée, depuis l'écriture du schéma.
+              //
+              // Les deux valeurs arrivent déjà au format `AAAA-MM-JJ` de la
+              // validation zod : on les transmet telles quelles.
+              datePeremption: ligne.datePeremption || null,
+              dateFabrication: ligne.dateFabrication || null,
               provenance: ligne.provenance?.trim() || null,
               qualite: ligne.qualite?.trim() || null,
               fabricant: ligne.fabricant?.trim() || null,
             });
-const [existingStock] = await tx.select().from(stocks).where(
-          and(eq(stocks.produitId, pId), eq(stocks.agenceId, ctx.user.agenceId))
-        ).limit(1) as any;
-        const oldQte = existingStock ? Number(existingStock.quantite ?? 0) : 0;
-        const oldCMP = existingStock ? Number(existingStock.coutUnitaireMoyen ?? 0) : 0;
-        const newQte = oldQte + qteBase;
-        const newCMP = qteBase > 0 ? ((oldCMP * oldQte) + (coutUnitaireBase * qteBase)) / newQte : oldCMP;
-
-        const prixPlancher = ligne.prixMinimumVente != null ? Number(ligne.prixMinimumVente) : null;
-        const prixVenteLigne = ligne.prixVente != null ? Number(ligne.prixVente) : null;
-        if (prixPlancher != null && prixPlancher > 0 && prixVenteLigne != null && prixVenteLigne < prixPlancher) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: `Prix de vente (${prixVenteLigne}) inférieur au prix plancher (${prixPlancher}) pour ${ligne.produitId}`,
-          });
-        }
-
-        if (existingStock) {
-              await tx.update(stocks).set({
-                quantite: String(newQte),
-                coutUnitaireMoyen: String(newCMP),
-              }).where(eq(stocks.id, existingStock.id)) as any;
-            } else {
-              await tx.insert(stocks).values({
-                produitId: pId,
-                agenceId: ctx.user.agenceId,
-                quantite: String(qteBase),
-                uniteReferenceId: uniteId,
-                coutUnitaireMoyen: String(coutUnitaireBase),
-              }) as any;
-            }
-
-            await tx.insert(mouvementsStock).values({
+            // ── L'ENTRÉE passe par le MOTEUR, pas en écriture directe ──────
+            //
+            // Ce bloc faisait quatre choses à la main :
+            //   · lire l'ancien stock avec un `.limit(1)` — donc sur une ligne
+            //     ARBITRAIRE dès que le produit est réparti en plusieurs
+            //     emplacements ;
+            //   · recalculer le CMUP avec une QUATRIÈME copie de la formule ;
+            //   · insérer le mouvement à la main ;
+            //   · resynchroniser `stocks_unites` à la main.
+            //
+            // Un seul appel fait les quatre correctement : le moteur choisit
+            // une ligne DÉTERMINISTE, pondère le CMUP, écrit le mouvement, et
+            // `stocks_unites` suit.
+            //
+            // Et surtout l'ENTREPÔT : `createReception` ne recevait pas
+            // d'emplacement. Toute pièce reçue atterrissait donc sur une ligne
+            // globale — ce qui est incompatible avec « les pièces sont
+            // éparpillées dans 5 magasins et dans les bureaux ».
+            //
+            // Un coût nul n'est PAS enregistré comme coût : `coutUnitaireBase`
+            // est laissé à undefined, donc la ligne reste sans CMUP. C'est
+            // exact — on ne connaît pas le prix d'achat de ce qu'on n'a pas
+            // chiffré — et c'est bien plus utile qu'un zéro, qui ferait
+            // disparaître la pièce de la valeur du stock sans le dire.
+            await enregistrerMouvement(tx as any, {
+              type: TYPES_MOUVEMENT.ACHAT_RECEPTION as any,
+              sens: "E",
               produitId: pId,
               agenceId: ctx.user.agenceId,
-              type: "ACHAT_RECEPTION",
-              sens: "E",
-              quantite: String(qteBase),
+              quantite: qteBase,
               uniteId,
-              lotId,
-              stockAvant: String(oldQte),
-              stockApres: String(newQte),
-              coutUnitaireBase: String(coutUnitaireBase),
+              emplacementId: ligne.emplacementId ?? null,
+              // Le lot est tracé sur le mouvement sans servir à cibler la ligne
+              // de stock : `stocks.lot_id` est systématiquement NULL, le
+              // détail vit dans `stocks_lots`.
+              lotPourTracabilite: lotId,
+              coutUnitaireBase: coutUnitaireBase > 0 ? coutUnitaireBase : undefined,
               reference: ref,
               referenceType: "BON_RECEPTION",
               motif: "Réception fournisseur",
               effectuePar: ctx.user.id,
-            }) as any;
-
-            if (uniteId) {
-              const [existingSU] = await tx.select().from(stocksUnites).where(
-                and(eq(stocksUnites.produitId, pId), eq(stocksUnites.agenceId, ctx.user.agenceId), eq(stocksUnites.uniteId, uniteId))
-              ).limit(1) as any;
-              if (existingSU) {
-                await tx.update(stocksUnites).set({ quantite: existingSU.quantite + qteRecue }).where(eq(stocksUnites.id, existingSU.id)) as any;
-              } else {
-                await tx.insert(stocksUnites).values({ produitId: pId, agenceId: ctx.user.agenceId, uniteId, quantite: qteRecue }) as any;
-              }
-            }
-
+              synchroniserStocksUnites: Boolean(uniteId),
+            });
             if (ligne.appliquerPrixCatalogue) {
               await appliquerPrixCatalogue(
                 tx,

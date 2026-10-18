@@ -93,6 +93,28 @@ export async function creerLotEtStock(
 // Les lots sans DLC partent en dernier (COALESCE lointain). Insère un mouvement
 // par lot consommé (avec lotId + coût unitaire du lot). Retourne [] si aucun lot
 // ne porte de stock (comportement legacy conservé chez l'appelant).
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// FEFO SUR LA DLC EFFECTIVE, PAS SUR LA DLC DU SCELLÉ
+//
+// L'ordre utilisait `lots.date_peremption`. C'est juste pour un produit dont
+// la DLC est stable — mais pas pour un contenant ouvert :
+//
+//   · un fût d'huile scellé peut être daté à 5 ans (DLC du fabricant) ;
+//   · les bidons qui en sont issus ne tiennent que 12 mois après OUVERTURE.
+//
+// Trier sur la DLC du scellé consommerait donc les bidons en dernier, alors
+// que ce sont eux qui périment. Le résultat : le garage jette l'huile
+// ouverte et garde celle qui se périme.
+//
+// On trie donc sur la DLC EFFECTIVE — `ouverture + périodicité` quand le
+// contenant a été ouvert, la DLC fournisseur sinon. C'est la même formule
+// que `lots_contenants.dlc_effective`, écrite ici en SQL parce que c'est un
+// ORDER BY : l'appliquer en JavaScript obligerait à charger tous les lots
+// pour les trier ensuite, ce qui defeat le `FOR UPDATE` ligne à ligne.
+//
+// Un contenant OUVERT mais SANS périodicité connue retombe sur sa DLC
+// fournisseur : mieux vaut un ordre approximatif qu'un ordre absent.
 export async function sortirStockFIFO(
   tx: Tx,
   params: {
@@ -116,6 +138,8 @@ export async function sortirStockFIFO(
     coutUnitaire: lots.coutUnitaire,
     dateEntree: lots.dateEntree,
     datePeremption: lots.datePeremption,
+    dateOuverture: lots.dateOuverture,
+    periodicite: lots.periodiciteOuvertureJours,
   })
     .from(stocksLots)
     .innerJoin(lots, eq(lots.id, stocksLots.lotId))
@@ -124,7 +148,13 @@ export async function sortirStockFIFO(
       eq(stocksLots.agenceId, params.agenceId),
     ))
     .orderBy(
-      sql`COALESCE(${lots.datePeremption}, '9999-12-31'::date) ASC`,
+      sql`COALESCE(
+              CASE WHEN ${lots.dateOuverture} IS NOT NULL AND ${lots.periodiciteOuvertureJours} IS NOT NULL
+                   THEN ${lots.dateOuverture} + ${lots.periodiciteOuvertureJours}
+              END,
+              ${lots.datePeremption},
+              '9999-12-31'::date
+            ) ASC`,
       asc(lots.dateEntree),
       asc(lots.id),
     )
@@ -326,6 +356,14 @@ export async function verifierDispoNonPerimee(
   const auj = new Date();
   auj.setHours(0, 0, 0, 0);
   const aujStr = auj.toISOString().slice(0, 10);
+
+  // DLC EFFECTIVE : `ouverture + périodicité` pour un contenant ouvert, la
+  // DLC fournisseur sinon. Même formule que dans `sortirStockFIFO`.
+  //
+  // Sans cette correction, une huile ouverte depuis 14 mois mais dont le fût
+  // est daté à 5 ans passerait le contrôle : le garage servirait une huile
+  // oxydée. C'est exactement le risque qualité que la DLC existe pour
+  // couvrir — et il n'était pas couvert.
   const [ok] = await tx
     .select({ dispo: sum(stocksLots.quantite) })
     .from(stocksLots)
@@ -333,7 +371,15 @@ export async function verifierDispoNonPerimee(
     .where(and(
       eq(stocksLots.produitId, params.produitId),
       eq(stocksLots.agenceId, params.agenceId),
-      gte(lots.datePeremption, aujStr),
+      gte(
+        sql`COALESCE(
+              CASE WHEN ${lots.dateOuverture} IS NOT NULL AND ${lots.periodiciteOuvertureJours} IS NOT NULL
+                   THEN ${lots.dateOuverture} + ${lots.periodiciteOuvertureJours}
+              END,
+              ${lots.datePeremption}
+            )`,
+        aujStr,
+      ),
     )) as any[];
   const dispoNonPerimee = Number(ok?.dispo ?? 0);
 

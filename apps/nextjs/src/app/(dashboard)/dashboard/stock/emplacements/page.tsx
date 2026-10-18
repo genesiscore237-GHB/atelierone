@@ -1,56 +1,260 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
-import { AlertTriangle, Check, MapPin, Package, Plus, Search, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  MapPin,
+  Package,
+  Plus,
+  Search,
+  CornerDownRight,
+} from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 
 /**
- * EMPLACEMENTS — rayonnage codifié ZONE-ALLEE-RAYON-NIVEAU (specs 03 §3).
- * Création / édition / consultation du contenu de chaque emplacement.
+ * EMPLACEMENTS — l'arborescence réelle du garage.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POURQUOI UN ARBRE ET NON UNE LISTE
+ *
+ * Le besoin dit : « le garage a 5 magasins, les pièces sont éparpillées
+ * partout et dans les bureaux ». Une liste triée par code donne « A-01, A-02,
+ * B-01, B-02… » sans jamais dire que A-01 est dans le magasin central et B-01
+ * dans le bureau du chef. Or c'est précisément l'information qui manque pour
+ * choisir « où je range ça ».
+ *
+ * On lit donc la même donnée en arbre, via `stock.arborescenceEmplacements`.
+ * Le client n'a plus qu'à l'indenter — et l'indentation est calculée par le
+ * serveur, qui connaît la vraie profondeur.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA CRÉATION D'UN SOUS-EMPLACEMENT
+ *
+ * `createEmplacement` acceptait `parentId` mais l'interface ne l'envoyait
+ * pas : on ne pouvait créer que des racines. Une arborescence à trois niveaux
+ * — magasin › allée › rayon — était donc impossible à saisir, alors même
+ * que la colonne `parent_id` existait et que 16 sous-emplacements étaient
+ * déjà en base.
  */
+
+interface EmplacementPlat {
+  id: number;
+  parentId: number | null;
+  profondeur: number;
+  code: string;
+  libelle: string | null;
+  type: string;
+  isActive: boolean | null;
+}
+
+interface NoeudEmplacement extends EmplacementPlat {
+  enfants: NoeudEmplacement[];
+}
+
+/**
+ * Empile une liste PLATE en arbre.
+ *
+ * Le serveur renvoie une liste triée par profondeur puis par code, avec le
+ * `parentId` déjà résolu — et non un type récursif, qui ferait exploser
+ * l'inférence de tRPC pour tout le projet (29 typecheck en moins dès qu'on
+ * a retiré le `Noeud` récursif du router).
+ *
+ * La profondeur affichée est celle du NOEUD, pas son niveau dans le rendu :
+ * si une donnée héritée crée un parent orphelin, l'indentation doit rester
+ * celle que la base connaît, sinon l'arbre raconte autre chose que la base.
+ */
+function empiler(lignes: EmplacementPlat[]): NoeudEmplacement[] {
+  const parId = new Map<number, NoeudEmplacement>();
+  for (const l of lignes) parId.set(l.id, { ...l, enfants: [] });
+
+  const racines: NoeudEmplacement[] = [];
+  for (const n of parId.values()) {
+    const parent = n.parentId != null ? parId.get(n.parentId) : null;
+    // Un parent absent de l'agence ne doit pas faire disparaître le fils :
+    // on le remonte en racine. Le mieux est de le voir.
+    if (parent) parent.enfants.push(n);
+    else racines.push(n);
+  }
+  return racines;
+}
+
 export default function EmplacementsPage() {
   const utils = api.useUtils();
-  const { data: emplacements, isLoading, isError, refetch } = api.stock.listEmplacements.useQuery({});
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [parentChoisi, setParentChoisi] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const [plies, setPlies] = useState<Set<number>>(new Set());
   const [form, setForm] = useState({ code: "", libelle: "", type: "RAYON" });
+
+  const { data: arbre, isLoading, isError, refetch } =
+    api.stock.arborescenceEmplacements.useQuery({});
+
+  const { data: contenu } = api.stock.getEmplacementContenu.useQuery(
+    { emplacementId: selected ?? 0 },
+    { enabled: !!selected },
+  );
 
   const create = api.stock.createEmplacement.useMutation({
     onSuccess: () => {
-      toast.success("Emplacement créé");
+      toast.success(parentChoisi ? "Sous-emplacement créé" : "Emplacement créé");
+      utils.stock.arborescenceEmplacements.invalidate();
       utils.stock.listEmplacements.invalidate();
       setShowForm(false);
       setForm({ code: "", libelle: "", type: "RAYON" });
+      setParentChoisi(null);
     },
     onError: (e) => toast.error(e.message),
   });
 
-  const { data: contenu } = api.stock.getEmplacementContenu.useQuery(
-    { emplacementId: selected ?? 0 },
-    { enabled: !!selected }
-  );
+  /**
+   * Applique la recherche à l'ARBRE, pas à une liste.
+   *
+   * Si « rayon 3 » correspond, on doit voir « rayon 3 » — mais aussi le
+   * magasin et l'allée dans lesquels il se trouve, sans quoi l'agent ne sait
+   * pas où il va le chercher. Un parent qui ne correspond pas est conservé
+   * comme chemin, ses enfants non concordants sont élagués.
+   */
+  const arbreFiltre = useMemo(() => {
+    const racine = empiler((arbre ?? []) as EmplacementPlat[]);
+    if (!search.trim()) return racine;
+    const q = search.trim().toLowerCase();
+
+    const filtrer = (n: NoeudEmplacement): NoeudEmplacement | null => {
+      const enfants = n.enfants.map(filtrer).filter((x): x is NoeudEmplacement => x !== null);
+      const correspond =
+        n.code.toLowerCase().includes(q) || (n.libelle ?? "").toLowerCase().includes(q);
+      if (correspond) return { ...n, enfants: n.enfants };
+      // Le parent ne correspond pas mais descendances oui : on garde le
+      // chemin. C'est ce qui rend la recherche utilisable dans une arborescence.
+      if (enfants.length) return { ...n, enfants };
+      return null;
+    };
+    return racine.map(filtrer).filter((x): x is NoeudEmplacement => x !== null);
+  }, [arbre, search]);
+
+  const nombreEmplacements = (arbre ?? []).length;
 
   if (isLoading) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
-  if (isError) return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 py-10 text-center">
-      <AlertTriangle size={28} className="mb-2 text-destructive" />
-      <p className="text-sm font-medium text-foreground">Erreur de chargement</p>
-      <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>Réessayer</Button>
-    </div>
-  );
+  if (isError)
+    return (
+      <div className="flex flex-col items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 py-10 text-center">
+        <AlertTriangle size={28} className="mb-2 text-destructive" />
+        <p className="text-sm font-medium text-foreground">Erreur de chargement</p>
+        <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
+          Réessayer
+        </Button>
+      </div>
+    );
 
-  const list = (emplacements ?? []).filter(
-    (e: any) => !search || e.code.toLowerCase().includes(search.toLowerCase()) || (e.libelle ?? "").toLowerCase().includes(search.toLowerCase())
-  );
+  const basculer = (id: number) =>
+    setPlies((p) => {
+      const n = new Set(p);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
+  const cheminDe = (id: number): EmplacementPlat | undefined =>
+    ((arbre ?? []) as EmplacementPlat[]).find((e) => e.id === id);
+
+  const noeudParent = parentChoisi != null ? cheminDe(parentChoisi) : null;
 
   const save = () => {
-    if (!form.code.trim()) { toast.error("Code requis (format : ZONE-ALLEE-RAYON-NIVEAU)"); return; }
-    create.mutate({ code: form.code.trim().toUpperCase(), libelle: form.libelle.trim() || undefined, type: form.type });
+    if (!form.code.trim()) {
+      toast.error("Code requis", {
+        description: "Format advised : MAG-A-01-03 (zone, allée, rayon, niveau).",
+      });
+      return;
+    }
+    create.mutate({
+      code: form.code.trim().toUpperCase(),
+      libelle: form.libelle.trim() || undefined,
+      type: form.type,
+      parentId: parentChoisi ?? undefined,
+    });
+  };
+
+  const rendreNoeud = (n: NoeudEmplacement, niveau: number) => {
+    const aDesEnfants = n.enfants.length > 0;
+    const replie = plies.has(n.id);
+    return (
+      <div key={n.id}>
+        <div
+          className={`flex items-center justify-between border-b border-border transition-colors hover:bg-accent/50 ${
+            selected === n.id ? "bg-accent/70" : ""
+          }`}
+          style={{ paddingLeft: `${12 + niveau * 18}px` }}
+        >
+          <button
+            type="button"
+            onClick={() => setSelected(n.id)}
+            className="flex min-w-0 flex-1 items-center gap-2 py-3 pr-2 text-left"
+          >
+            {aDesEnfants ? (
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label={replie ? "Déplier" : "Replier"}
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  basculer(n.id);
+                }}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter" || ev.key === " ") {
+                    ev.stopPropagation();
+                    basculer(n.id);
+                  }
+                }}
+                className="shrink-0 rounded p-0.5 hover:bg-accent"
+              >
+                {replie ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              </span>
+            ) : (
+              <span className="w-[18px] shrink-0" />
+            )}
+            <MapPin size={13} className="shrink-0 text-primary" />
+            <span className="min-w-0">
+              <span className="block font-mono text-sm font-semibold text-foreground">
+                {n.code}
+                {n.isActive === false && (
+                  <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                    Inactif
+                  </span>
+                )}
+              </span>
+              {n.libelle && <span className="block truncate text-xs text-muted-foreground">{n.libelle}</span>}
+            </span>
+          </button>
+          <div className="flex shrink-0 items-center gap-2 pl-2">
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase text-muted-foreground">
+              {n.type}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setParentChoisi(n.id);
+                setShowForm(true);
+                setForm({ code: "", libelle: "", type: n.type });
+              }}
+              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              aria-label={`Ajouter un sous-emplacement dans ${n.code}`}
+              title="Ajouter un sous-emplacement ici"
+            >
+              <CornerDownRight size={14} />
+            </button>
+          </div>
+        </div>
+        {aDesEnfants && !replie && n.enfants.map((e) => rendreNoeud(e, niveau + 1))}
+      </div>
+    );
   };
 
   return (
@@ -59,35 +263,85 @@ export default function EmplacementsPage() {
         <div>
           <h1 className="text-xl font-bold tracking-tight text-foreground">Emplacements & Rayonnage</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Codification ZONE-ALLEE-RAYON-NIVEAU (ex. MAG-A-01-03, EXT-PNEU)
+            {nombreEmplacements} emplacement(s) · magasin, allée, rayon, niveau — et les bureaux,
+            qui sont des emplacements comme les autres.
           </p>
         </div>
-        <Button onClick={() => setShowForm((v) => !v)} className="gap-2">
+        <Button
+          onClick={() => {
+            setParentChoisi(null);
+            setShowForm((v) => !v);
+          }}
+          className="gap-2"
+        >
           <Plus size={16} /> Nouvel emplacement
         </Button>
       </div>
 
       {showForm && (
         <div className="mt-4 rounded-xl border border-border bg-card p-4">
-          <div className="mb-3 text-sm font-bold uppercase tracking-wider text-foreground">Nouvel emplacement</div>
+          <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+            {noeudParent ? (
+              <>
+                <CornerDownRight size={14} className="text-primary" />
+                Sous-emplacement de {noeudParent.code}
+                <span className="font-mono text-xs font-normal normal-case text-muted-foreground">
+                  {noeudParent.libelle}
+                </span>
+              </>
+            ) : (
+              "Nouvel emplacement racine"
+            )}
+          </div>
+          {noeudParent && (
+            <button
+              type="button"
+              onClick={() => setParentChoisi(null)}
+              className="mb-3 text-xs text-muted-foreground underline-offset-2 hover:underline"
+            >
+              Créer à la racine plutôt que dans {noeudParent.code}
+            </button>
+          )}
           <div className="grid gap-3 sm:grid-cols-3">
             <div>
               <Label className="text-xs text-muted-foreground">Code * (ZONE-ALLEE-RAYON-NIVEAU)</Label>
-              <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="ex: MAG-A-01-03" className="mt-1 font-mono" />
+              <Input
+                value={form.code}
+                onChange={(e) => setForm({ ...form, code: e.target.value })}
+                placeholder="ex: MAG-A-01-03"
+                className="mt-1 font-mono"
+              />
             </div>
             <div>
               <Label className="text-xs text-muted-foreground">Libellé</Label>
-              <Input value={form.libelle} onChange={(e) => setForm({ ...form, libelle: e.target.value })} placeholder="ex: Allée A, rayon 1, niveau 3" className="mt-1" />
+              <Input
+                value={form.libelle}
+                onChange={(e) => setForm({ ...form, libelle: e.target.value })}
+                placeholder="ex: Allée A, rayon 1, niveau 3"
+                className="mt-1"
+              />
             </div>
             <div>
               <Label className="text-xs text-muted-foreground">Type</Label>
-              <select className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+              <select
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                value={form.type}
+                onChange={(e) => setForm({ ...form, type: e.target.value })}
+              >
+                {/* Les six types réellement présents dans les données relevées
+                    (ZONE 6 · RAYON 16 · BAC 4 · ATELIER 3 · CASIER 1 · BUREAU 1)
+                    sont proposés : un vocabulaire restreint à ce que le garage
+                    utilise évite d'inventer des emplacements incomparables. */}
+                <option value="ZONE">Zone</option>
                 <option value="RAYON">Rayon</option>
+                <option value="BAC">Bac</option>
+                <option value="CASIER">Casier</option>
+                <option value="ATELIER">Atelier</option>
+                <option value="BUREAU">Bureau</option>
                 <option value="SOL">Sol</option>
                 <option value="TIROIR">Tiroir</option>
-                <option value="EXTERIEUR">Extérieur</option>
                 <option value="FRIGO">Frigo</option>
-                <option value="AUTRE">Autre</option>
+                <option value="EXTERIEUR">Extérieur</option>
               </select>
             </div>
           </div>
@@ -95,68 +349,70 @@ export default function EmplacementsPage() {
             <Button onClick={save} disabled={create.isPending} className="gap-2">
               <Check size={14} /> {create.isPending ? "Création..." : "Enregistrer"}
             </Button>
-            <Button variant="outline" onClick={() => setShowForm(false)}>Annuler</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowForm(false);
+                setParentChoisi(null);
+              }}
+            >
+              Annuler
+            </Button>
           </div>
         </div>
       )}
 
       <div className="mt-5 grid gap-6 lg:grid-cols-2">
-        {/* Liste des emplacements */}
         <div>
           <div className="relative mb-3">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-            <Input placeholder="Rechercher un emplacement (code, libellé)..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+            <Input
+              placeholder="Rechercher un emplacement (code, libellé)…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
           </div>
-          {list.length === 0 ? (
+          {nombreEmplacements === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">
               <MapPin size={28} className="mb-2 opacity-40" />
               <p className="text-sm font-medium text-foreground">Aucun emplacement</p>
-              <p className="mt-1 text-xs text-muted-foreground">Créez la structure de votre magasin (ZONE-ALLEE-RAYON-NIVEAU).</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Commencez par vos magasins : cinq racines, puis vos allées et rayons en dessous.
+              </p>
+            </div>
+          ) : arbreFiltre.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">
+              <Search size={28} className="mb-2 opacity-40" />
+              <p className="text-sm font-medium text-foreground">Aucun résultat pour « {search} »</p>
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-border">
-              {list.map((e: any) => (
-                <button
-                  key={e.id}
-                  type="button"
-                  onClick={() => setSelected(e.id)}
-                  className={`flex w-full items-center justify-between border-b border-border px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-accent/50 ${selected === e.id ? "bg-accent/70" : ""}`}
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 font-mono text-sm font-semibold text-foreground">
-                      <MapPin size={13} className="shrink-0 text-primary" />
-                      {e.code}
-                      {!e.isActive && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Inactif</span>}
-                    </div>
-                    {e.libelle && <p className="mt-0.5 truncate text-xs text-muted-foreground">{e.libelle}</p>}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase text-muted-foreground">{e.type}</span>
-                    <span className="text-[10px] text-muted-foreground">{e.profondeur > 0 ? "sous-emplacement" : "racine"}</span>
-                  </div>
-                </button>
-              ))}
+              {arbreFiltre.map((n) => rendreNoeud(n, 0))}
             </div>
           )}
         </div>
 
-        {/* Contenu de l'emplacement sélectionné */}
         <div>
           <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
             <Package size={14} className="text-primary" />
-            Contenu de l'emplacement
+            Contenu de l&apos;emplacement
           </div>
           {!selected ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">
               <MapPin size={28} className="mb-2 opacity-40" />
               <p className="text-sm font-medium text-foreground">Sélectionnez un emplacement</p>
-              <p className="mt-1 text-xs text-muted-foreground">Pour voir les articles qui y sont stockés.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Pour voir les articles qui y sont stockés.
+              </p>
             </div>
           ) : !contenu || contenu.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">
               <Package size={28} className="mb-2 opacity-40" />
               <p className="text-sm font-medium text-foreground">Emplacement vide</p>
-              <p className="mt-1 text-xs text-muted-foreground">Aucun article stocké ici pour le moment.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Aucun article stocké ici pour le moment.
+              </p>
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-border">
@@ -170,12 +426,16 @@ export default function EmplacementsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {contenu.map((c: any) => (
+                  {contenu.map((c: { produitId: number; titre: string; codeArticle: string | null; codeBarre: string | null; quantite: number; valeur: number }) => (
                     <tr key={c.produitId} className="border-t border-border hover:bg-accent/40">
                       <td className="px-4 py-2.5 font-medium">{c.titre}</td>
-                      <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{c.codeArticle ?? c.codeBarre}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
+                        {c.codeArticle ?? c.codeBarre}
+                      </td>
                       <td className="px-4 py-2.5 text-right font-mono">{c.quantite}</td>
-                      <td className="px-4 py-2.5 text-right font-mono">{c.valeur.toLocaleString("fr-FR")} F</td>
+                      <td className="px-4 py-2.5 text-right font-mono">
+                        {Math.round(c.valeur).toLocaleString("fr-FR")} F
+                      </td>
                     </tr>
                   ))}
                 </tbody>

@@ -49,6 +49,9 @@ import { rhJournalRouter } from "~/server/api/routers/rh-journal";
 import { rhSituationsRouter } from "~/server/api/routers/rh-situations";
 import { rhHistoryRouter } from "~/server/api/routers/rh-history";
 import { stockRouter } from "~/server/api/routers/stock";
+import { stockRecensementRouter } from "~/server/api/routers/stock-recensement";
+import { stockContenantsRouter } from "~/server/api/routers/stock-contenants";
+import { stockReceptionRouter } from "~/server/api/routers/stock-reception";
 import { orRouter } from "~/server/api/routers/or-router";
 import { garageRouter } from "~/server/api/routers/garage-router";
 import { margeRouter } from "~/server/api/routers/marge";
@@ -115,6 +118,16 @@ rhJournal: rhJournalRouter,
   rhSituations: rhSituationsRouter,
   rhHistory: rhHistoryRouter,
   stock: stockRouter,
+  // Recensement : « je compte ce que j'ai dans mon garage ». Séparé du
+  // router stock (déjà 2000 lignes) parce que c'est un autre métier — le
+  // relevé physique du premier jour, pas la gestion quotidienne.
+  stockRecensement: stockRecensementRouter,
+  // Contenants : l'huile en fût. Ouvrir, déconditionner, et répondre à
+  // « qu'est-ce qui reste et jusqu'à quand ».
+  stockContenants: stockContenantsRouter,
+  // Réception rapide : « je viens d'acheter 12 filtres ». Même moteur que
+  // procurement.createReception, charge utile minimale.
+  stockReception: stockReceptionRouter,
   or: orRouter,
   garage: garageRouter,
   marge: margeRouter,

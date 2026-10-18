@@ -1,271 +1,340 @@
 "use client";
 
-import { useState } from "react";
-import { api } from "~/trpc/react";
-import { motion } from "framer-motion";
-import { ArrowLeftRight, Plus, Trash2, CheckCircle, AlertTriangle } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  ArrowLeftRight,
+  CheckCircle2,
+  Loader2,
+  Package,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
+import { api } from "~/trpc/react";
+import { Button } from "~/components/ui/button";
+import { EmptyState } from "~/components/ui/empty-state";
 
-type LigneTransfert = {
-  produitId: string;
-  produitTitre: string;
-  uniteId: string;
-  uniteCode: string;
+/**
+ * TRANSFERT — « cette pièce n'est pas à sa place ».
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * UN TRANSFERT EST UNE SEULE OPÉRATION
+ *
+ * L'ancienne version appelait `stock.transferer` une fois par LIGNE, en
+ * parallèle. Si la troisième ligne échouait, les deux premières étaient déjà
+ * appliquées dans des transactions séparées : le magasinier lisait
+ * « transfert effectué » et le stock ne correspondait plus. Ici, toutes les
+ * lignes partent dans UNE transaction : soit tout bouge, soit rien.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ON TRANSFÈRE CE QUI EST RÉELLEMENT AU SOURCE
+ *
+ * Choisir un emplacement fait apparaître son contenu. Le magasinier
+ * transfère donc des pièces qu'il VOIT, et non des quantités imaginées. La
+ * quantité disponible est rappelée à chaque ligne, et une quantité
+ * supérieure est refusée avant l'envoi.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TOUS LES TYPES D'EMPLACEMENT, PAS SEULEMENT LES RAYONS
+ *
+ * `listRayons` ne renvoyait que les `type = 'RAYON'`. Or le relevé compte des
+ * BAC, des CASIER, des ZONE, des ATELIER et un BUREAU — et c'est
+ * précisément là que finissent les pièces du garage. Transférer vers un
+ * bureau était impossible ; c'est le geste le plus courant du besoin n°6.
+ */
+
+type Ligne = {
+  cle: number;
+  produitId: number;
+  titre: string;
   quantite: number;
-  stockAvant: number;
+  uniteId: string | null;
+  /** Ce qu'il reste vraiment à la source, au moment de la saisie. */
+  disponibleALaSource: number;
 };
 
 export default function TransfertPage() {
-  const [sourceId, setSourceId] = useState("");
-  const [destId, setDestId] = useState("");
-  const [lignes, setLignes] = useState<LigneTransfert[]>([]);
-  const [produitSearch, setProduitSearch] = useState("");
-  const [showSuccess, setShowSuccess] = useState(false);
-
   const utils = api.useUtils();
-  const { data: rayons } = api.stock.listRayons.useQuery();
-  const { data: produits } = api.catalog.listProducts.useQuery();
-  const { data: allUnites } = api.reference.listUnitesMesure.useQuery();
 
-  const mutation = api.stock.transferer.useMutation({
-    onSuccess: () => {
-      utils.stock.getDashboard.invalidate();
-      setShowSuccess(true);
+  const [sourceId, setSourceId] = useState<number | "">("");
+  const [cibleId, setCibleId] = useState<number | "">("");
+  const [lignes, setLignes] = useState<Ligne[]>([]);
+  const [cleSuivante, setCleSuivante] = useState(1);
+
+  // Tous les emplacements, pas seulement les rayons : voir l'en-tête.
+  const { data: emplacements } = api.stock.arborescenceEmplacements.useQuery({});
+  // Le serveur renvoie une liste PLATE (pas un type récursif : voir la note
+  // sur `aplatir`). La reconstruction de l'arbre est donc un état du client.
+  const tous = useMemo(() => {
+    const parId = new Map<number, Noeud>();
+    for (const r of emplacements ?? []) parId.set(r.id, { ...r, enfants: [] });
+    const racines: Noeud[] = [];
+    for (const n of parId.values()) {
+      const parent = n.parentId != null ? parId.get(n.parentId) : null;
+      // Un parent absent de l'agence ne fait pas disparaître le fils : on le
+      // remonte en racine. Le mieux est de le voir.
+      if (parent) parent.enfants.push(n);
+      else racines.push(n);
+    }
+    return aplatir(racines);
+  }, [emplacements]);
+
+  // Le contenu de la source : c'est la matière première de l'écran.
+  const { data: contenu, isFetching: chargementContenu } = api.stock.stockParEmplacement.useQuery(
+    { emplacementId: Number(sourceId) || 0 },
+    { enabled: sourceId !== "" },
+  );
+
+  const transferer = api.stock.transfererLot.useMutation({
+    onSuccess: async (r) => {
+      toast.success(`${r.lignes} pièce(s) déplacée(s)`, {
+        description: "Le stock et les mouvements sont à jour.",
+      });
       setLignes([]);
-      setProduitSearch("");
-      setTimeout(() => setShowSuccess(false), 3000);
-      toast.success("Transfert effectué");
+      await Promise.all([
+        utils.stock.stockParEmplacement.invalidate(),
+        utils.stock.getDashboard.invalidate(),
+        utils.stock.arborescenceEmplacements.invalidate(),
+      ]);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error("Transfert refusé", { description: e.message }),
   });
 
-  const produitsFiltres = produits?.filter(p =>
-    p.titre?.toLowerCase().includes(produitSearch.toLowerCase()) && !lignes.some(l => l.produitId === p.id)
-  ) ?? [];
+  const disponibles = useMemo(
+    () => (contenu ?? []).filter((c) => c.disponible > 0 && !lignes.some((l) => l.produitId === c.produitId)),
+    [contenu, lignes],
+  );
 
-  function ajouterLigne(produitId: string) {
-    const p = produits?.find(p => p.id === produitId);
-    if (!p) return;
-    setLignes(prev => [...prev, {
-      produitId,
-      produitTitre: p.titre ?? "",
-      uniteId: "",
-      uniteCode: "",
-      quantite: 1,
-      stockAvant: 0,
-    }]);
-    setProduitSearch("");
-  }
+  const ajouter = (produitId: number, titre: string, disponible: number) => {
+    setLignes((l) => [
+      ...l,
+      { cle: cleSuivante, produitId, titre, quantite: 1, uniteId: null, disponibleALaSource: disponible },
+    ]);
+    setCleSuivante((c) => c + 1);
+  };
 
-  function updateLigne(idx: number, updates: Partial<LigneTransfert>) {
-    setLignes(prev => prev.map((l, i) => i === idx ? { ...l, ...updates } : l));
-  }
-
-  function supprimerLigne(idx: number) {
-    setLignes(prev => prev.filter((_, i) => i !== idx));
-  }
-
-  async function handleConfirm() {
-    const promises = lignes.map(l =>
-      mutation.mutateAsync({
-        produitId: l.produitId,
-        uniteId: l.uniteId,
-        quantite: l.quantite,
-        emplacementSourceId: Number(sourceId),
-        emplacementCibleId: Number(destId),
-      })
-    );
-    await Promise.all(promises);
-  }
-
-  const peutConfirmer = lignes.every(l => l.uniteId && l.quantite > 0) && sourceId && destId;
+  const sortieExcessive = lignes.filter((l) => l.quantite > l.disponibleALaSource);
+  const pret =
+    sourceId !== "" && cibleId !== "" && lignes.length > 0 && sortieExcessive.length === 0;
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-foreground dark:text-foreground">Transfert entre rayons</h2>
-          <p className="text-sm text-muted-foreground dark:text-muted-foreground">Déplacer des produits d'un rayon à un autre</p>
+    <div className="mx-auto max-w-5xl space-y-4">
+      <header>
+        <h1 className="text-xl font-black tracking-tight">Transfert</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Déplacez des pièces d&apos;un endroit à un autre. Tout bouge ensemble, ou rien ne bouge.
+        </p>
+      </header>
+
+      <section className="rounded-xl border border-border bg-card p-3 sm:p-4">
+        <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+          <select
+            value={sourceId}
+            onChange={(e) => {
+              setSourceId(e.target.value ? Number(e.target.value) : "");
+              setLignes([]);
+            }}
+            className="rounded-lg border border-border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+            aria-label="Emplacement source"
+          >
+            <option value="">— d&apos;où ? —</option>
+            {tous.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.libelle ? `${e.libelle} (${e.code})` : e.code} · {e.type}
+              </option>
+            ))}
+          </select>
+
+          <ArrowLeftRight size={18} className="mx-auto shrink-0 text-muted-foreground" />
+
+          <select
+            value={cibleId}
+            onChange={(e) => setCibleId(e.target.value ? Number(e.target.value) : "")}
+            disabled={sourceId === ""}
+            className="rounded-lg border border-border bg-background px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+            aria-label="Emplacement destination"
+          >
+            <option value="">— vers où ? —</option>
+            {tous
+              .filter((e) => e.id !== sourceId)
+              .map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.libelle ? `${e.libelle} (${e.code})` : e.code} · {e.type}
+                </option>
+              ))}
+          </select>
         </div>
-      </div>
+      </section>
 
-      {showSuccess && (
-        <div className="flex items-center gap-2 rounded-lg bg-success/20 dark:bg-success/10 p-3 text-sm text-success-foreground dark:text-success-foreground">
-          <CheckCircle size={16} /> Transfert effectué avec succès
-        </div>
-      )}
+      {sourceId === "" ? (
+        <EmptyState
+          icon={<ArrowLeftRight size={40} />}
+          title="Choisissez d'où partent les pièces"
+          description="Sélectionnez un emplacement : son contenu s'affichera, et vous n'aurez plus qu'à cocher ce qui doit bouger."
+        />
+      ) : (
+        <section className="space-y-3">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">
+            Ce qu&apos;il y a à la source
+          </h2>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-4">
-          <div className="rounded-xl border border-border dark:border-border bg-background dark:bg-card p-4">
-            <div className="flex items-center gap-3 mb-4">
-              <ArrowLeftRight size={20} className="text-primary shrink-0" />
-              <select
-                className="flex-1 rounded-lg border border-border dark:border-border bg-background dark:bg-muted px-4 py-2.5 text-sm text-foreground dark:text-foreground outline-none focus:ring-2 focus:ring-primary/30"
-                value={sourceId}
-                onChange={(e) => setSourceId(e.target.value)}
-              >
-                <option value="">Rayon source</option>
-                {rayons?.map(r => <option key={r.id} value={r.id}>{r.code} - {r.libelle}</option>)}
-              </select>
-              <ArrowLeftRight size={16} className="text-muted-foreground shrink-0" />
-              <select
-                className="flex-1 rounded-lg border border-border dark:border-border bg-background dark:bg-muted px-4 py-2.5 text-sm text-foreground dark:text-foreground outline-none focus:ring-2 focus:ring-primary/30"
-                value={destId}
-                onChange={(e) => setDestId(e.target.value)}
-              >
-                <option value="">Rayon destination</option>
-                {rayons?.filter(r => String(r.id) !== sourceId).map(r => <option key={r.id} value={r.id}>{r.code} - {r.libelle}</option>)}
-              </select>
-            </div>
-
-            <div className="relative mb-4">
-              <input
-                type="text"
-                placeholder="Rechercher un produit à transférer..."
-                className="w-full rounded-lg border border-border dark:border-border bg-background dark:bg-muted pl-10 pr-4 py-2.5 text-sm text-foreground dark:text-foreground outline-none focus:ring-2 focus:ring-primary/30"
-                value={produitSearch}
-                onChange={(e) => setProduitSearch(e.target.value)}
-              />
-              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-              {produitSearch && produitsFiltres.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full rounded-lg border border-border dark:border-border bg-background dark:bg-muted shadow-lg max-h-48 overflow-y-auto">
-                  {produitsFiltres.slice(0, 10).map(p => (
-                    <button
-                      key={p.id}
-                      className="w-full px-4 py-2 text-left text-sm text-foreground/80 dark:text-foreground/80 hover:bg-accent dark:hover:bg-accent"
-                      onClick={() => ajouterLigne(p.id)}
-                    >
-                      {p.titre}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {lignes.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border dark:border-border bg-background dark:bg-card p-12 text-center">
-              <ArrowLeftRight size={48} className="mx-auto mb-3 text-muted-foreground dark:text-muted-foreground" />
-              <p className="text-sm text-muted-foreground dark:text-muted-foreground">Ajoutez des produits à transférer</p>
+          {chargementContenu ? (
+            <div className="h-20 animate-pulse rounded-xl bg-muted" />
+          ) : disponibles.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+              Cet emplacement ne contient rien de transférable.
             </div>
           ) : (
-            <div className="rounded-xl border border-border dark:border-border bg-background dark:bg-card overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-muted dark:bg-muted/50">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground dark:text-muted-foreground uppercase tracking-wider">Produit</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground dark:text-muted-foreground uppercase tracking-wider">Unité</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground dark:text-muted-foreground uppercase tracking-wider">Quantité</th>
-                    <th className="px-4 py-3"></th>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {disponibles.map((c) => (
+                <button
+                  key={c.produitId}
+                  type="button"
+                  onClick={() => ajouter(c.produitId, c.titre, c.disponible)}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2.5 text-left transition-colors hover:border-primary/40"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{c.titre}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {c.codeBarre}
+                      {c.quantiteReservee > 0 && ` · ${c.quantiteReservee} réservé(s)`}
+                    </span>
+                  </span>
+                  <span className="shrink-0 font-mono text-sm">{c.disponible}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {lignes.length > 0 && (
+        <section className="overflow-hidden rounded-xl border border-border">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 text-left">Pièce</th>
+                <th className="px-3 py-2 text-right">Disponible</th>
+                <th className="px-3 py-2 text-right">À déplacer</th>
+                <th className="w-10" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {lignes.map((l) => {
+                const excessif = l.quantite > l.disponibleALaSource;
+                return (
+                  <tr key={l.cle} className={excessif ? "bg-destructive/5" : "bg-background"}>
+                    <td className="px-3 py-2 font-medium">{l.titre}</td>
+                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">
+                      {l.disponibleALaSource}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        value={l.quantite || ""}
+                        onChange={(e) =>
+                          setLignes((x) =>
+                            x.map((y) =>
+                              y.cle === l.cle ? { ...y, quantite: Number(e.target.value) } : y,
+                            ),
+                          )
+                        }
+                        className="w-24 rounded-lg border border-border bg-background px-2 py-1.5 text-right font-mono text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                        aria-label={`Quantité à déplacer pour ${l.titre}`}
+                      />
+                      {excessif && (
+                        <p className="mt-1 text-xs text-destructive">
+                          Il n&apos;y a que {l.disponibleALaSource} à la source.
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setLignes((x) => x.filter((y) => y.cle !== l.cle))}
+                        className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        aria-label={`Retirer ${l.titre}`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-border dark:divide-border">
-                  {lignes.map((ligne, idx) => (
-                    <tr key={idx} className="hover:bg-accent dark:hover:bg-accent/30">
-                      <td className="px-4 py-3 text-sm font-medium text-foreground dark:text-foreground max-w-[200px] truncate">{ligne.produitTitre}</td>
-                      <td className="px-4 py-3">
-                        <select
-                          className="w-32 rounded-lg border border-border dark:border-border bg-background dark:bg-muted px-3 py-1.5 text-xs text-foreground dark:text-foreground outline-none focus:ring-2 focus:ring-primary/30"
-                          value={ligne.uniteId}
-                          onChange={(e) => {
-                            const u = allUnites?.find(u => u.id === e.target.value);
-                            updateLigne(idx, { uniteId: e.target.value, uniteCode: u?.code ?? "" });
-                          }}
-                        >
-                          <option value="">Unité</option>
-                          {allUnites?.map(u => <option key={u.id} value={u.id}>{u.libelle} ({u.code})</option>)}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <input
-                          type="number"
-                          min={1}
-                          className="w-20 rounded-lg border border-border dark:border-border bg-background dark:bg-muted px-3 py-1.5 text-xs text-foreground dark:text-foreground text-right outline-none focus:ring-2 focus:ring-primary/30"
-                          value={ligne.quantite || ""}
-                          onChange={(e) => updateLigne(idx, { quantite: Number(e.target.value) })}
-                        />
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          className="rounded-lg p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 dark:hover:bg-destructive/10 transition-colors"
-                          onClick={() => supprimerLigne(idx)}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      )}
 
-        <div className="space-y-4">
-          <div className="rounded-xl border border-border dark:border-border bg-background dark:bg-card p-4">
-            <h3 className="font-semibold text-foreground dark:text-foreground mb-3">Résumé</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between text-muted-foreground dark:text-muted-foreground">
-                <span>Source</span>
-                <span className="font-medium text-foreground dark:text-foreground">
-                  {rayons?.find(r => String(r.id) === sourceId)?.code ?? "-"}
-                </span>
-              </div>
-              <div className="flex justify-between text-muted-foreground dark:text-muted-foreground">
-                <span>Destination</span>
-                <span className="font-medium text-foreground dark:text-foreground">
-                  {rayons?.find(r => String(r.id) === destId)?.code ?? "-"}
-                </span>
-              </div>
-              <div className="flex justify-between text-muted-foreground dark:text-muted-foreground">
-                <span>Produits</span>
-                <span className="font-medium text-foreground dark:text-foreground">{lignes.length}</span>
-              </div>
-              <div className="flex justify-between text-muted-foreground dark:text-muted-foreground">
-                <span>Total unités</span>
-                <span className="font-medium text-foreground dark:text-foreground">
-                  {lignes.reduce((s, l) => s + l.quantite, 0)}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {!peutConfirmer && (
-            <div className="flex items-start gap-2 rounded-lg bg-warning/10 dark:bg-warning/5 p-3 text-xs text-warning-foreground dark:text-warning-foreground">
-              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-              <p>Sélectionnez source, destination et remplissez les lignes</p>
-            </div>
-          )}
-
-          <button
-            className="w-full rounded-lg bg-gradient-to-r from-primary to-primary py-2.5 text-sm font-semibold text-foreground hover:from-primary/80 hover:to-primary/80 disabled:opacity-50 transition-colors"
-            disabled={!peutConfirmer || mutation.isPending}
-            onClick={async () => {
-              try {
-                await handleConfirm();
-              } catch {}
-            }}
+      {lignes.length > 0 && (
+        <section className="sticky bottom-0 space-y-2 rounded-xl border border-border bg-card p-3 shadow-lg">
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Package size={13} />
+            {lignes.length} pièce(s) · {lignes.reduce((s, l) => s + l.quantite, 0)} unité(s)
+          </p>
+          <Button
+            className="w-full"
+            disabled={!pret || transferer.isPending}
+            onClick={() =>
+              sourceId !== "" &&
+              cibleId !== "" &&
+              transferer.mutate({
+                emplacementSourceId: Number(sourceId),
+                emplacementCibleId: Number(cibleId),
+                lignes: lignes.map((l) => ({
+                  produitId: l.produitId,
+                  quantite: l.quantite,
+                  uniteId: l.uniteId,
+                })),
+              })
+            }
           >
-            {mutation.isPending ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-transparent" />
-                Traitement...
-              </span>
+            {transferer.isPending ? (
+              <Loader2 size={16} className="animate-spin" />
             ) : (
-              "Confirmer le transfert"
+              <CheckCircle2 size={16} />
             )}
-          </button>
-        </div>
-      </div>
-    </motion.div>
+            Déplacer {lignes.length} pièce(s)
+          </Button>
+        </section>
+      )}
+
+      <p className="flex items-start gap-2 text-xs text-muted-foreground">
+        <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+        Une quantité supérieure à ce que contient la source est refusée avant l&apos;envoi, et
+        l&apos;ensemble est annulé si une seule ligne échoue.
+      </p>
+    </div>
   );
 }
 
-function SearchIcon({ className, size }: { className?: string; size?: number }) {
-  return (
-    <svg className={className} width={size ?? 16} height={size ?? 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-    </svg>
-  );
+/** Un nœud de l'arborescence des emplacements. */
+type Noeud = {
+  id: number;
+  parentId?: number | null;
+  code: string;
+  libelle: string | null;
+  type: string;
+  enfants: Noeud[];
+};
+
+/**
+ * Aplatit l'arborescence en une liste, en gardant une indentation lisible.
+ *
+ * `ArborescenceEmplacements` renvoie une liste PLATE triée par profondeur puis
+ * par code, avec le `parentId` résolu : c'est le client qui reconstruit
+ * l'arbre. Le serveur n'a volontairement pas de type récursif dans la valeur
+ * de retour d'un router — cela fait exploser l'inférence de tRPC pour tout le
+ * projet (cf. cadrage § 10).
+ */
+function aplatir(noeuds: Noeud[], prefixe = ""): Omit<Noeud, "enfants">[] {
+  const sortie: Omit<Noeud, "enfants">[] = [];
+  for (const n of noeuds) {
+    const libelle = n.libelle ? `${prefixe}${n.libelle}` : `${prefixe}${n.code}`;
+    sortie.push({ id: n.id, code: n.code, libelle, type: n.type });
+    sortie.push(...aplatir(n.enfants ?? [], `${prefixe}  `));
+  }
+  return sortie;
 }
