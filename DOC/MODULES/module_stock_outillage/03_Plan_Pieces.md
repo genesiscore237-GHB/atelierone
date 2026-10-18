@@ -115,7 +115,7 @@ montré le contraire** : le module existait déjà à environ 70 %.
 | R5 | ~~Afficher la qualification sur la **fiche**~~ — **fait** : badges sur les compatibilités et les références équivalentes, et la fiche peut désormais *poser* le niveau (elle ne le pouvait pas — tout ce qui était ajouté depuis la fiche retombait sur « non vérifié » sans recours) | ✅ |
 | R6 | ~~Galerie de photos — l'onglet Documents exigeait une URL collée~~ — **fait** (Lot E) | ✅ |
 | R7 | ~~Upload dans l'onglet Documents~~ — **fait** (Lot E) | ✅ |
-| R8 | Bouton « réutiliser cette fiche » quand un doublon est détecté | M |
+| R8 | ~~Bouton « réutiliser cette fiche » quand un doublon est détecté~~ — **fait** : le wizard (pré-vérification) et la fiche (refus du garde) listent les pièces existantes avec un lien direct — « réutiliser cette fiche », « ouvrir la fiche », « comparer ». Un refus du garde ne laisse plus l'utilisateur sans chemin. | ✅ |
 | R9 | ~~`addVariante` : exposer `accepterDoublon` / `motifReemploi` dans son formulaire~~ — **fait** : la fiche offre la case « réemploi assumé » + motif (10 caractères min), comme le wizard. Sans cela, le garde transformait « Ajouter une variante » en impasse : le serveur refusait, l'écran ne permettait pas de répondre. | ✅ |
 | R14 | Occasion **affichée et éditable sur la fiche variante** (R4 ne couvrait que la création) ; repasser une pièce en « neuf » efface ses champs d'occasion (`null` explicite, pas un mot laissé en place). | ✅ |
 
@@ -214,7 +214,8 @@ fichier : **310 erreurs**, dont **0 sur les fichiers de ce chantier**.
 | Pièces — corrections TypeScript `stock.ts` | `d16482c` | ❌ |
 | Pièces — photos + documents + logique (Lots E, F) | `0681dde` | ❌ |
 | Pièces — qualification visible et posable (R5) | `30c1086`, `a1cd14e` | ❌ |
-| Pièces — interfaces : réemploi (R9), mobile (R3), occasion fiche variante (R14) | *ce commit* | ❌ |
+| Pièces — interfaces : réemploi (R9), mobile (R3), occasion fiche variante (R14) | `fac3998` | ❌ |
+| Pièces — « réutiliser cette fiche » sur doublon (R8) | *ce commit* | ❌ |
 
 Le push des lots pièces appliquerait `0023` en production, ce qui pose une
 **contrainte d'unicité** après dédoublonnage. Écriture en production : décision

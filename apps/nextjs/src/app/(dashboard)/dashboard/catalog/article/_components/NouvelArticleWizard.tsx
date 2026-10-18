@@ -962,6 +962,7 @@ function DoublonCheck({ reference, nom, marque, categorieId, caracteristiques, o
     categorieId,
     caracteristiques: caracteristiques?.length ? caracteristiques : undefined,
   });
+  const router = useRouter();
   const exacts = data?.exacts?.length ?? 0;
   const equivalents = data?.equivalents?.length ?? 0;
   const probabilite = data?.probabilite ?? null;
@@ -987,10 +988,34 @@ function DoublonCheck({ reference, nom, marque, categorieId, caracteristiques, o
         )}
       </div>
       <ul className="mt-1 space-y-0.5 text-muted-foreground">
-        {(data?.exacts ?? []).slice(0, 3).map((e: any) => <li key={e.id}>• {e.titre}{e.marque ? ` (${e.marque})` : ""}</li>)}
-        {(data?.equivalents ?? []).slice(0, 3).map((e: any) => <li key={e.id}>• équivalente : {e.reference} {e.articleDesignation ? `— ${e.articleDesignation}` : ""}</li>)}
+        {(data?.exacts ?? []).slice(0, 3).map((e: any) => (
+          <li key={e.id}>
+            • {e.titre}{e.marque ? ` (${e.marque})` : ""}{" "}
+            <button type="button" className="font-medium text-primary underline underline-offset-2" onClick={() => router.push(`/dashboard/catalog/variante/${e.id}`)}>
+              réutiliser cette fiche →
+            </button>
+          </li>
+        ))}
+        {(data?.equivalents ?? []).slice(0, 3).map((e: any) => (
+          <li key={e.id}>
+            • équivalente : {e.reference} {e.articleDesignation ? `— ${e.articleDesignation}` : ""}
+            {e.articleId != null && (
+              <>
+                {" "}
+                <button type="button" className="font-medium text-primary underline underline-offset-2" onClick={() => router.push(`/dashboard/catalog/article/${e.articleId}`)}>
+                  ouvrir l&apos;article →
+                </button>
+              </>
+            )}
+          </li>
+        ))}
         {candidats.filter((c: any) => (c.raisons ?? []).length > 0).slice(0, 4).map((c: any) => (
-          <li key={c.id}>• {c.titre}{c.marque ? ` (${c.marque})` : ""} — {(c.raisons ?? []).join(" · ")}</li>
+          <li key={c.id}>
+            • {c.titre}{c.marque ? ` (${c.marque})` : ""} — {(c.raisons ?? []).join(" · ")}{" "}
+            <button type="button" className="font-medium text-primary underline underline-offset-2" onClick={() => router.push(`/dashboard/catalog/variante/${c.id}`)}>
+              comparer →
+            </button>
+          </li>
         ))}
       </ul>
       <p className="mt-1">Vous pouvez créer quand même si la référence est réellement distincte (prix, fournisseur, marque…).</p>

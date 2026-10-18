@@ -124,6 +124,7 @@ export default function ArticleDetailPage() {
   const photoInputRef = useRef<HTMLInputElement>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
   const [reemploi, setReemploi] = useState({ actif: false, motif: "" });
+  const [conflitRef, setConflitRef] = useState<string | null>(null);
   const [refEq, setRefEq] = useState({ marque: "", reference: "", note: "", niveauVerification: "NON_VERIFIE" });
   const [comp, setComp] = useState<any>({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "", niveauVerification: "NON_VERIFIE" });
 
@@ -132,11 +133,19 @@ export default function ArticleDetailPage() {
       toast.success("Variante ajoutée");
       setShowVariante(false);
       setReemploi({ actif: false, motif: "" });
+      setConflitRef(null);
       setNv({ marque: "", referenceFabricant: "", referencePrincipale: "", codeArticle: "", conditionnement: "", prixAchat: "", prixVente: "", prixPro: "", prixParticulier: "", tva: "", uniteStockId: "", stockInitial: "", emplacementStockId: "", fournisseurId: 0, typeOutil: "INDIVIDUEL", etatEquipement: "", etatProduit: "NEUF", origineProduit: "AFTERMARKET", positionCote: "N_A", positionEssieu: "N_A", seuilAlerte: "5", stockSecurite: "", pointCommande: "", qteMinCommande: "", numeroSerie: "", numeroLot: "", garantieMois: "", estCore: false, valeurCore: "", calibrable: false, numeroImmobilisation: "",
     occasionEtatConstate: "", occasionDefauts: "", occasionProvenance: "", occasionKilometrage: "", occasionGarantieMois: "" });
       utils.articles.getArticle.invalidate();
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => {
+      // Un CONFLICT du garde n'est pas qu'un refus : on va chercher la pièce
+      // existante pour proposer « ouvrir la fiche », pas seulement dire non.
+      if ((e as any)?.data?.code === "CONFLICT") {
+        setConflitRef(nv.referencePrincipale.trim() || nv.referenceFabricant.trim() || nv.codeBarre.trim() || nv.codeArticle.trim() || null);
+      }
+      toast.error(e.message);
+    },
   });
   const updateArticle = api.articles.updateArticle.useMutation({
     onSuccess: () => {
@@ -516,7 +525,7 @@ export default function ArticleDetailPage() {
                   </div>
                 )}
                 {canModifier && (
-                  <Button size="sm" onClick={() => setShowVariante(true)} className="gap-1.5 text-xs">
+                  <Button size="sm" onClick={() => { setShowVariante(true); setReemploi({ actif: false, motif: "" }); setConflitRef(null); }} className="gap-1.5 text-xs">
                     <Plus size={13} /> {estOutil ? "Ajouter un exemplaire" : "Ajouter une variante"}
                   </Button>
                 )}
@@ -1029,6 +1038,7 @@ export default function ArticleDetailPage() {
                 </>
               )}
             </div>
+            {conflitRef && <DoublonsExistants reference={conflitRef} />}
             <div className="rounded-lg border border-border bg-muted/30 p-3">
               <label className="flex items-center gap-1.5 text-xs font-medium">
                 <input type="checkbox" checked={reemploi.actif} onChange={(e) => setReemploi({ ...reemploi, actif: e.target.checked })} className="size-3.5" />
@@ -1047,6 +1057,41 @@ export default function ArticleDetailPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Quand le garde anti-doublons refuse, la fiche montre les pièces qui
+ *  existent déjà — avec le chemin pour les ouvrir. Un refus sans issue est
+ *  un mur, pas une règle. */
+function DoublonsExistants({ reference }: { reference: string }) {
+  const { data, isLoading } = api.articles.detecterDoublons.useQuery({ reference });
+  if (isLoading) return <p className="text-xs text-muted-foreground">Recherche des pièces existantes…</p>;
+  const exacts = data?.exacts ?? [];
+  const candidats = (data?.candidats ?? []).filter((c: any) => (c.raisons ?? []).length > 0).slice(0, 4);
+  if (!exacts.length && !candidats.length) return null;
+  return (
+    <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs">
+      <p className="font-semibold text-destructive">Pièce(s) déjà enregistrée(s) pour « {reference} »</p>
+      <ul className="mt-1 space-y-0.5">
+        {exacts.slice(0, 3).map((e: any) => (
+          <li key={e.id}>
+            • {e.titre}{e.marque ? ` (${e.marque})` : ""}{" "}
+            <Link href={`/dashboard/catalog/variante/${e.id}`} className="font-medium text-primary underline underline-offset-2">
+              ouvrir la fiche →
+            </Link>
+          </li>
+        ))}
+        {candidats.map((c: any) => (
+          <li key={c.id} className="text-muted-foreground">
+            • {c.titre}{c.marque ? ` (${c.marque})` : ""} — {(c.raisons ?? []).join(" · ")}{" "}
+            <Link href={`/dashboard/catalog/variante/${c.id}`} className="font-medium text-primary underline underline-offset-2">
+              comparer →
+            </Link>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-muted-foreground">Deux SKU pour une pièce, c&apos;est du stock invisible — ou déclarez le réemploi ci-dessous.</p>
     </div>
   );
 }
