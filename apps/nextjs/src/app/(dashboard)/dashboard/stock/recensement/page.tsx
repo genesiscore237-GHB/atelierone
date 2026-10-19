@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
+import { ZONES_STOCKAGE, type ZoneStockage, libelleZone } from "~/lib/emplacements";
 import { Button } from "~/components/ui/button";
 import { EmptyState } from "~/components/ui/empty-state";
 import { BarcodeScanner } from "~/components/stock/BarcodeScanner";
@@ -98,6 +99,22 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
     () => (emplacements ?? []).filter((e: { isActive: boolean }) => e.isActive !== false),
     [emplacements],
   );
+
+  // ── Regroupement par ZONE (Lot 1, étape 4.3) ───────────────────────────────
+  // id d'emplacement → { code, zone } : la façon la plus directe de répondre
+  // « où est-ce rangé ? » sans recharger une query pour chaque ligne.
+  const infoEmplacements = useMemo(() => {
+    const m = new Map<number, { code: string; libelle: string | null; zone: string }>();
+    for (const e of (emplacements ?? []) as Array<{
+      id: number;
+      code: string;
+      libelle: string | null;
+      zoneStockage: string | null;
+    }>) {
+      m.set(e.id, { code: e.code, libelle: e.libelle, zone: e.zoneStockage ?? "NORMAL" });
+    }
+    return m;
+  }, [emplacements]);
 
   // ── Recherche ──────────────────────────────────────────────────────────────
   const rechercheActive = texte.trim().length >= 2 && produitChoisi === null;
@@ -681,60 +698,122 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
           title="Aucune ligne saisie"
           description="Cherchez une pièce ci-dessus, indiquez la quantité et l'emplacement. Appuyez sur Entrée pour enchaîner."
         />
-      ) : (
-        <section className="overflow-hidden rounded-xl border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 text-left">Article</th>
-                <th className="px-3 py-2 text-right">Compté</th>
-                <th className="hidden px-3 py-2 text-right sm:table-cell">Connu</th>
-                <th className="px-3 py-2 text-right">Écart</th>
-                <th className="w-10" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {lignes.map((l) => {
-                const ecart = l.quantite - l.theoTotal;
-                return (
-                  <tr key={l.cle} className="bg-background">
-                    <td className="px-3 py-2">
-                      <span className="block truncate font-medium">{l.titre}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {l.codeBarre ?? "—"}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono">{l.quantite}</td>
-                    <td className="hidden px-3 py-2 text-right font-mono text-muted-foreground sm:table-cell">
-                      {l.theoTotal}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono">
-                      {ecart === 0 ? (
-                        <span className="text-muted-foreground">—</span>
-                      ) : (
-                        <span className={ecart > 0 ? "text-success-foreground" : "text-destructive"}>
-                          {ecart > 0 ? "+" : ""}
-                          {Math.round(ecart * 100) / 100}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => retirerLigne(l.cle)}
-                        className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                        aria-label={`Retirer ${l.titre}`}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
-      )}
+      ) : (() => {
+        // Trier par zone fonctionnelle (NORMAL d'abord, sans emplacement en
+        // dernier), puis par titre : le magasinier relit son écran rayon par
+        // rayon, dans le même géo-ordre qu'à l'aller-retour sur site.
+        const idxZone = (s: string): number => {
+          const i = ZONES_STOCKAGE.indexOf(s as ZoneStockage);
+          return i >= 0 ? i : ZONES_STOCKAGE.length;
+        };
+        const triees = [...lignes].sort((a, b) => {
+          const za = a.emplacementId != null
+            ? infoEmplacements.get(a.emplacementId)?.zone ?? "NORMAL"
+            : null;
+          const zb = b.emplacementId != null
+            ? infoEmplacements.get(b.emplacementId)?.zone ?? "NORMAL"
+            : null;
+          if (za === null && zb === null) return a.titre.localeCompare(b.titre);
+          if (za === null) return 1;
+          if (zb === null) return -1;
+          const d = idxZone(za) - idxZone(zb);
+          return d !== 0 ? d : a.titre.localeCompare(b.titre);
+        });
+
+        type Item = { separateur: string } | { ligne: Ligne };
+        const affichage: Item[] = [];
+        // Sentinelle « jamais définie » : le premier item pousse toujours son
+        // séparateur, même si c'est « Sans emplacement » de bout en bout.
+        let zonePrecedente: string | null | undefined = undefined;
+        for (const l of triees) {
+          const zone = l.emplacementId != null
+            ? infoEmplacements.get(l.emplacementId)?.zone ?? "NORMAL"
+            : null;
+          if (zone !== zonePrecedente) {
+            affichage.push({ separateur: zone === null ? "Sans emplacement" : libelleZone(zone) });
+            zonePrecedente = zone;
+          }
+          affichage.push({ ligne: l });
+        }
+
+        return (
+          <section className="overflow-hidden rounded-xl border border-border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/60 text-xs uppercase tracking-wider text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 text-left">Article</th>
+                  <th className="px-3 py-2 text-left">Emplacement</th>
+                  <th className="px-3 py-2 text-right">Compté</th>
+                  <th className="hidden px-3 py-2 text-right sm:table-cell">Connu</th>
+                  <th className="px-3 py-2 text-right">Écart</th>
+                  <th className="w-10" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {affichage.map((item, i) =>
+                  "separateur" in item ? (
+                    <tr key={`sep-${i}`} className="bg-muted/40">
+                      <td colSpan={6} className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        {item.separateur}
+                      </td>
+                    </tr>
+                  ) : (() => {
+                    const l = item.ligne;
+                    const ecart = l.quantite - l.theoTotal;
+                    const lieu = l.emplacementId != null ? infoEmplacements.get(l.emplacementId) : null;
+                    return (
+                      <tr key={l.cle} className="bg-background">
+                        <td className="px-3 py-2">
+                          <span className="block truncate font-medium">{l.titre}</span>
+                          <span className="block text-xs text-muted-foreground">
+                            {l.codeBarre ?? "—"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {lieu ? (
+                            <>
+                              <span className="block font-mono font-medium">{lieu.code}</span>
+                              <span className="block text-muted-foreground">
+                                {l.theoLieu} connu au lieu
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground">Sans emplacement</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono">{l.quantite}</td>
+                        <td className="hidden px-3 py-2 text-right font-mono text-muted-foreground sm:table-cell">
+                          {l.theoTotal}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono">
+                          {ecart === 0 ? (
+                            <span className="text-muted-foreground">—</span>
+                          ) : (
+                            <span className={ecart > 0 ? "text-success-foreground" : "text-destructive"}>
+                              {ecart > 0 ? "+" : ""}
+                              {Math.round(ecart * 100) / 100}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() => retirerLigne(l.cle)}
+                            className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            aria-label={`Retirer ${l.titre}`}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })(),
+                )}
+              </tbody>
+            </table>
+          </section>
+        );
+      })()}
 
       {/* ── Validation ─────────────────────────────────────────────────────── */}
       {lignes.length > 0 && (

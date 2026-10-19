@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import {
@@ -11,12 +12,15 @@ import {
   MapPin,
   Package,
   Plus,
+  Printer,
   Search,
   CornerDownRight,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { EtiquetteEmplacement } from "./_components/EtiquetteEmplacement";
+import { ZONES_STOCKAGE, LABELS_ZONE_STOCKAGE, libelleZone } from "~/lib/emplacements";
 
 /**
  * EMPLACEMENTS — l'arborescence réelle du garage.
@@ -51,6 +55,8 @@ interface EmplacementPlat {
   code: string;
   libelle: string | null;
   type: string;
+  zoneStockage: string | null;
+  capacite: number | null;
   isActive: boolean | null;
 }
 
@@ -85,6 +91,63 @@ function empiler(lignes: EmplacementPlat[]): NoeudEmplacement[] {
   return racines;
 }
 
+interface ContenuEmplacementLigne {
+  produitId: number;
+  titre: string;
+  codeArticle: string | null;
+  codeBarre: string | null;
+  quantite: number;
+  valeur: number;
+}
+
+function ContenuEmplacement({
+  selected,
+  contenu,
+}: {
+  selected: number;
+  contenu: ContenuEmplacementLigne[] | undefined;
+}) {
+  if (!contenu || contenu.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">
+        <Package size={28} className="mb-2 opacity-40" />
+        <p className="text-sm font-medium text-foreground">Emplacement vide</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Aucun article stocké ici pour le moment.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-hidden rounded-xl border border-border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-muted">
+            <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Article</th>
+            <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Code</th>
+            <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Qté</th>
+            <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Valeur</th>
+          </tr>
+        </thead>
+        <tbody>
+          {contenu.map((c: ContenuEmplacementLigne) => (
+            <tr key={c.produitId} className="border-t border-border hover:bg-accent/40">
+              <td className="px-4 py-2.5 font-medium">{c.titre}</td>
+              <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
+                {c.codeArticle ?? c.codeBarre}
+              </td>
+              <td className="px-4 py-2.5 text-right font-mono">{c.quantite}</td>
+              <td className="px-4 py-2.5 text-right font-mono">
+                {Math.round(c.valeur).toLocaleString("fr-FR")} F
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function EmplacementsPage() {
   const utils = api.useUtils();
   const [search, setSearch] = useState("");
@@ -92,10 +155,32 @@ export default function EmplacementsPage() {
   const [parentChoisi, setParentChoisi] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [plies, setPlies] = useState<Set<number>>(new Set());
-  const [form, setForm] = useState({ code: "", libelle: "", type: "RAYON" });
+  const [form, setForm] = useState({
+    code: "",
+    libelle: "",
+    type: "RAYON",
+    zoneStockage: "NORMAL" as (typeof ZONES_STOCKAGE)[number],
+    capacite: "",
+  });
+  // Étiquette ouverte : c'est l'ID de l'emplacement choisi (le QR de
+  // l'étiquette envoie ici même, avec `?p=CODE`).
+  const [etiquetteDe, setEtiquetteDe] = useState<number | null>(null);
 
   const { data: arbre, isLoading, isError, refetch } =
     api.stock.arborescenceEmplacements.useQuery({});
+
+  // Scanner un code et arriver sur la liste : le paramètre ?p=CODE
+  // présélectionne l'emplacement visé. Le QR encode exactement cette
+  // URL (voir EtiquetteEmplacement).
+  const params = useSearchParams();
+  useEffect(() => {
+    const codeCible = params?.get("p");
+    if (!codeCible || !arbre || selected !== null) return;
+    const trouve = (arbre as EmplacementPlat[]).find(
+      (e) => e.code.toLowerCase() === codeCible.toLowerCase(),
+    );
+    if (trouve) setSelected(trouve.id);
+  }, [params, arbre, selected]);
 
   const { data: contenu } = api.stock.getEmplacementContenu.useQuery(
     { emplacementId: selected ?? 0 },
@@ -107,12 +192,26 @@ export default function EmplacementsPage() {
       toast.success(parentChoisi ? "Sous-emplacement créé" : "Emplacement créé");
       utils.stock.arborescenceEmplacements.invalidate();
       utils.stock.listEmplacements.invalidate();
+      utils.stock.getEmplacementContenu.invalidate();
       setShowForm(false);
-      setForm({ code: "", libelle: "", type: "RAYON" });
+      setForm({ code: "", libelle: "", type: "RAYON", zoneStockage: "NORMAL", capacite: "" });
       setParentChoisi(null);
     },
     onError: (e) => toast.error(e.message),
   });
+
+  const update = api.stock.updateEmplacement.useMutation({
+    onSuccess: () => {
+      toast.success("Emplacement mis à jour");
+      utils.stock.arborescenceEmplacements.invalidate();
+      utils.stock.listEmplacements.invalidate();
+      setShowZoneModif(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const [zoneModifId, setZoneModifId] = useState<number | null>(null);
+  const [zoneModif, setZoneModif] = useState<(typeof ZONES_STOCKAGE)[number]>("NORMAL");
+  const [showZoneModif, setShowZoneModif] = useState(false);
 
   /**
    * Applique la recherche à l'ARBRE, pas à une liste.
@@ -174,10 +273,15 @@ export default function EmplacementsPage() {
       });
       return;
     }
+    const capaciteN = Number(form.capacite);
     create.mutate({
       code: form.code.trim().toUpperCase(),
       libelle: form.libelle.trim() || undefined,
       type: form.type,
+      zoneStockage: form.zoneStockage,
+      capacite: form.capacite.trim() !== "" && Number.isFinite(capaciteN) && capaciteN >= 1
+        ? Math.floor(capaciteN)
+        : undefined,
       parentId: parentChoisi ?? undefined,
     });
   };
@@ -234,15 +338,37 @@ export default function EmplacementsPage() {
             </span>
           </button>
           <div className="flex shrink-0 items-center gap-2 pl-2">
+            {/* La zone FONCTIONNELLE est visible d'un coup d'œil : c'est elle
+                qui dit « pas de prise ici » en quarantaine, « périmés » en
+                zone PERIMES — le type physique seul ne le dit pas. */}
+            {n.zoneStockage && n.zoneStockage !== "NORMAL" && (
+              <span className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning-foreground">
+                {libelleZone(n.zoneStockage)}
+              </span>
+            )}
+            {n.capacite != null && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground" title="Capacité">
+                {n.capacite} max
+              </span>
+            )}
             <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase text-muted-foreground">
               {n.type}
             </span>
             <button
               type="button"
+              onClick={() => setEtiquetteDe(n.id)}
+              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              aria-label={`Imprimer l'étiquette de ${n.code}`}
+              title="Étiquette (code + QR)"
+            >
+              <Printer size={14} />
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 setParentChoisi(n.id);
                 setShowForm(true);
-                setForm({ code: "", libelle: "", type: n.type });
+                setForm({ code: "", libelle: "", type: n.type, zoneStockage: "NORMAL", capacite: "" });
               }}
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
               aria-label={`Ajouter un sous-emplacement dans ${n.code}`}
@@ -302,7 +428,7 @@ export default function EmplacementsPage() {
               Créer à la racine plutôt que dans {noeudParent.code}
             </button>
           )}
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label className="text-xs text-muted-foreground">Code * (ZONE-ALLEE-RAYON-NIVEAU)</Label>
               <Input
@@ -328,10 +454,10 @@ export default function EmplacementsPage() {
                 value={form.type}
                 onChange={(e) => setForm({ ...form, type: e.target.value })}
               >
-                {/* Les six types réellement présents dans les données relevées
-                    (ZONE 6 · RAYON 16 · BAC 4 · ATELIER 3 · CASIER 1 · BUREAU 1)
-                    sont proposés : un vocabulaire restreint à ce que le garage
-                    utilise évite d'inventer des emplacements incomparables. */}
+                {/* Les types réellement présents dans les données relevées
+                    (ZONE, RAYON, BAC, ATELIER, CASIER, BUREAU…) sont proposés :
+                    un vocabulaire restreint à ce que le garage utilise évite
+                    d'inventer des emplacements incomparables. */}
                 <option value="ZONE">Zone</option>
                 <option value="RAYON">Rayon</option>
                 <option value="BAC">Bac</option>
@@ -343,6 +469,29 @@ export default function EmplacementsPage() {
                 <option value="FRIGO">Frigo</option>
                 <option value="EXTERIEUR">Extérieur</option>
               </select>
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Zone fonctionnelle</Label>
+              <select
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                value={form.zoneStockage}
+                onChange={(e) => setForm({ ...form, zoneStockage: e.target.value as (typeof ZONES_STOCKAGE)[number] })}
+              >
+                {ZONES_STOCKAGE.map((z) => (
+                  <option key={z} value={z}>{LABELS_ZONE_STOCKAGE[z]}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Capacité (nombre d&apos;articles, optionnel)</Label>
+              <Input
+                type="number"
+                min={1}
+                value={form.capacite}
+                onChange={(e) => setForm({ ...form, capacite: e.target.value })}
+                placeholder="ex: 50"
+                className="mt-1"
+              />
             </div>
           </div>
           <div className="mt-4 flex gap-2">
@@ -396,54 +545,96 @@ export default function EmplacementsPage() {
         <div>
           <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
             <Package size={14} className="text-primary" />
-            Contenu de l&apos;emplacement
+            {selected != null ? "Emplacement sélectionné" : "Contenu de l'emplacement"}
           </div>
           {!selected ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">
               <MapPin size={28} className="mb-2 opacity-40" />
               <p className="text-sm font-medium text-foreground">Sélectionnez un emplacement</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Pour voir les articles qui y sont stockés.
+                Pour voir la fiche (zone, capacité, étiquette) et les articles qui y sont stockés.
               </p>
             </div>
-          ) : !contenu || contenu.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">
-              <Package size={28} className="mb-2 opacity-40" />
-              <p className="text-sm font-medium text-foreground">Emplacement vide</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Aucun article stocké ici pour le moment.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-xl border border-border">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-muted">
-                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Article</th>
-                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Code</th>
-                    <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Qté</th>
-                    <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Valeur</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {contenu.map((c: { produitId: number; titre: string; codeArticle: string | null; codeBarre: string | null; quantite: number; valeur: number }) => (
-                    <tr key={c.produitId} className="border-t border-border hover:bg-accent/40">
-                      <td className="px-4 py-2.5 font-medium">{c.titre}</td>
-                      <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
-                        {c.codeArticle ?? c.codeBarre}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono">{c.quantite}</td>
-                      <td className="px-4 py-2.5 text-right font-mono">
-                        {Math.round(c.valeur).toLocaleString("fr-FR")} F
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          ) : (() => {
+            const sel = cheminDe(selected);
+            if (!sel) return null;
+            return (
+              <>
+                {/* Fiche : zone fonctionnelle + capacité éditables, avec
+                    bouton Enregistrer — jamais de champ libre sans validation. */}
+                <div className="mb-3 rounded-xl border border-border bg-card p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-sm font-bold">{sel.code}</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1"
+                      onClick={() => setEtiquetteDe(sel.id)}
+                    >
+                      <Printer size={13} /> Étiquette
+                    </Button>
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Zone fonctionnelle</Label>
+                      <select
+                        className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                        value={sel.zoneStockage ?? "NORMAL"}
+                        onChange={(e) => update.mutate({ id: sel.id, zoneStockage: e.target.value as (typeof ZONES_STOCKAGE)[number] })}
+                      >
+                        {ZONES_STOCKAGE.map((z) => (
+                          <option key={z} value={z}>{LABELS_ZONE_STOCKAGE[z]}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Capacité (articles)</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        className="mt-1"
+                        defaultValue={sel.capacite ?? ""}
+                        placeholder="Aucune limite"
+                        onBlur={(e) => {
+                          const n = Number(e.target.value);
+                          if (e.target.value.trim() === "") {
+                            if (sel.capacite != null) update.mutate({ id: sel.id, capacite: null });
+                            return;
+                          }
+                          if (Number.isFinite(n) && n >= 1 && n !== sel.capacite) {
+                            update.mutate({ id: sel.id, capacite: Math.floor(n) });
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {libelleZone(sel.zoneStockage)} — le changement s&apos;enregistre à la sélection,{" "}
+                    <span className="whitespace-nowrap">cf.</span> le formulaire initial pour un nouvel emplacement.
+                  </p>
+                </div>
+                <ContenuEmplacement selected={selected} contenu={contenu} />
+              </>
+            );
+          })()}
         </div>
       </div>
+      {etiquetteDe != null && (() => {
+        const et = ((arbre ?? []) as EmplacementPlat[]).find((e) => e.id === etiquetteDe);
+        if (!et) return null;
+        return (
+          <EtiquetteEmplacement
+            emplacement={{
+              id: et.id,
+              code: et.code,
+              libelle: et.libelle,
+              type: et.type,
+              zoneStockage: et.zoneStockage,
+            }}
+            fermer={() => setEtiquetteDe(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
