@@ -4,6 +4,7 @@ import { clients } from "./clients";
 import { vehicules } from "./vehicules";
 import { produits } from "./produits";
 import { employes } from "./employes";
+import { fournisseurs } from "./fournisseurs";
 import { utilisateurs } from "./utilisateurs";
 
 /**
@@ -49,7 +50,16 @@ export const ordresReparation = pgTable("ordres_reparation", {
   savOrigineOrId: integer("sav_origine_or_id"), // lien vers l'OR d'origine si retour SAV
   motifRetourSAV: varchar("motif_retour_sav", { length: 40 }), // CONSIGNE_NON_RESPECTEE | MALFACON | DIAGNOSTIC_ERRONE | PIECE_DEFAILLANTE | AUTRE
   familleService: varchar("famille_service", { length: 40 }), // MECANIQUE_LEGERE | FREINAGE | DIAGNOSTIC | CARROSSERIE | DISTRIBUTION | CLIMATISATION | ELECTRONIQUE | GROSSE_MECA | AUTRE
-  satisfactionNote: integer("satisfaction_note"), // 1-5 étoiles (saisie à la livraison)
+  satisfactionNote: integer("satisfaction_note"),
+  // ─── Sous-traitance (migration 0026) ───
+  // La decision d'envoyer un vehicule chez un prestataire etait prise
+  // en reunion tous les jours, et n'etait consignee nulle part : le
+  // dossier n'y portait ni statut, ni prestataire, ni date de retour.
+  // Le vocabulaire est contraint par une CHECK en base.
+  sousTraitanceStatut: varchar("sous_traitance_statut", { length: 30 }),
+  sousTraitanceFournisseurId: integer("sous_traitance_fournisseur_id").references(() => fournisseurs.id),
+  sousTraitanceRetourPrevu: date("sous_traitance_retour_prevu"),
+  sousTraitanceNote: text("sous_traitance_note"), // 1-5 étoiles (saisie à la livraison)
   satisfactionCommentaire: text("satisfaction_commentaire"),
   creePar: integer("cree_par").references(() => utilisateurs.id),
   notes: text("notes"),

@@ -123,3 +123,38 @@ export const atelierNotifications = pgTable("atelier_notifications", {
   lueLe: timestamp("lue_le"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+/**
+ * JOURNAL D'INTERVENTION — le compte rendu du technicien, en AJOUT SEUL.
+ *
+ * ÉTAPE 7 (revue de parc). `lignes_ordre_reparation` portait `technicien_id` et
+ * `statut`, mais AUCUN champ libre : un technicien pouvait changer l'état d'un
+ * travail, mais pas écrire ce qu'il avait constaté ni ce qu'il fallait ensuite.
+ *
+ * En réunion du matin, la question posée au chef de garage est précisément :
+ * « qu'a-t-il fait, qu'a-t-il vu, et qu'est-ce qui manque ? ». Répondre
+ * supposait de le savoir de mémoire — et le lendemain, plus personne.
+ *
+ * D'où cette table, en AJOUT SEUL :
+ *   - elle ne remplace rien, elle s'ajoute ;
+ *   - elle est datée et signée (`technicien_id`, `created_at`) ;
+ *   - le dernier enregistrement est « le dernier constat » ;
+ *   - toute la série est « l'évolution des travaux ».
+ *
+ * Trois champs et non un pavé libre : en revue on lit en diagonale.
+ * Un texte unique, on ne le lit pas.
+ */
+export const orInterventions = pgTable("or_interventions", {
+  id: serial("id").primaryKey(),
+  ligneId: integer("ligne_id").notNull().references(() => lignesOrdreReparation.id, { onDelete: "cascade" }),
+  orId: integer("or_id").notNull().references(() => ordresReparation.id, { onDelete: "cascade" }),
+  vehiculeId: integer("vehicule_id").references(() => vehicules.id, { onDelete: "cascade" }),
+  technicienId: integer("technicien_id").references(() => employes.id),
+  // Ce que j'ai fait.
+  intervention: text("intervention"),
+  // Ce que j'ai vu. C'est LE champ que la revue du matin lit en premier.
+  constat: text("constat"),
+  // Ce qu'il faut pour la suite.
+  suite: text("suite"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
