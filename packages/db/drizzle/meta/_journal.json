@@ -198,5 +198,12 @@
       "when": 1792800000014,
       "tag": "0027_raison_immobilisation"
     }
+    ,
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792800000015,
+      "tag": "0028_mirroirs_stock"
+    }
   ]
 }
