@@ -98,15 +98,16 @@ sans dédoublement, et `detectBarcodeType` vit en `server/lib/barcodes.ts`.
 | 3.2 | Mode « Identification complète » (type, marque, réf. fabricant, OEM, code-barres, prix d'achat, note, photo via `/api/uploads`, classification 3 niveaux) ; le refus CONFLICT ouvre la sortie de réemploi motivé, dans le panneau | idem | photo + réf. enregistrées | ✅ |
 | 3.3 | Champs pilotés par la famille : `ontology.getDefinitionsForCategory` (portée VARIANTE) — select/input/liste rendus selon `typeAttribut`, `obligatoire` bloquant avant soumission | idem + serveur : `categorieId`, `attributs`, `photos` dans `creerPieceEtCompter` | champs `obligatoire` imposés | ✅ |
 | 3.4 | Bouton « Créer la fiche » caché sans `stock.modifier` ; un message explicite remplace le bouton, et le serveur refuse de toute façon (`stock.modifier` requis) | idem | permission sincère | ✅ |
-| 4.1 | Zones d'emplacement (NORMAL, RÉCEPTION, QUARANTAINE, REBETS, PÉRIMÉS) + capacité | `0026_emplacements_stockage.sql` | zones visibles au choix | ⬜ |
-| 4.2 | Étiquette imprimable (code + QR) | `emplacements/page.tsx` | étiquette imprimée | ⬜ |
-| 4.3 | Récapitulatif : colonne emplacement + regroupement par zone + `theoLieu` affiché | `recensement/page.tsx` | visible à l'écran | ⬜ |
+| 4.1 | Zones d'emplacement (NORMAL, RÉCEPTION, QUARANTAINE, REBUTS, PÉRIMÉS) + capacité | `0029_emplacements_stockage.sql` | zones visibles au choix | ✅ lokal |
+| 4.2 | Étiquette imprimable (code + QR) | `emplacements/page.tsx`, `_components/EtiquetteEmplacement.tsx` (`qrcode.react` ; QR → `?p=CODE`) | étiquette imprimée | ✅ lokal |
+| 4.3 | Récapitulatif : colonne emplacement + regroupement par zone + `theoLieu` affiché | `recensement/page.tsx` | visible à l'écran | ✅ lokal |
+| 4.4 | Test d'intégration — migration rejouée 2×, zone/capacité persistées, `update` change la zone et retire la capacité, CHECK refus d'une zone hors liste | `stock-emplacements-zones.integration.test.ts` | 4/4 verts | ✅ |
 | 5.1 | `planDePrise()` : FEFO DLC effective puis emplacement accessible | `stock-engine.ts` | test vert | ⬜ |
 | 5.2 | Le plan est AFFICHÉ avant confirmation de sortie | `stock-engine.ts` + UI | lisible avant validation | ⬜ |
-| V1 | Suite complète ≥ 1170 verts | — | vitest | ✅ 1193/1193 (96 fichiers, +1 skipped) |
-| V2 | `tsc --noEmit` = 310 | — | tsc | ✅ 310 exactement (via libellé de helper aligné sur `z.infer<typeof ligneRecensement>`) |
-| V3 | `next build` exit 0 | — | build | ✅ Compiled successfully 76 s (warnings préexistants) |
-| V4 | `pnpm db:sync` puis `pnpm db:check` = PARFAIT | — | db:check | ⬜ pré-push (0023→0025 en attente ; hook pre-push résorbera l'ECART BLOQUANT) |
+| V1 | Suite complète ≥ 1170 verts | — | vitest | ✅ 1199/1199 (97 fichiers, +3 skipped — étape 4 incluse) |
+| V2 | `tsc --noEmit` = 310 exactement | — | tsc | 🔶 baseline actée : les SEULES erreurs résiduelles viennent de `garage/vehicules/page.tsx`, fichier en cours d'écriture par la session concurrente (0 erreur dans les fichiers de l'étape 4) |
+| V3 | `next build` exit 0 | — | build | ✅ 76 s avant étape 4 (frontière ré-contrôlée : la lib `~/lib/emplacements.ts` est pure et le composant étiquette n'importe ni base ni serveur ; build complet à rejouer une fois le fichier concurrent réparé) |
+| V4 | `pnpm db:sync` puis `pnpm db:check` = PARFAIT | — | db:check | ✅ **passé au push du 2026-10-19** : hook pre-push applique les migrations (+ 0026-0028 stock) sur Neon depuis l'endpoint direct, `db:check` = schéma identique (21 écarts de données d'exploitation tolérés). **0029 sera poussé ainsi à son tour** |
 | V5 | Passe manuelle de l'écran avec l'utilisateur | — | validation | ⬜ après l'étape 3 |
 
 ---
@@ -123,4 +124,4 @@ sans dédoublement, et `detectBarcodeType` vit en `server/lib/barcodes.ts`.
 
 ## Ce qui se passe après ce lot
 
-Les **9 commits locaux** seront poussés : le hook `pre-push` appliquera `0023` + `0024` + `0025` + `0026` sur Neon et vérifiera `db:check` — une dérive bloque le push.
+Les commits sont poussés norme le 2026-10-19 : le hook `pre-push` a appliqué `0023` à `0028` sur Neon et vérifié `db:check` (schéma identique). `0029` (`0029_emplacements_stockage.sql`) partira de même au prochain push — une dérive bloquerait le push.
