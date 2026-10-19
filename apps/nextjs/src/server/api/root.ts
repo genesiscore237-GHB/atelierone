@@ -2,7 +2,6 @@ import { userRouter } from "~/server/api/routers/user";
 import { settingsRouter } from "~/server/api/routers/settings";
 import { catalogRouter } from "~/server/api/routers/catalog";
 import { articlesRouter } from "~/server/api/routers/articles-router";
-import { inventoryRouter } from "~/server/api/routers/inventory";
 import { posRouter } from "~/server/api/routers/pos";
 import { financeRouter } from "~/server/api/routers/finance";
 import { auditRouter } from "~/server/api/routers/audit";
@@ -76,7 +75,6 @@ export const appRouter = createTRPCRouter({
   catalog: catalogRouter,
   articles: articlesRouter,
   reference: referenceRouter,
-  inventory: inventoryRouter,
   pos: posRouter,
   finance: financeRouter,
   audit: auditRouter,

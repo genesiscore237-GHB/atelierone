@@ -3,7 +3,7 @@
 import { api } from "~/trpc/react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { Package, AlertTriangle, Activity, TrendingUp, ArrowRight, Repeat, ClipboardList, ListOrdered, RefreshCw, ShieldAlert, Snowflake, Store, CalendarClock, SearchCheck, BellRing, Hammer, Wrench, ShoppingCart, Droplets, HandHelping, Search, Plus } from "lucide-react";
+import { Package, AlertTriangle, Activity, TrendingUp, ArrowRight, Repeat, ClipboardList, ListOrdered, RefreshCw, ShieldAlert, Snowflake, Store, CalendarClock, SearchCheck, BellRing, Hammer, Wrench, ShoppingCart, Droplets, Plus } from "lucide-react";
 
 const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } };
 const item = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
@@ -31,12 +31,7 @@ export default function StockDashboardPage() {
     { label: "Pièces stock bas", value: alertesList.filter((a: any) => a.typeProduit !== "CONSOMMABLE").length, icon: Package, color: "text-warning-foreground", bg: "bg-warning/10", href: "/dashboard/stock/alertes" },
     { label: "Huiles sous seuil", value: huilesSousSeuil.length, icon: Droplets, color: "text-info-foreground", bg: "bg-info/10", href: "/dashboard/stock/alertes" },
   ];
-  const magasinActions = [
-    { label: "Nouvelle sortie d'outil", href: "/dashboard/stock/outillage", icon: HandHelping, color: "text-primary", bg: "bg-primary/10" },
-    { label: "Recherche pièce", href: "/dashboard/stock/chercher-avant-commander", icon: Search, color: "text-success-foreground", bg: "bg-success/10" },
-    { label: "Sortie d'huile", href: "/dashboard/stock/chercher-avant-commander", icon: Droplets, color: "text-info-foreground", bg: "bg-info/10" },
-    { label: "Nouvel article", href: "/dashboard/catalog/article/nouveau", icon: Plus, color: "text-primary", bg: "bg-primary/10" },
-  ];
+  // Une seule barre d'actions rapides (grille latérale plus bas) — sans doublons.
 
   const summaryCards = [
     { label: "Produits en stock", value: dashboard?.totalProduits ?? 0, icon: Package, color: "text-success-foreground", bg: "bg-success/10" },
@@ -57,6 +52,7 @@ const quickActions = [
     { label: "Ajuster stock", href: "/dashboard/stock/ajustement-manuel", icon: RefreshCw, color: "text-destructive", bg: "bg-destructive/10" },
     { label: "Pièces pour réparation (OR)", href: "/dashboard/ordres-reparation", icon: Wrench, color: "text-info-foreground", bg: "bg-info/10" },
     { label: "Commandes & réceptions", href: "/dashboard/procurement", icon: ShoppingCart, color: "text-primary", bg: "bg-primary/10" },
+    { label: "Nouvel article", href: "/dashboard/catalog/article/nouveau", icon: Plus, color: "text-primary", bg: "bg-primary/10" },
   ];
 
   return (
@@ -99,14 +95,6 @@ const quickActions = [
           </Link>
         ))}
       </div>
-      <div className="flex flex-wrap gap-2">
-        {magasinActions.map((a) => (
-          <Link key={a.label} href={a.href} className={`inline-flex items-center gap-2 rounded-lg ${a.bg} ${a.color} px-3 py-2 text-xs font-semibold transition-opacity hover:opacity-80`}>
-            <a.icon size={14} /> {a.label}
-          </Link>
-        ))}
-      </div>
-
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-4">
           <div className="rounded-xl border border-border dark:border-border bg-background dark:bg-card p-4">

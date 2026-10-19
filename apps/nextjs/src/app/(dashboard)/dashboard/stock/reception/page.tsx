@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -185,10 +186,18 @@ export default function ReceptionPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <header>
-        <h1 className="text-xl font-black tracking-tight">Réception</h1>
+        <h1 className="text-xl font-black tracking-tight">Entrée de stock</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Enregistrez ce que vous venez d&apos;acheter : quantité, prix, et l&apos;endroit où vous le
-          posez.
+          posez. Cette page est réservée aux achats <strong>sans commande</strong>. Si la marchandise
+          arrive contre une commande fournisseur, passez par le contrôle à l&apos;arrivée&nbsp;:{" "}
+          <Link
+            href="/dashboard/procurement/receptions"
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            Contrôler une commande en attente
+          </Link>
+          .
         </p>
       </header>
 

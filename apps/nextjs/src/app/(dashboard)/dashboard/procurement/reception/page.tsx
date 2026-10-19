@@ -96,7 +96,7 @@ export default function ReceptionPage() {
     onSuccess: (res) => {
       setResult(res);
       utils.procurement.listReceptions.invalidate();
-      utils.inventory.listStock.invalidate();
+      utils.stock.getDashboard.invalidate();
       setSaving(false);
     },
     onError: (e) => { toast.error(e.message); setSaving(false); },

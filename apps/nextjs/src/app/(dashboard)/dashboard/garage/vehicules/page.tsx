@@ -34,6 +34,7 @@ import {
   type FiltresVehicules,
 } from "../_components/filtres";
 import { PrintVehiculesList } from "@/lib/PrintVehiculesList";
+import { RevueVehicules } from "@/components/vehicule/RevueVehicules";
 
 export default function GarageVehiculesPage() {
   const searchParams = useSearchParams();
@@ -55,6 +56,7 @@ useEffect(() => {
   const [siteId, setSiteId] = useState(() => lireFiltres(searchParams).site);
   const [nonPositionnes, setNonPositionnes] = useState(() => lireFiltres(searchParams).nonPositionnes);
   const nouveauDemande = searchParams.get("nouveau") === "1";
+  const [mode, setMode] = useState<"revue" | "registre">("revue");
   const [formOpen, setFormOpen] = useState(nouveauDemande);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [aSortir, setASortir] = useState<{ id: number; numRegistre: number } | null>(null);
@@ -118,8 +120,13 @@ useEffect(() => {
     statut: statut || undefined,
     siteId: siteId ? Number(siteId) : undefined,
     nonPositionnes: nonPositionnes ? true : undefined,
-    limit: 200,
-    }, { placeholderData: keepPreviousData, refetchInterval: intervalleTempsReel });
+limit: 200,
+  }, { placeholderData: keepPreviousData, refetchInterval: intervalleTempsReel });
+
+  const { data: revue, isLoading: revueLoading } = api.revueParc.file.useQuery(
+    { q: debouncedSearch || undefined },
+    { enabled: mode === "revue" },
+  );
 
   const canCreer = hasPermission("parking.vehicule.creer");
   const canModifier = hasPermission("parking.vehicule.modifier");
@@ -263,24 +270,48 @@ useEffect(() => {
         />
       )}
 
-      {!isLoading && !isError && vehicules.length > 0 && (
+      {/* Bascule revue / registre — visible dans les deux modes */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex-1">
+          <h2 className="text-lg font-bold text-foreground">
+            {mode === "revue" ? "Revue du parc" : "Registre des véhicules"}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {data?.total ?? 0} véhicule(s) affiché(s)
+            {aFiltres ? ` • ${nbFiltres} filtre(s) actif(s)` : ""}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setMode(mode === "revue" ? "registre" : "revue")}
+            className="text-xs font-semibold rounded-md border border-border text-primary-foreground hover:bg-primary/10 px-2 py-1"
+          >
+            {mode === "revue" ? "Voir le registre" : "Voir la revue"}
+          </button>
+        </div>
+      </div>
+
+      {mode === "revue" && <RevueVehicules />}
+
+      {mode === "registre" && !isLoading && !isError && vehicules.length > 0 && (
         <Card hover={false} className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="px-4 py-3 font-semibold">N°</th>
-                  <th className="px-4 py-3 font-semibold">Photo</th>
-                  <th className="px-4 py-3 font-semibold">Véhicule</th>
-                  <th className="px-4 py-3 font-semibold">Immatriculation</th>
-                  <th className="px-4 py-3 font-semibold">Client</th>
-                  <th className="px-4 py-3 font-semibold">Statut</th>
-                  <th className="px-4 py-3 font-semibold">Position</th>
-                  <th className="px-4 py-3 font-semibold">Emplacement</th>
-                  <th className="px-4 py-3 font-semibold">Alertes</th>
-                  <th className="px-4 py-3 font-semibold">Entrée</th>
-                  <th className="px-4 py-3 font-semibold text-right">Actions</th>
-                </tr>
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              <th className="px-4 py-3 font-semibold">N°</th>
+              <th className="px-4 py-3 font-semibold">Photo</th>
+              <th className="px-4 py-3 font-semibold">Véhicule</th>
+              <th className="px-4 py-3 font-semibold">Immatriculation</th>
+              <th className="px-4 py-3 font-semibold">Client</th>
+              <th className="px-4 py-3 font-semibold">Statut</th>
+              <th className="px-4 py-3 font-semibold">Position</th>
+              <th className="px-4 py-3 font-semibold">Emplacement</th>
+              <th className="px-4 py-3 font-semibold">Alertes</th>
+              <th className="px-4 py-3 font-semibold">Entrée</th>
+              <th className="px-4 py-3 font-semibold text-right">Actions</th>
+            </tr>
               </thead>
               <tbody>
                 {vehicules.map((v) => (
@@ -438,7 +469,6 @@ useEffect(() => {
           </div>
         </Card>
       )}
-
       <VehiculeFormDialog
         open={formOpen}
         vehicule={null}
