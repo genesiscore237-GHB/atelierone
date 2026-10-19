@@ -1059,44 +1059,23 @@ export const procurementRouter = createTRPCRouter({
             effectuePar: Number(ctx.user.id),
           });
 
-          const [existingStock] = await tx.select().from(stocks).where(and(eq(stocks.produitId, pId), eq(stocks.agenceId, ctx.user.agenceId))).limit(1) as any;
-
-          if (existingStock) {
-            const oldQte = Number(existingStock.quantite ?? 0);
-            const oldCMP = Number(existingStock.coutUnitaireMoyen ?? 0);
-            const newQte = oldQte + qteBase;
-            const newCMP = qteBase > 0 ? ((oldCMP * oldQte) + (coutUnitaireBase * qteBase)) / newQte : oldCMP;
-            await tx.update(stocks).set({ quantite: String(newQte), coutUnitaireMoyen: String(newCMP) }).where(eq(stocks.id, existingStock.id)) as any;
-            await tx.insert(mouvementsStock).values({
-              produitId: pId, agenceId: ctx.user.agenceId,
-              type: "ACHAT_RECEPTION", sens: "E",
-              quantite: String(qteBase), uniteId,
-              stockAvant: String(oldQte), stockApres: String(newQte),
-              coutUnitaireBase: String(coutUnitaireBase), reference: br.reference, referenceType: "BON_RECEPTION",
-              motif: "Réception commande", effectuePar: ctx.user.id,
-            }) as any;
-          } else {
-            await tx.insert(stocks).values({ produitId: pId, agenceId: ctx.user.agenceId, quantite: String(qteBase), uniteReferenceId: uniteId, coutUnitaireMoyen: String(coutUnitaireBase) }) as any;
-            await tx.insert(mouvementsStock).values({
-              produitId: pId, agenceId: ctx.user.agenceId,
-              type: "ACHAT_RECEPTION", sens: "E",
-              quantite: String(qteBase), uniteId,
-              stockAvant: "0", stockApres: String(qteBase),
-              coutUnitaireBase: String(coutUnitaireBase), reference: br.reference, referenceType: "BON_RECEPTION",
-              motif: "Réception commande", effectuePar: ctx.user.id,
-            }) as any;
-          }
-
-          if (uniteId) {
-            const [existingSU] = await tx.select().from(stocksUnites).where(
-              and(eq(stocksUnites.produitId, pId), eq(stocksUnites.agenceId, ctx.user.agenceId), eq(stocksUnites.uniteId, uniteId))
-            ).limit(1) as any;
-            if (existingSU) {
-              await tx.update(stocksUnites).set({ quantite: existingSU.quantite + qteRecue }).where(eq(stocksUnites.id, existingSU.id)) as any;
-            } else {
-              await tx.insert(stocksUnites).values({ produitId: pId, agenceId: ctx.user.agenceId, uniteId, quantite: qteRecue }) as any;
-            }
-          }
+          // Une seule ligne d'écriture du stock : le moteur. CMUP pondéré,
+          // journal et stock par unité sont écrits par le même appel —
+          // plus rien ne peut diverger entre table et journal.
+          await enregistrerMouvement(tx, {
+            type: TYPES_MOUVEMENT.ACHAT_RECEPTION,
+            sens: "E",
+            produitId: pId,
+            agenceId: ctx.user.agenceId,
+            quantite: qteBase,
+            uniteId: uniteId || undefined,
+            coutUnitaireBase,
+            reference: br.reference,
+            referenceType: "BON_RECEPTION",
+            motif: "Réception commande",
+            effectuePar: ctx.user.id,
+            synchroniserStocksUnites: !!uniteId,
+          });
 
           const ajustement = prixAjustesMap.get(pId);
           if (ajustement) {
@@ -1699,13 +1678,13 @@ export const procurementRouter = createTRPCRouter({
           const qteRecue = Number(ligne.quantiteRecue ?? 0);
           if (qteRecue <= 0) continue;
           const produitId = Number(ligne.produitId);
-          const [existingStock] = await tx.select().from(stocks).where(
+          // Le moteur fait foi : une seule écriture de la table de stock,
+          // de la ligne d'échantillon et du journal pour ce rejet.
+          const stocksProduit = await tx.select({ id: stocks.id, quantite: stocks.quantite, cmup: stocks.coutUnitaireMoyen }).from(stocks).where(
             and(eq(stocks.produitId, produitId), eq(stocks.agenceId, ctx.user.agenceId))
-          ).limit(1) as any;
-          if (!existingStock) continue;
-          const oldQte = Number(existingStock.quantite ?? 0);
-          const newQte = Math.max(0, oldQte - qteRecue);
-          await tx.update(stocks).set({ quantite: String(newQte) }).where(eq(stocks.id, existingStock.id)) as any;
+          ) as any;
+          if (!stocksProduit.length) continue;
+          const coutUnitaire = Number(stocksProduit[0].coutUnitaireMoyen ?? 0);
 
           const lotId = await trouverLotParReference(tx as any, {
             produitId,
@@ -1727,21 +1706,18 @@ export const procurementRouter = createTRPCRouter({
             });
           }
 
-          await tx.insert(mouvementsStock).values({
+          await enregistrerMouvement(tx, {
+            type: TYPES_MOUVEMENT.REJET_RECEPTION,
+            sens: "S",
             produitId,
             agenceId: ctx.user.agenceId,
-            type: "REJET_RECEPTION",
-            sens: "S",
-            quantite: String(qteRecue),
-            stockAvant: String(oldQte),
-            stockApres: String(newQte),
+            quantite: qteRecue,
             reference: bon.reference,
             referenceType: "BON_RECEPTION",
             motif: input.motifRejet || "Réception rejetée",
             effectuePar: ctx.user.id,
-          }) as any;
+          });
 
-          const coutUnitaire = Number(existingStock.coutUnitaireMoyen ?? 0);
           const montantPerte = qteRecue * coutUnitaire;
           if (montantPerte > 0) {
             await PertesService.enregistrerPerte({

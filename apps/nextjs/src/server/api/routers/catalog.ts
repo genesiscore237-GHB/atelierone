@@ -9,6 +9,7 @@ import { join } from "path";
 import { listerKitLignes } from "~/server/lib/kit-service";
 import { getCatalogueQualite, getQualiteDetail } from "~/server/lib/catalog-service";
 import { detectBarcodeType } from "~/server/lib/barcodes";
+import { enregistrerMouvement, TYPES_MOUVEMENT } from "~/server/lib/stock-engine";
 
 const ADMIN_ROLES = ["superadmin", "directeur", "admin"];
 
@@ -601,44 +602,30 @@ export const catalogRouter = createTRPCRouter({
         .where(eq(produits.id, p.id))
         .limit(1);
 
-      // Ajout rapide : quantité initiale → le produit est directement en stock (tracé)
+      // Ajout rapide : quantité initiale → le produit est directement en stock
+      // (tracé). Une seule ligne d'écriture du stock : le moteur. Le journal et
+      // la table ne peuvent plus diverger — c'est le même appel qui écrit les
+      // deux, évalue le CMUP et s'assure que la ligne de stock existe.
       if (input.stockInitial != null && input.stockInitial > 0 && p.typeProduit !== "SERVICE") {
         const emplacementFinal = input.emplacementStockId ?? p.emplacementPrincipalId ?? 2;
-        const [stockRow] = await db
-          .select({ id: stocks.id, quantite: stocks.quantite, cmup: stocks.coutUnitaireMoyen })
-          .from(stocks)
-          .where(and(eq(stocks.produitId, Number(p.id)), eq(stocks.agenceId, ctx.user!.agenceId), eq(stocks.emplacementId, emplacementFinal)))
-          .limit(1);
-        const stockAvant = stockRow ? Number(stockRow.quantite) : 0;
-        if (stockRow) {
-          await db.update(stocks).set({ quantite: String(stockAvant + input.stockInitial), coutUnitaireMoyen: input.prixAchat ? String(input.prixAchat) : stockRow.cmup }).where(eq(stocks.id, stockRow.id));
-        } else {
-          await db.insert(stocks).values({
+        await db.transaction(async (tx) => {
+          await enregistrerMouvement(tx, {
+            type: TYPES_MOUVEMENT.INITIAL_RECEIPT,
+            sens: "E",
             produitId: Number(p.id),
             agenceId: ctx.user!.agenceId,
+            quantite: input.stockInitial,
+            uniteId: input.uniteStockId || undefined,
             emplacementId: emplacementFinal,
-            quantite: String(input.stockInitial),
-            quantiteReservee: 0,
-            coutUnitaireMoyen: input.prixAchat ? String(input.prixAchat) : null,
-          } as any);
-        }
-        await db.insert(mouvementsStock).values({
-          produitId: Number(p.id),
-          agenceId: ctx.user!.agenceId,
-          type: "AJUSTEMENT_INVENTAIRE_POSITIF",
-          sens: "E",
-          quantite: String(input.stockInitial),
-          uniteId: input.uniteStockId || null,
-          emplacementId: emplacementFinal,
-          stockAvant: String(stockAvant),
-          stockApres: String(stockAvant + input.stockInitial),
-          coutUnitaireBase: input.prixAchat ? String(input.prixAchat) : null,
-          reference: "STOCK-INITIAL",
-          referenceType: "CREATION",
-          documentLie: "CREATION-PRODUIT",
-          motif: "Quantité initiale à la création (enregistrement progressif)",
-          effectuePar: Number(ctx.user!.id),
-        } as any);
+            coutUnitaireBase: input.prixAchat ?? undefined,
+            reference: "STOCK-INITIAL",
+            referenceType: "CREATION",
+            documentLie: "CREATION-PRODUIT",
+            motif: "Quantité initiale à la création (enregistrement progressif)",
+            effectuePar: Number(ctx.user!.id),
+            synchroniserStocksUnites: true,
+          });
+        });
       }
 
       return formatProduct(updated!);

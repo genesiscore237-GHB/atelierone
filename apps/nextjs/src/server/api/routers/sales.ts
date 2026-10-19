@@ -1,13 +1,14 @@
 import { z } from "zod";
 import { borneFin } from "~/lib/dates-periode";
 import { createTRPCRouter, posProcedure } from "~/server/api/trpc";
-import { db, ventes, ventesLignes, produits, stocks, caisses, sessionsCaisse, mouvementsCaisse, auditLogs, mouvementsStock, paiements, stocksUnites, ordresReparation } from "@atelierone/db";
+import { db, ventes, ventesLignes, produits, caisses, sessionsCaisse, mouvementsCaisse, auditLogs, paiements, ordresReparation } from "@atelierone/db";
 import { eq, and, desc, sql, gte, lte, ilike, or, inArray } from "drizzle-orm";
 import { clients } from "@atelierone/db";
 import { TRPCError } from "@trpc/server";
 import { SaleService } from "~/server/lib/sale-service";
 import { CaisseService } from "~/server/lib/caisse-service";
 import { entrerStockLot } from "~/server/lib/lot-service";
+import { enregistrerMouvement, TYPES_MOUVEMENT } from "~/server/lib/stock-engine";
 
 export const salesRouter = createTRPCRouter({
   createSale: posProcedure
@@ -241,34 +242,23 @@ export const salesRouter = createTRPCRouter({
               quantite: Number(ligne.quantite),
             });
           }
-          const [stockRow] = await tx.select().from(stocks).where(and(eq(stocks.produitId, ligne.produitId), eq(stocks.agenceId, ctx.user.agenceId))).limit(1);
-          if (stockRow) {
-            const stockAvant = Number(stockRow.quantite);
-            const stockApres = stockAvant + Number(ligne.quantite);
-            await tx.update(stocks).set({ quantite: String(stockApres) }).where(eq(stocks.id, stockRow.id)) as any;
-            await tx.insert(mouvementsStock).values({
-              produitId: ligne.produitId,
-              agenceId: ctx.user.agenceId,
-              type: "RETOUR_CLIENT", sens: "E",
-              quantite: String(ligne.quantite),
-              lotId: ligne.lotId ?? null,
-              stockAvant: String(stockAvant),
-              stockApres: String(stockApres),
-              reference: vente.reference,
-              referenceType: "ANNULATION",
-              motif: input.motif || "Annulation vente",
-              effectuePar: ctx.user.id,
-            }) as any;
-
-            if (ligne.uniteId) {
-              const [su] = await tx.select().from(stocksUnites).where(
-                and(eq(stocksUnites.produitId, ligne.produitId), eq(stocksUnites.agenceId, ctx.user.agenceId), eq(stocksUnites.uniteId, ligne.uniteId))
-              ).limit(1);
-              if (su) {
-                await tx.update(stocksUnites).set({ quantite: su.quantite + Number(ligne.quantite) }).where(eq(stocksUnites.id, su.id)) as any;
-              }
-            }
-          }
+          // Une seule ligne d'écriture du stock : le moteur. La ligne d'échantillon
+          // et le journal sont écrits par le même appel — plus de divergence
+          // possible entre l'annulation et ce que voit le stock.
+          await enregistrerMouvement(tx, {
+            type: TYPES_MOUVEMENT.RETOUR_CLIENT,
+            sens: "E",
+            produitId: ligne.produitId,
+            agenceId: ctx.user.agenceId,
+            quantite: Number(ligne.quantite),
+            uniteId: ligne.uniteId || undefined,
+            lotPourTracabilite: ligne.lotId ?? undefined,
+            reference: vente.reference,
+            referenceType: "ANNULATION",
+            motif: input.motif || "Annulation vente",
+            effectuePar: ctx.user.id,
+            synchroniserStocksUnites: !!ligne.uniteId,
+          });
         }
         await tx.update(paiements).set({ statut: "annule" }).where(eq(paiements.venteId, vente.id)) as any;
 

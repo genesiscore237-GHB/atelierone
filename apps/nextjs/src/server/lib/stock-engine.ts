@@ -18,6 +18,9 @@ export const TYPES_MOUVEMENT = {
   VENTE: "VENTE",
   RETOUR_CLIENT: "RETOUR_CLIENT",
   RETOUR_FOURNISSEUR: "RETOUR_FOURNISSEUR",
+  // Réception rejetée au contrôle : la quantité rentre à côté du fournisseur,
+  // jamais dans le magasin. Type distinct pour l'audit des rejects d'arrivage.
+  REJET_RECEPTION: "REJET_RECEPTION",
   AJUSTEMENT_INVENTAIRE_POSITIF: "AJUSTEMENT_INVENTAIRE_POSITIF",
   AJUSTEMENT_INVENTAIRE_NEGATIF: "AJUSTEMENT_INVENTAIRE_NEGATIF",
   CASSE_PERTE: "CASSE_PERTE",
