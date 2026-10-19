@@ -169,6 +169,13 @@
       "when": 1792800000010,
       "tag": "0023_pieces_qualification_et_offres",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1792800000011,
+      "tag": "0024_unites_base_produits",
+      "breakpoints": true
     }
   ]
 }
