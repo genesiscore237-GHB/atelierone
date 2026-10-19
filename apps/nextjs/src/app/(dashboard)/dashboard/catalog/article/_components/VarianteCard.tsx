@@ -8,17 +8,10 @@ import { SelectSearch } from "~/components/ui/select-search";
 import { Trash2, Plus, AlertTriangle } from "lucide-react";
 import { api } from "~/trpc/react";
 import { AttributDefLigne } from "./attribut-def-ligne";
-
-const ETATS_PRODUIT = ["NEUF", "OCCASION", "RECONDITIONNE", "REMANUFACTURE"];
-const ORIGINES_PRODUIT = ["CONSTRUCTEUR", "OEM", "AFTERMARKET", "ADAPTABLE"];
-const LIB_ETATS: Record<string, string> = { NEUF: "Neuf", OCCASION: "Occasion", RECONDITIONNE: "Reconditionné", REMANUFACTURE: "Reusiné (remanufacturé)" };
-const LIB_ORIGINES: Record<string, string> = { CONSTRUCTEUR: "Constructeur", OEM: "OEM (équivalent d'origine)", AFTERMARKET: "Après-vente (aftermarket)", ADAPTABLE: "Adaptable" };
-const COTES = ["GAUCHE", "DROITE", "CENTRAL", "LES_DEUX", "N_A"];
-const ESSIEUX = ["AVANT", "ARRIERE", "N_A"];
-const ZONES = ["INTERIEUR", "EXTERIEUR", "SUPERIEUR", "INFERIEUR", "N_A"];
-const EMPLACEMENTS_POS = ["MOTEUR", "BOITE", "ROUE", "HABITACLE", "CARROSSERIE", "FREINAGE", "CLIM", "CHASSIS", "N_A"];
-const TYPES_OUTIL = ["INDIVIDUEL", "KIT", "JEU", "MACHINE"];
-const ETATS_EQUIPEMENT = ["NEUF", "TRES_BON", "BON", "MOYEN", "USE", "ENDOMMAGE", "HORS_SERVICE", "EN_REPARATION"];
+import {
+  ETATS_PRODUIT, ORIGINES_PRODUIT, COTES, ESSIEUX, TYPES_OUTIL, ETATS_EQUIPEMENT,
+  ETAT_PRODUIT_LABELS as LIB_ETATS, ORIGINE_PRODUIT_LABELS as LIB_ORIGINES,
+} from "~/lib/variante-form";
 
 export type VarianteForm = {
   marque: string;

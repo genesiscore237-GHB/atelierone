@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "~/trpc/react";
 import {
@@ -13,6 +13,7 @@ import {
   Plus,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   AlertOctagon,
   AlertTriangle,
   Info,
@@ -32,6 +33,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { usePermissions } from "~/hooks/usePermissions";
+import { RechercheAvancee } from "../_components/RechercheAvancee";
 
 const LIMIT = 25;
 
@@ -99,6 +101,17 @@ export default function CatalogueArticlesPage() {
 
   const [qInput, setQInput] = useState(initialQ);
   const [q, setQ] = useState(initialQ);
+  const [avanceeOuverte, setAvanceeOuverte] = useState(
+    (searchParams?.get("avancee") ?? "") === "1",
+  );
+
+  // ?avancee=1 dans l'URL veut dire « montrez-moi les critères avancés » :
+  // on écoute le changement pour l'ouvrir sans re-rendre le formulaire.
+  useEffect(() => {
+    const ouvrir = (searchParams?.get("avancee") ?? "") === "1";
+    if (ouvrir && !avanceeOuverte) setAvanceeOuverte(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const offset = (page - 1) * LIMIT;
   const { data, isLoading, isError, error, refetch } = api.articles.listArticles.useQuery(
@@ -178,6 +191,15 @@ export default function CatalogueArticlesPage() {
         <Button variant="secondary" onClick={appliquerRecherche} disabled={isLoading}>
           Rechercher
         </Button>
+        <Button
+          variant="outline"
+          className="gap-1.5"
+          aria-expanded={avanceeOuverte}
+          onClick={() => setAvanceeOuverte((v) => !v)}
+        >
+          <Search size={14} /> Recherche avancée
+          <ChevronDown size={14} className={`transition-transform ${avanceeOuverte ? "rotate-180" : ""}`} />
+        </Button>
         <Select
           value={type ?? "ALL"}
           onValueChange={(v) => update({ type: v === "ALL" ? undefined : v, page: undefined })}
@@ -195,6 +217,11 @@ export default function CatalogueArticlesPage() {
           </SelectContent>
         </Select>
       </div>
+
+      {/* ─── RECHERCHE AVANCÉE ─── */}
+      {avanceeOuverte && (
+        <RechercheAvancee />
+      )}
 
       {/* ─── BANNIÈRE PROBLÈME ─── */}
       {probleme && problemMeta && (

@@ -10,12 +10,15 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { SelectSearch } from "~/components/ui/select-search";
+import { ConfirmationDialog } from "~/components/ui/confirmation-dialog";
 import { ArrowLeft, ChevronDown, ChevronUp, Plus, Loader2, Trash2, Save, Package, BadgeCheck, GitCompareArrows, RefreshCcw, Wrench, LogOut, Pencil, MapPin, Car } from "lucide-react";
+import {
+  ETATS_PRODUIT, ORIGINES_PRODUIT, COTES, ESSIEUX, TYPES_OUTIL, ETATS_EQUIPEMENT,
+  ETAT_PRODUIT_LABELS, ORIGINE_PRODUIT_LABELS, LIB_COTE, LIB_ESSIEU,
+  varianteDepuisServeur, payloadEdition,
+} from "~/lib/variante-form";
+import type { VarianteFormState } from "~/lib/variante-form";
 
-const ETAT_LABELS: Record<string, string> = { NEUF: "Neuf", OCCASION: "Occasion", RECONDITIONNE: "Reconditionné", REMANUFACTURE: "Remanufacturé" };
-const ORIGINE_LABELS: Record<string, string> = { CONSTRUCTEUR: "Constructeur", OEM: "OEM", AFTERMARKET: "Aftermarket", ADAPTABLE: "Adaptable" };
-const TYPE_OUTIL = ["INDIVIDUEL", "KIT", "JEU", "MACHINE"] as const;
-const ETATS_EQUIPEMENT = ["NEUF", "BON", "MOYEN", "HORS_USAGE"] as const;
 const TYPE_REF_LABELS: Record<string, string> = { FABRICANT: "Fabricant", OEM: "OEM", CONSTRUCTEUR: "Constructeur", FOURNISSEUR: "Fournisseur", EAN: "EAN", UPC: "UPC", GTIN: "GTIN", ANCIENNE: "Ancienne", AUTRE: "Autre" };
 const CONF_LABELS: Record<string, string> = { OFFICIEL: "Officiel", HOMOLOGUE: "Homologué", TECHNIQUE: "Technique", COMMERCIAL: "Commercial", MANUELLE: "Manuelle" };
 
@@ -37,12 +40,13 @@ export default function VarianteDetailPage() {
   const [nvSup, setNvSup] = useState({ ancienneReference: "", motif: "" });
   const [sortieLotOuverte, setSortieLotOuverte] = useState(false);
   const [sortieLot, setSortieLot] = useState({ lotId: "", quantite: "", motif: "" });
+  const [confirmAction, setConfirmAction] = useState<{ titre: string; description: string; exec: () => void } | null>(null);
   const [editingBasique, setEditingBasique] = useState(false);
   const { hasPermission } = usePermissions();
   const canModifier = hasPermission("stock.modifier");
   const { data: fournisseurs } = api.reference.listFournisseurs.useQuery();
   const { data: parEmplacement, isLoading: chEmpl, isError: errEmpl, refetch: refetchEmpl } = api.articles.stockParEmplacement.useQuery({ varianteId });
-  const [editV, setEditV] = useState<any>(null);
+  const [editV, setEditV] = useState<VarianteFormState | null>(null);
 
   const updateVariante = api.articles.updateVariante.useMutation({
     onSuccess: async () => {
@@ -55,105 +59,21 @@ export default function VarianteDetailPage() {
   });
 
   const ouvrirEdition = () => {
-    setEditV({
-      marque: v?.marque ?? "",
-      referenceFabricant: v?.referenceFabricant ?? "",
-      referencePrincipale: v?.referencePrincipale ?? "",
-      conditionnement: v?.conditionnement ?? "",
-      codeBarre: v?.codeBarre ?? "",
-      codeArticle: v?.codeArticle ?? "",
-      fournisseurId: v?.fournisseurId ? String(v.fournisseurId) : "",
-      prixAchat: v?.prixAchat ?? "",
-      prixVente: v?.prixVente ?? "",
-      prixPro: v?.prixPro ?? "",
-      prixParticulier: v?.prixParticulier ?? "",
-      prixMinimumVente: v?.prixMinimumVente ?? "",
-      tva: v?.tva ?? "",
-      etatProduit: v?.etatProduit ?? "NEUF",
-      origineProduit: v?.origineProduit ?? "AFTERMARKET",
-      positionCote: v?.positionCote ?? "N_A",
-      positionEssieu: v?.positionEssieu ?? "N_A",
-      seuilAlerte: v?.seuilAlerte ?? "",
-      stockSecurite: v?.stockSecurite ?? "",
-      pointCommande: v?.pointCommande ?? "",
-      qteMinCommande: v?.qteMinCommande ?? "",
-      numeroSerie: v?.numeroSerie ?? "",
-      numeroLot: v?.numeroLot ?? "",
-      dateFabrication: v?.dateFabrication ? String(v.dateFabrication).slice(0, 10) : "",
-      dateExpiration: v?.dateExpiration ? String(v.dateExpiration).slice(0, 10) : "",
-      garantieMois: v?.garantieMois ?? "",
-      estCore: v?.estCore ?? false,
-      valeurCore: v?.valeurCore ?? "",
-      typeOutil: v?.typeOutil ?? "",
-      etatEquipement: v?.etatEquipement ?? "",
-      calibrable: v?.calibrable ?? false,
-      numeroImmobilisation: v?.numeroImmobilisation ?? "",
-      valeurAcquisition: v?.valeurAcquisition ?? "",
-      occasionEtatConstate: v?.occasionEtatConstate ?? "",
-      occasionDefauts: v?.occasionDefauts ?? "",
-      occasionProvenance: v?.occasionProvenance ?? "",
-      occasionKilometrage: v?.occasionKilometrage ?? "",
-      occasionGarantieMois: v?.occasionGarantieMois ?? "",
-    });
+    setEditV(varianteDepuisServeur(v));
     setEditingBasique(true);
   };
 
+  // Valeurs état d'équipement : la liste canonique, plus la valeur
+  // éventuellement enregistrée avec un ancien libellé (ex. HORS_USAGE)
+  // — sinon un enregistrement existant s'afficherait sans sélection.
+  const optionsEtatEquipement = editV?.etatEquipement && !ETATS_EQUIPEMENT.includes(editV.etatEquipement as any)
+    ? [editV.etatEquipement, ...ETATS_EQUIPEMENT]
+    : [...ETATS_EQUIPEMENT];
+
   const enregistrerEdition = () => {
-    const str = (s?: string) => (s !== undefined && s.trim() !== "" ? s.trim() : undefined);
-    const num = (s?: string) => (s !== undefined && s !== "" ? Number(s) : undefined);
     updateVariante.mutate({
       varianteId,
-      marque: str(editV.marque),
-      referenceFabricant: str(editV.referenceFabricant),
-      referencePrincipale: str(editV.referencePrincipale),
-      conditionnement: str(editV.conditionnement),
-      codeBarre: str(editV.codeBarre),
-      codeArticle: str(editV.codeArticle),
-      fournisseurId: editV.fournisseurId ? Number(editV.fournisseurId) : undefined,
-      prixAchat: num(editV.prixAchat),
-      prixVente: num(editV.prixVente),
-      prixPro: num(editV.prixPro),
-      prixParticulier: num(editV.prixParticulier),
-      prixMinimumVente: num(editV.prixMinimumVente),
-      tva: num(editV.tva),
-      etatProduit: editV.etatProduit || undefined,
-      origineProduit: editV.origineProduit || undefined,
-      positionCote: editV.positionCote && editV.positionCote !== "N_A" ? editV.positionCote : undefined,
-      positionEssieu: editV.positionEssieu && editV.positionEssieu !== "N_A" ? editV.positionEssieu : undefined,
-      seuilAlerte: num(editV.seuilAlerte),
-      stockSecurite: num(editV.stockSecurite),
-      pointCommande: num(editV.pointCommande),
-      qteMinCommande: num(editV.qteMinCommande),
-      numeroSerie: str(editV.numeroSerie),
-      numeroLot: str(editV.numeroLot),
-      dateFabrication: str(editV.dateFabrication),
-      dateExpiration: str(editV.dateExpiration),
-      garantieMois: num(editV.garantieMois),
-      estCore: editV.estCore,
-      valeurCore: editV.estCore ? num(editV.valeurCore) : undefined,
-      typeOutil: str(editV.typeOutil),
-      etatEquipement: str(editV.etatEquipement),
-      calibrable: editV.calibrable,
-      numeroImmobilisation: str(editV.numeroImmobilisation),
-      valeurAcquisition: num(editV.valeurAcquisition),
-      // Occasion : le formulaire fait foi. Repasser la pièce en « neuf » efface
-      // ces champs (null explicite) — une donnée d'occasion sur une pièce neuve
-      // serait un mensonge de plus, pas une donnée de plus.
-      ...(editV.etatProduit && editV.etatProduit !== "NEUF"
-        ? {
-            occasionEtatConstate: str(editV.occasionEtatConstate) ?? null,
-            occasionDefauts: str(editV.occasionDefauts) ?? null,
-            occasionProvenance: str(editV.occasionProvenance) ?? null,
-            occasionKilometrage: num(editV.occasionKilometrage) ?? null,
-            occasionGarantieMois: num(editV.occasionGarantieMois) ?? null,
-          }
-        : {
-            occasionEtatConstate: null,
-            occasionDefauts: null,
-            occasionProvenance: null,
-            occasionKilometrage: null,
-            occasionGarantieMois: null,
-          }),
+      ...payloadEdition(editV),
     });
   };
 
@@ -268,12 +188,12 @@ export default function VarianteDetailPage() {
             </div>
             <div><Label className="text-xs text-muted-foreground">État</Label>
               <select value={editV.etatProduit} onChange={(e) => setEditV({ ...editV, etatProduit: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                {Object.entries(ETAT_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                {ETATS_PRODUIT.map((t) => <option key={t} value={t}>{ETAT_PRODUIT_LABELS[t]}</option>)}
               </select>
             </div>
             <div><Label className="text-xs text-muted-foreground">Origine</Label>
               <select value={editV.origineProduit} onChange={(e) => setEditV({ ...editV, origineProduit: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                {Object.entries(ORIGINE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                {ORIGINES_PRODUIT.map((t) => <option key={t} value={t}>{ORIGINE_PRODUIT_LABELS[t]}</option>)}
               </select>
             </div>
             <div><Label className="text-xs text-muted-foreground">Prix achat (F)</Label><Input type="number" min={0} value={editV.prixAchat} onChange={(e) => setEditV({ ...editV, prixAchat: e.target.value })} className="mt-1" /></div>
@@ -284,12 +204,12 @@ export default function VarianteDetailPage() {
             <div><Label className="text-xs text-muted-foreground">TVA (%)</Label><Input type="number" min={0} max={100} value={editV.tva} onChange={(e) => setEditV({ ...editV, tva: e.target.value })} className="mt-1" /></div>
             <div><Label className="text-xs text-muted-foreground">Position côté</Label>
               <select value={editV.positionCote} onChange={(e) => setEditV({ ...editV, positionCote: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                {["N_A", "GAUCHE", "DROITE", "CENTRAL", "LES_DEUX"].map((t) => <option key={t} value={t}>{t === "N_A" ? "— non applicable —" : t}</option>)}
+                {["N_A", ...COTES.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_COTE[t]}</option>)}
               </select>
             </div>
             <div><Label className="text-xs text-muted-foreground">Position essieu</Label>
               <select value={editV.positionEssieu} onChange={(e) => setEditV({ ...editV, positionEssieu: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                {["N_A", "AVANT", "ARRIERE"].map((t) => <option key={t} value={t}>{t === "N_A" ? "— non applicable —" : t}</option>)}
+                {["N_A", ...ESSIEUX.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_ESSIEU[t]}</option>)}
               </select>
             </div>
             <div><Label className="text-xs text-muted-foreground">Seuil d'alerte</Label><Input type="number" min={0} value={editV.seuilAlerte} onChange={(e) => setEditV({ ...editV, seuilAlerte: e.target.value })} className="mt-1" /></div>
@@ -316,13 +236,13 @@ export default function VarianteDetailPage() {
                 <div><Label className="text-xs text-muted-foreground">N° immobilisation</Label><Input value={editV.numeroImmobilisation} onChange={(e) => setEditV({ ...editV, numeroImmobilisation: e.target.value })} className="mt-1" /></div>
                 <div><Label className="text-xs text-muted-foreground">Type d'outil</Label>
                   <select value={editV.typeOutil} onChange={(e) => setEditV({ ...editV, typeOutil: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                    {TYPE_OUTIL.map((t) => <option key={t} value={t}>{t}</option>)}
+                    {TYPES_OUTIL.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
                 <div><Label className="text-xs text-muted-foreground">État physique</Label>
                   <select value={editV.etatEquipement} onChange={(e) => setEditV({ ...editV, etatEquipement: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
                     <option value="">—</option>
-                    {ETATS_EQUIPEMENT.map((t) => <option key={t} value={t}>{t}</option>)}
+                    {optionsEtatEquipement.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
               </>
@@ -347,7 +267,7 @@ export default function VarianteDetailPage() {
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <div><span className="text-xs text-muted-foreground">Référence principale</span><p className="font-mono font-semibold">{v.referencePrincipale ?? "—"}</p></div>
           <div><span className="text-xs text-muted-foreground">Marque</span><p className="font-medium">{v.marque ?? "—"}</p></div>
-          <div><span className="text-xs text-muted-foreground">État / Origine</span><p className="font-medium">{ETAT_LABELS[v.etatProduit] ?? v.etatProduit ?? "—"} · {ORIGINE_LABELS[v.origineProduit] ?? v.origineProduit ?? "—"}</p></div>
+          <div><span className="text-xs text-muted-foreground">État / Origine</span><p className="font-medium">{ETAT_PRODUIT_LABELS[v.etatProduit] ?? v.etatProduit ?? "—"} · {ORIGINE_PRODUIT_LABELS[v.origineProduit] ?? v.origineProduit ?? "—"}</p></div>
           <div><span className="text-xs text-muted-foreground">Position</span><p className="font-medium">{posLabel || "—"}</p></div>
           {!estExemplaire && <div><span className="text-xs text-muted-foreground">Prix vente</span><p className="font-mono">{v.prixVente ? `${Number(v.prixVente).toLocaleString("fr-FR")} F` : "—"}</p></div>}
           {!estExemplaire && <div><span className="text-xs text-muted-foreground">Prix achat</span><p className="font-mono">{v.prixAchat ? `${Number(v.prixAchat).toLocaleString("fr-FR")} F` : "—"}</p></div>}
@@ -750,7 +670,7 @@ export default function VarianteDetailPage() {
               <span key={r.id} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-mono ${r.isPrincipale ? "border-primary/40 bg-primary/5" : "border-border bg-background"}`}>
                 <span className="rounded bg-muted px-1 py-0.5 text-[9px] uppercase text-muted-foreground">{TYPE_REF_LABELS[r.typeRef] ?? r.typeRef}</span>
                 {r.valeur}{r.isPrincipale ? " ★" : ""}
-                <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => removeRef.mutate({ id: r.id })}><Trash2 size={11} /></button>
+                <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => setConfirmAction({ titre: "Retirer cette référence", description: `La référence ${r.valeur} (${r.typeRef ?? "type"}) sera retirée. Cette action est définitive.`, exec: () => removeRef.mutate({ id: r.id }) })}><Trash2 size={11} /></button>
               </span>
             ))}
           </div>
@@ -778,7 +698,7 @@ export default function VarianteDetailPage() {
                 <span className="font-mono">#{s.varianteAId} ↔ #{s.varianteBId}</span>
                 <span className="rounded-full bg-muted px-2 py-0.5 uppercase text-muted-foreground">{CONF_LABELS[s.niveauConfiance] ?? s.niveauConfiance}</span>
                 {s.motif && <span className="text-muted-foreground">· {s.motif}</span>}
-                <button type="button" className="ml-auto text-muted-foreground hover:text-destructive" onClick={() => removeSub.mutate({ id: s.id })}><Trash2 size={12} /></button>
+                <button type="button" className="ml-auto text-muted-foreground hover:text-destructive" onClick={() => setConfirmAction({ titre: "Retirer cette substitution", description: `Le lien #${s.varianteAId} ↔ #${s.varianteBId} sera retiré. Cette action est définitive.`, exec: () => removeSub.mutate({ id: s.id }) })}><Trash2 size={12} /></button>
               </div>
             ))}
           </div>
@@ -804,7 +724,7 @@ export default function VarianteDetailPage() {
                 <span>→</span>
                 <span className="font-mono font-semibold">{s.nouvelleReference}</span>
                 {s.motif && <span className="text-muted-foreground">· {s.motif}</span>}
-                <button type="button" className="ml-auto text-muted-foreground hover:text-destructive" onClick={() => removeSup.mutate({ id: s.id })}><Trash2 size={12} /></button>
+                <button type="button" className="ml-auto text-muted-foreground hover:text-destructive" onClick={() => setConfirmAction({ titre: "Retirer cette supersession", description: `Le lien « ${s.ancienneReference} → ${s.nouvelleReference} » sera retiré. Cette action est définitive.`, exec: () => removeSup.mutate({ id: s.id }) })}><Trash2 size={12} /></button>
               </div>
             ))}
           </div>
@@ -851,6 +771,17 @@ export default function VarianteDetailPage() {
           </>
         )}
       </div>
+      {confirmAction && (
+        <ConfirmationDialog
+          isOpen
+          onClose={() => setConfirmAction(null)}
+          onConfirm={() => confirmAction.exec()}
+          title={confirmAction.titre}
+          description={confirmAction.description}
+          confirmText="Retirer"
+          variant="destructive"
+        />
+      )}
     </div>
   );
 }

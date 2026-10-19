@@ -13,16 +13,19 @@ import { Textarea } from "~/components/ui/textarea";
 import { SelectSearch } from "~/components/ui/select-search";
 import { ErrorState } from "~/components/ui/error-state";
 import { EmptyState } from "~/components/ui/empty-state";
+import { ConfirmationDialog } from "~/components/ui/confirmation-dialog";
 import {
   ArrowLeft, Package, Plus, Loader2, Trash2, Wrench, Car, BookOpen, FileText, BadgeCheck,
   Save, Info, Warehouse, X, Search, RefreshCcw, GitCompareArrows, Upload,
 } from "lucide-react";
+import {
+  ETATS_PRODUIT, ORIGINES_PRODUIT, COTES, ESSIEUX, TYPES_OUTIL, ETATS_EQUIPEMENT,
+  ETAT_PRODUIT_LABELS, ORIGINE_PRODUIT_LABELS, LIB_COTE, LIB_ESSIEU,
+  varianteVide, payloadCreation,
+} from "~/lib/variante-form";
+import type { VarianteFormState } from "~/lib/variante-form";
 
 const TYPE_LABELS: Record<string, string> = { PIECE: "Pièce", CONSOMMABLE: "Consommable", OUTIL: "Outillage", EQUIPEMENT: "Équipement", SERVICE: "Service" };
-const ETAT_AD_LABELS: Record<string, string> = { NEUF: "Neuf", OCCASION: "Occasion", RECONDITIONNE: "Reconditionné", REMANUFACTURE: "Remanufacturé" };
-const ORIGINE_AD_LABELS: Record<string, string> = { CONSTRUCTEUR: "Constructeur", OEM: "OEM", AFTERMARKET: "Aftermarket", ADAPTABLE: "Adaptable" };
-const ETATS_EQUIPEMENT = ["NEUF", "TRES_BON", "BON", "MOYEN", "USE", "ENDOMMAGE", "HORS_SERVICE", "EN_REPARATION"];
-const TYPE_OUTIL = ["INDIVIDUEL", "KIT", "JEU", "MACHINE"];
 
 const PRESETS_ATTRIBUTS: Record<string, { cle: string; label: string; unite?: string }[]> = {
   PNEUMATIQUES: [
@@ -107,14 +110,7 @@ export default function ArticleDetailPage() {
   const [variantesFiltre, setVariantesFiltre] = useState("");
 
   const [showVariante, setShowVariante] = useState(false);
-  const [nv, setNv] = useState<any>({
-    marque: "", referenceFabricant: "", referencePrincipale: "", codeArticle: "", conditionnement: "",
-    prixAchat: "", prixVente: "", prixPro: "", prixParticulier: "", tva: "", uniteStockId: "", stockInitial: "",
-    emplacementStockId: "", fournisseurId: 0, typeOutil: "INDIVIDUEL", etatEquipement: "", etatProduit: "NEUF", origineProduit: "AFTERMARKET",
-    positionCote: "N_A", positionEssieu: "N_A", seuilAlerte: "5", stockSecurite: "", pointCommande: "", qteMinCommande: "",
-    numeroSerie: "", numeroLot: "", garantieMois: "", estCore: false, valeurCore: "", calibrable: false, numeroImmobilisation: "",
-    occasionEtatConstate: "", occasionDefauts: "", occasionProvenance: "", occasionKilometrage: "", occasionGarantieMois: "",
-  });
+  const [nv, setNv] = useState<VarianteFormState>(varianteVide());
   const [attributs, setAttributs] = useState<Attribut[]>([]);
   const [preset, setPreset] = useState("");
   const [editing, setEditing] = useState(false);
@@ -125,6 +121,7 @@ export default function ArticleDetailPage() {
   const docInputRef = useRef<HTMLInputElement>(null);
   const [reemploi, setReemploi] = useState({ actif: false, motif: "" });
   const [conflitRef, setConflitRef] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ titre: string; description: string; exec: () => void } | null>(null);
   const [refEq, setRefEq] = useState({ marque: "", reference: "", note: "", niveauVerification: "NON_VERIFIE" });
   const [comp, setComp] = useState<any>({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "", niveauVerification: "NON_VERIFIE" });
 
@@ -134,8 +131,7 @@ export default function ArticleDetailPage() {
       setShowVariante(false);
       setReemploi({ actif: false, motif: "" });
       setConflitRef(null);
-      setNv({ marque: "", referenceFabricant: "", referencePrincipale: "", codeArticle: "", conditionnement: "", prixAchat: "", prixVente: "", prixPro: "", prixParticulier: "", tva: "", uniteStockId: "", stockInitial: "", emplacementStockId: "", fournisseurId: 0, typeOutil: "INDIVIDUEL", etatEquipement: "", etatProduit: "NEUF", origineProduit: "AFTERMARKET", positionCote: "N_A", positionEssieu: "N_A", seuilAlerte: "5", stockSecurite: "", pointCommande: "", qteMinCommande: "", numeroSerie: "", numeroLot: "", garantieMois: "", estCore: false, valeurCore: "", calibrable: false, numeroImmobilisation: "",
-    occasionEtatConstate: "", occasionDefauts: "", occasionProvenance: "", occasionKilometrage: "", occasionGarantieMois: "" });
+      setNv(varianteVide());
       utils.articles.getArticle.invalidate();
     },
     onError: (e) => {
@@ -317,50 +313,7 @@ export default function ArticleDetailPage() {
       articleId: id,
       accepterDoublon: reemploi.actif || undefined,
       motifReemploi: reemploi.actif ? reemploi.motif.trim() : undefined,
-      variante: {
-        marque: nv.marque || undefined,
-        referenceFabricant: nv.referenceFabricant || undefined,
-        referencePrincipale: nv.referencePrincipale || undefined,
-        codeArticle: nv.codeArticle || undefined,
-        conditionnement: nv.conditionnement || undefined,
-        prixAchat: nv.prixAchat ? Number(nv.prixAchat) : undefined,
-        prixVente: nv.prixVente ? Number(nv.prixVente) : undefined,
-        prixPro: nv.prixPro ? Number(nv.prixPro) : undefined,
-        prixParticulier: nv.prixParticulier ? Number(nv.prixParticulier) : undefined,
-        tva: nv.tva ? Number(nv.tva) : undefined,
-        fournisseurId: nv.fournisseurId || undefined,
-        uniteStockId: nv.uniteStockId || undefined,
-        stockInitial: nv.stockInitial ? Number(nv.stockInitial) : undefined,
-        emplacementStockId: nv.emplacementStockId || undefined,
-        typeOutil: estOutil ? nv.typeOutil : undefined,
-        etatEquipement: estOutil ? nv.etatEquipement : undefined,
-        calibrable: estOutil ? nv.calibrable : undefined,
-        numeroImmobilisation: estOutil && article.typeProduit === "EQUIPEMENT" ? nv.numeroImmobilisation : undefined,
-        etatProduit: nv.etatProduit || undefined,
-        origineProduit: nv.origineProduit || undefined,
-        positionCote: nv.positionCote && nv.positionCote !== "N_A" ? nv.positionCote : undefined,
-        positionEssieu: nv.positionEssieu && nv.positionEssieu !== "N_A" ? nv.positionEssieu : undefined,
-        seuilAlerte: nv.seuilAlerte ? Number(nv.seuilAlerte) : undefined,
-        stockSecurite: nv.stockSecurite ? Number(nv.stockSecurite) : undefined,
-        pointCommande: nv.pointCommande ? Number(nv.pointCommande) : undefined,
-        qteMinCommande: nv.qteMinCommande ? Number(nv.qteMinCommande) : undefined,
-        numeroSerie: nv.numeroSerie || undefined,
-        numeroLot: nv.numeroLot || undefined,
-        garantieMois: nv.garantieMois ? Number(nv.garantieMois) : undefined,
-        estCore: nv.estCore,
-        valeurCore: nv.estCore && nv.valeurCore ? Number(nv.valeurCore) : undefined,
-        // Occasion : renseigné seulement quand la pièce n'est pas neuve. Un
-        // champ laissé vide reste NULL en base — c'est « inconnu », pas « zéro ».
-        ...(nv.etatProduit && nv.etatProduit !== "NEUF"
-          ? {
-              occasionEtatConstate: nv.occasionEtatConstate || undefined,
-              occasionDefauts: nv.occasionDefauts || undefined,
-              occasionProvenance: nv.occasionProvenance || undefined,
-              occasionKilometrage: nv.occasionKilometrage ? Number(nv.occasionKilometrage) : undefined,
-              occasionGarantieMois: nv.occasionGarantieMois ? Number(nv.occasionGarantieMois) : undefined,
-            }
-          : {}),
-      },
+      variante: payloadCreation(nv, article.typeProduit),
     });
   };
 
@@ -420,8 +373,8 @@ export default function ArticleDetailPage() {
                 <div className="grid flex-1 grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-4">
                   <div><span className="text-xs text-muted-foreground">Désignation courte</span><p className="font-medium">{article.designationCourte || "—"}</p></div>
                   <div><span className="text-xs text-muted-foreground">Statut</span><p className="font-medium">{article.isActive === false ? "Inactif" : "Actif"}</p></div>
-                  <div><span className="text-xs text-muted-foreground">État par défaut</span><p className="font-medium">{ETAT_AD_LABELS[article.etatProduitDefaut ?? ""] ?? article.etatProduitDefaut ?? "—"}</p></div>
-                  <div><span className="text-xs text-muted-foreground">Origine par défaut</span><p className="font-medium">{ORIGINE_AD_LABELS[article.origineProduitDefaut ?? ""] ?? article.origineProduitDefaut ?? "—"}</p></div>
+                  <div><span className="text-xs text-muted-foreground">État par défaut</span><p className="font-medium">{ETAT_PRODUIT_LABELS[article.etatProduitDefaut ?? ""] ?? article.etatProduitDefaut ?? "—"}</p></div>
+                  <div><span className="text-xs text-muted-foreground">Origine par défaut</span><p className="font-medium">{ORIGINE_PRODUIT_LABELS[article.origineProduitDefaut ?? ""] ?? article.origineProduitDefaut ?? "—"}</p></div>
                   <div className="col-span-2"><span className="text-xs text-muted-foreground">Description</span><p className="whitespace-pre-line text-muted-foreground">{article.description || "—"}</p></div>
                 </div>
                 {canModifier && (
@@ -747,7 +700,7 @@ export default function ArticleDetailPage() {
                     ) : (
                       <span className="rounded-full border border-dashed border-muted-foreground/50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-muted-foreground">À vérifier</span>
                     )}
-                    {canModifier && <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => removeComp.mutate({ id: c.id })}><Trash2 size={11} /></button>}
+                    {canModifier && <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => setConfirmAction({ titre: "Retirer cette compatibilité", description: `La compatibilité ${c.marque} ${c.modele} sera retirée de la liste. Cette action est définitive.`, exec: () => removeComp.mutate({ id: c.id }) })}><Trash2 size={11} /></button>}
                   </span>
                 ))}
               </div>
@@ -858,7 +811,7 @@ export default function ArticleDetailPage() {
                     ) : (
                       <span className="rounded-full border border-dashed border-muted-foreground/50 px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase text-muted-foreground">À vérifier</span>
                     )}
-                    {canModifier && <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => removeRef.mutate({ id: r.id })}><Trash2 size={11} /></button>}
+                    {canModifier && <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => setConfirmAction({ titre: "Retirer cette équivalence", description: `L'équivalence ${r.marque} ${r.reference} (${r.typeRef ?? "référence"}) sera retirée. Cette action est définitive.`, exec: () => removeRef.mutate({ id: r.id }) })}><Trash2 size={11} /></button>}
                   </span>
                 ))}
               </div>
@@ -924,7 +877,7 @@ export default function ArticleDetailPage() {
                     <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">{d.type}</span>
                     <span className="min-w-0 flex-1 truncate">{d.titre ?? d.url}</span>
                     <a href={d.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Ouvrir</a>
-                    {canModifier && <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => removeDoc.mutate({ id: d.id })}><Trash2 size={12} /></button>}
+                    {canModifier && <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => setConfirmAction({ titre: "Supprimer ce document", description: `Le document « ${d.titre || d.url} » sera détaché de la fiche. Cette action est définitive.`, exec: () => removeDoc.mutate({ id: d.id }) })}><Trash2 size={12} /></button>}
                   </div>
                   );
                 })}
@@ -950,22 +903,22 @@ export default function ArticleDetailPage() {
               <div><Label className="text-xs text-muted-foreground">Code article</Label><Input value={nv.codeArticle} onChange={(e) => setNv({ ...nv, codeArticle: e.target.value })} className="mt-1" /></div>
               <div><Label className="text-xs text-muted-foreground">État</Label>
                 <select value={nv.etatProduit} onChange={(e) => setNv({ ...nv, etatProduit: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                  {["NEUF", "OCCASION", "RECONDITIONNE", "REMANUFACTURE"].map((t) => <option key={t} value={t}>{ETAT_AD_LABELS[t]}</option>)}
+                  {ETATS_PRODUIT.map((t) => <option key={t} value={t}>{ETAT_PRODUIT_LABELS[t]}</option>)}
                 </select>
               </div>
               <div><Label className="text-xs text-muted-foreground">Origine</Label>
                 <select value={nv.origineProduit} onChange={(e) => setNv({ ...nv, origineProduit: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                  {["AFTERMARKET", "CONSTRUCTEUR", "OEM", "ADAPTABLE"].map((t) => <option key={t} value={t}>{ORIGINE_AD_LABELS[t]}</option>)}
+                  {ORIGINES_PRODUIT.map((t) => <option key={t} value={t}>{ORIGINE_PRODUIT_LABELS[t]}</option>)}
                 </select>
               </div>
               <div><Label className="text-xs text-muted-foreground">Position côté</Label>
                 <select value={nv.positionCote} onChange={(e) => setNv({ ...nv, positionCote: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                  {["N_A", "GAUCHE", "DROITE", "CENTRAL", "LES_DEUX"].map((t) => <option key={t} value={t}>{t === "N_A" ? "— non applicable —" : t}</option>)}
+                  {["N_A", ...COTES.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_COTE[t]}</option>)}
                 </select>
               </div>
               <div><Label className="text-xs text-muted-foreground">Position essieu</Label>
                 <select value={nv.positionEssieu} onChange={(e) => setNv({ ...nv, positionEssieu: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                  {["N_A", "AVANT", "ARRIERE"].map((t) => <option key={t} value={t}>{t === "N_A" ? "— non applicable —" : t}</option>)}
+                  {["N_A", ...ESSIEUX.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_ESSIEU[t]}</option>)}
                 </select>
               </div>
               {/* Occasion : ces renseignements n'apparaissent que pour une pièce
@@ -994,14 +947,14 @@ export default function ArticleDetailPage() {
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">Fournisseur</Label>
-                <SelectSearch value={nv.fournisseurId || null} onChange={(v) => setNv({ ...nv, fournisseurId: Number(v) })} options={optFournisseurs} placeholder="—" searchPlaceholder="Rechercher…" size="sm" className="mt-1" />
+                <SelectSearch value={nv.fournisseurId || null} onChange={(v) => setNv({ ...nv, fournisseurId: String(v) })} options={optFournisseurs} placeholder="—" searchPlaceholder="Rechercher…" size="sm" className="mt-1" />
               </div>
               {!estOutil && (
                 <>
                   <div><Label className="text-xs text-muted-foreground">Stock initial</Label><Input type="number" min={0} value={nv.stockInitial} onChange={(e) => setNv({ ...nv, stockInitial: e.target.value })} className="mt-1" /></div>
                   <div>
                     <Label className="text-xs text-muted-foreground">Emplacement initial</Label>
-                    <SelectSearch value={nv.emplacementStockId || null} onChange={(v) => setNv({ ...nv, emplacementStockId: Number(v) })} options={optEmplacements} placeholder="—" searchPlaceholder="Rechercher…" size="sm" className="mt-1" />
+                    <SelectSearch value={nv.emplacementStockId || null} onChange={(v) => setNv({ ...nv, emplacementStockId: String(v) })} options={optEmplacements} placeholder="—" searchPlaceholder="Rechercher…" size="sm" className="mt-1" />
                   </div>
                   <div><Label className="text-xs text-muted-foreground">Seuil d'alerte</Label><Input type="number" min={0} value={nv.seuilAlerte} onChange={(e) => setNv({ ...nv, seuilAlerte: e.target.value })} className="mt-1" /></div>
                   <div><Label className="text-xs text-muted-foreground">Stock de sécurité</Label><Input type="number" min={0} value={nv.stockSecurite} onChange={(e) => setNv({ ...nv, stockSecurite: e.target.value })} className="mt-1" /></div>
@@ -1020,7 +973,7 @@ export default function ArticleDetailPage() {
                   <div>
                     <Label className="text-xs text-muted-foreground">Type d'outil</Label>
                     <select value={nv.typeOutil} onChange={(e) => setNv({ ...nv, typeOutil: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                      {TYPE_OUTIL.map((t) => <option key={t} value={t}>{t}</option>)}
+                      {TYPES_OUTIL.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
                   <div>
@@ -1056,6 +1009,17 @@ export default function ArticleDetailPage() {
             </div>
           </div>
         </div>
+      )}
+      {confirmAction && (
+        <ConfirmationDialog
+          isOpen
+          onClose={() => setConfirmAction(null)}
+          onConfirm={() => confirmAction.exec()}
+          title={confirmAction.titre}
+          description={confirmAction.description}
+          confirmText="Supprimer"
+          variant="destructive"
+        />
       )}
     </div>
   );

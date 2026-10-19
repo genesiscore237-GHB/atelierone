@@ -180,45 +180,43 @@ export default function CatalogDashboardPage() {
                 icon={Package}
                 label="Articles"
                 value={data.catalogue.articles}
-                href="/dashboard/catalog"
+                href="/dashboard/catalog/articles"
                 color="text-primary"
               />
               <StatCard
                 icon={Layers}
                 label="Variantes"
                 value={data.catalogue.variantes}
-                href="/dashboard/catalog"
+                href="/dashboard/catalog/articles"
                 color="text-primary"
               />
               <StatCard
                 icon={Wrench}
                 label="Modèles d'outils"
                 value={data.catalogue.toolModels}
-                href="/dashboard/stock/outillage"
+                href="/dashboard/stock/outillage?tab=modeles"
                 color="text-primary"
               />
               <StatCard
                 icon={HardHat}
                 label="Équipements"
                 value={data.catalogue.equipment}
-                href="/dashboard/catalog/equipements"
+                href="/dashboard/catalog/articles?type=EQUIPEMENT"
                 color="text-muted-foreground"
-                enConstruction
               />
               <StatCard
                 icon={Briefcase}
                 label="Services"
                 value={data.catalogue.services}
-                href="/dashboard/catalog/services"
+                href="/dashboard/catalog/articles?type=SERVICE"
                 color="text-muted-foreground"
-                enConstruction
               />
               <StatCard
                 icon={ShieldCheck}
                 label="Score qualité"
                 value={data.quality.score}
                 suffix="/ 100"
-                href="/dashboard/catalog?tab=qualite"
+                href="/dashboard/catalog/articles?problem=INCOMPLETE_ARTICLE"
                 color={data.quality.score >= 80 ? "text-success-foreground" : data.quality.score >= 50 ? "text-amber-600" : "text-destructive"}
               />
             </div>
