@@ -107,7 +107,7 @@ sans dédoublement, et `detectBarcodeType` vit en `server/lib/barcodes.ts`.
 | V1 | Suite complète ≥ 1170 verts | — | vitest | ✅ 1199/1199 (97 fichiers, +3 skipped — étape 4 incluse) |
 | V2 | `tsc --noEmit` = 310 exactement | — | tsc | 🔶 baseline actée : les SEULES erreurs résiduelles viennent de `garage/vehicules/page.tsx`, fichier en cours d'écriture par la session concurrente (0 erreur dans les fichiers de l'étape 4) |
 | V3 | `next build` exit 0 | — | build | ✅ 76 s avant étape 4 (frontière ré-contrôlée : la lib `~/lib/emplacements.ts` est pure et le composant étiquette n'importe ni base ni serveur ; build complet à rejouer une fois le fichier concurrent réparé) |
-| V4 | `pnpm db:sync` puis `pnpm db:check` = PARFAIT | — | db:check | ✅ **passé au push du 2026-10-19** : hook pre-push applique les migrations (+ 0026-0028 stock) sur Neon depuis l'endpoint direct, `db:check` = schéma identique (21 écarts de données d'exploitation tolérés). **0029 sera poussé ainsi à son tour** |
+| V4 | `pnpm db:sync` puis `pnpm db:check` = PARFAIT | — | db:check | ✅ **passé aux pushes du 2026-10-19** : `d16482c..50d9055` (0026-0028) puis `50d9055..7afb5c3` (0029 + étape 4 en prod) — `db:check` = schéma identique (21 écarts de données d'exploitation tolérés). Nota : le premier push du jour a buté sur un record fantôme (`0029` enregistrée sans ses objets), que la session concurrente en action a résorbé — les records fantômes du journal traitent les « Appliquées : 0 » comme un signal d'alerte |
 | V5 | Passe manuelle de l'écran avec l'utilisateur | — | validation | ⬜ après l'étape 3 |
 
 ---
