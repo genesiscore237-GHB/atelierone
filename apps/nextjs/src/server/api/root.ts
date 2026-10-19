@@ -27,6 +27,7 @@ import { cashRouter } from "~/server/api/routers/cash";
 import { alertRouter } from "~/server/api/routers/alert";
 import { relancesRouter } from "~/server/api/routers/relances-router";
 import { interventionsRouter } from "~/server/api/routers/interventions-router";
+import { revueParcRouter } from "~/server/api/routers/revue-parc-router";
 import { organizationRouter } from "~/server/api/routers/organization";
 import { governanceRouter } from "~/server/api/routers/governance";
 import { rhRouter } from "~/server/api/routers/rh";
@@ -97,6 +98,7 @@ export const appRouter = createTRPCRouter({
   alert: alertRouter,
   relances: relancesRouter,
   interventions: interventionsRouter,
+  revueParc: revueParcRouter,
   organization: organizationRouter,
   governance: governanceRouter,
   rh: rhRouter,
