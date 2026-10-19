@@ -10,6 +10,7 @@ import { listerKitLignes } from "~/server/lib/kit-service";
 import { getCatalogueQualite, getQualiteDetail } from "~/server/lib/catalog-service";
 import { detectBarcodeType } from "~/server/lib/barcodes";
 import { enregistrerMouvement, TYPES_MOUVEMENT } from "~/server/lib/stock-engine";
+import { lignesAlerteStock } from "~/server/lib/stock-engine";
 
 const ADMIN_ROLES = ["superadmin", "directeur", "admin"];
 
@@ -1695,32 +1696,34 @@ export const catalogRouter = createTRPCRouter({
     // 2. Qualité (service avec snapshot, TTL 10 min)
     const qualite = await getCatalogueQualite();
 
-    // 3. Stock : articles hors stock + sous seuil + mouvements aujourd'hui
+    // 3. Stock : articles hors stock + sous seuil + mouvements aujourd'hui.
+    // « Sous seuil » = la même définition d'alerte que la page Alertes du
+    // magasin (lignesAlerteStock) — un chiffre, deux écrans, zéro diver­gence.
+    // « Hors stock » reste indépendant du seuil : un produit actif sans
+    // aucune unité est épuisé, que son seuil soit défini ou non.
+    const agenceId = ctx.user.agenceId ?? 1;
+    const alertesRows = await lignesAlerteStock(db, agenceId);
+    const belowThreshold = alertesRows.length;
+
     const [horsStockRes] = await db
       .select({ total: sql<number>`count(*)::int` })
       .from(produits)
       .where(and(
         eq(produits.isActive, true),
-        sql`COALESCE((SELECT SUM(s.quantite) FROM stocks s WHERE s.produit_id = ${produits.id}), 0) = 0`
+        sql`COALESCE(${produits.typeProduit}, 'PIECE') <> 'SERVICE'`,
+        sql`COALESCE((SELECT SUM(s.quantite) FROM stocks s WHERE s.produit_id = ${produits.id} AND s.agence_id = ${agenceId}), 0) = 0`
       ));
     const outOfStock = horsStockRes?.total ?? 0;
-
-    const [sousSeuilRes] = await db
-      .select({ total: sql<number>`count(*)::int` })
-      .from(produits)
-      .where(and(
-        eq(produits.isActive, true),
-        sql`${produits.seuilAlerte} IS NOT NULL`,
-        sql`COALESCE((SELECT SUM(s.quantite) FROM stocks s WHERE s.produit_id = ${produits.id}), 0) < ${produits.seuilAlerte}`
-      ));
-    const belowThreshold = sousSeuilRes?.total ?? 0;
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const [mouvementsJourRes] = await db
       .select({ total: sql<number>`count(*)::int` })
       .from(mouvementsStock)
-      .where(sql`${mouvementsStock.dateMouvement} >= ${todayStart.toISOString()}`);
+      .where(and(
+        eq(mouvementsStock.agenceId, agenceId),
+        sql`${mouvementsStock.dateMouvement} >= ${todayStart.toISOString()}`,
+      ));
     const movementsToday = mouvementsJourRes?.total ?? 0;
 
     // 4. Outillage : prêts en retard + calibration due

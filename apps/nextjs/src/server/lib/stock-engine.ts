@@ -1,4 +1,4 @@
-import { db, stocks, stocksUnites, mouvementsStock, produitUnites, unitesMesureProduits, unitesMesure, produits } from "@atelierone/db";
+import { db, stocks, stocksUnites, mouvementsStock, produitUnites, unitesMesureProduits, unitesMesure, produits, categories } from "@atelierone/db";
 import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 
@@ -167,6 +167,58 @@ export function stockDisponible(
   stockBloque: number | null = 0,
 ): number {
   return stockActuel - (stockReserve ?? 0) - (stockBloque ?? 0);
+}
+
+export type NiveauAlerte = "rupture" | "critique" | "faible";
+
+/** Palier d'alerte : 0 ou moins ⇒ rupture, en dessous du seuil critique ⇒
+ * critique, sinon « faible ». La règle unique — tout ce qui compte les
+ * alertes passe par ici, de la page Alertes aux KPI du tableau de bord. */
+export function niveauAlerte(quantite: number, seuilCritique: number): NiveauAlerte {
+  return quantite <= 0 ? "rupture" : quantite < seuilCritique ? "critique" : "faible";
+}
+
+/**
+ * UNE SEULE définition d'alerte (lot D) : par produit × agence.
+ *
+ *   alerte = la somme des positions du produit dans l'agence < son seuil
+ *
+ * Trois écarts corrigés vis-à-vis de l'ancien calcul :
+ *  - un produit ACTIF avec seuil défini mais AUCUNE ligne de stock reste
+ *    visible (somme = 0) : un produit jamais stocké est quand même à
+ *    renouveler — c'est le grand gisement des « ruptures invisibles » ;
+ *  - le seuil local d'emplacement ne s'applique pas ici : cette vue est un
+ *    total produit ; le Bureau juge son propre seuil sur sa propre ligne ;
+ *  - quantité 0 ⇒ niveau « rupture », jamais « faible » : une rupture ne
+ *    doit pas se cacher dans le badge jaune.
+ *
+ * Utilisé par la page Alertes du magasin et le KPI « sous seuil » du
+ * tableau de bord catalogue — tous deux ne peuvent plus diverger.
+ */
+export async function lignesAlerteStock(client: any, agenceId: number) {
+  const sommeAgence = sql`COALESCE(
+    (SELECT SUM(s.quantite) FROM stocks s
+     WHERE s.produit_id = ${produits.id} AND s.agence_id = ${agenceId}), 0)`;
+  return client
+    .select({
+      produitId: produits.id,
+      titre: produits.titre,
+      codeBarre: produits.codeBarre,
+      categorieNom: categories.nom,
+      typeProduit: produits.typeProduit,
+      quantiteTotal: sommeAgence,
+      seuilAlerte: produits.seuilAlerte,
+      seuilCritique: produits.seuilCritique,
+    })
+    .from(produits)
+    .leftJoin(categories, eq(produits.categorieId, categories.id))
+    .where(and(
+      eq(produits.isActive, true),
+      sql`${produits.seuilAlerte} IS NOT NULL`,
+      sql`COALESCE(${produits.typeProduit}, 'PIECE') <> 'SERVICE'`,
+      sql`${sommeAgence} < ${produits.seuilAlerte}`,
+    ))
+    .orderBy(categories.nom, produits.titre);
 }
 
 async function getCoutUnitaireMoyen(tx: Tx, produitId: number, agenceId: number): Promise<string | null> {

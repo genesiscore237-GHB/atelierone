@@ -4,7 +4,7 @@ import { createTRPCRouter, protectedProcedure, stockProcedure, requirePermission
 import { db, stocks, produits, categories, unitesMesure, mouvementsStock, inventaires, inventairesSessions, deconditionnements, reconditionnements, emplacements, stocksUnites, stocksLots, produitUnites, ventesLignes, ventes, demandesCommande } from "@atelierone/db";
 import { eq, and, desc, sql, lt, lte, gte, isNotNull, isNull, count, sum, avg, asc, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSortieUnite, mouvementEntreeUnite, TYPES_MOUVEMENT, sortirPourOR, retourAtelier, reserverStock, libererStock } from "~/server/lib/stock-engine";
+import { operationDouble, getFacteurVersBase, enregistrerMouvement, mouvementSortieUnite, mouvementEntreeUnite, TYPES_MOUVEMENT, sortirPourOR, retourAtelier, reserverStock, libererStock, lignesAlerteStock, niveauAlerte } from "~/server/lib/stock-engine";
 import { PertesService } from "~/server/lib/pertes-service";
 import { sortirStockFIFO, sortirLotSpecifique, verifierDispoNonPerimee, listerAlertesDlc } from "~/server/lib/lot-service";
 import { creerEchangeCore, retournerCoquille, listerCores } from "~/server/lib/core-service";
@@ -23,36 +23,44 @@ export const stockRouter = createTRPCRouter({
       .where(eq(stocks.agenceId, agenceId));
     const valeurStock = valeurRow?.valeur ?? 0;
 
-    // 2. KPI : lignes de stock par état (rupture / bas / critique / surstock)
+    // 2. KPI : lignes de stock par état (rupture / bas / critique / surstock).
+    // Définition d'alerte UNIQUE (lot D) : la même fonction `lignesAlerteStock`
+    // que la page Alertes — un produit une fois, à partir de la somme de ses
+    // positions dans l'agence. Rupture ⇔ somme ≤ 0, jamais cachée en « faible ».
+    const lignesAlerte = await lignesAlerteStock(db, agenceId);
+    const niveauxParProduit = new Map<number, "rupture" | "critique" | "faible">();
+    for (const r of lignesAlerte) {
+      const qte = Number(r.quantiteTotal ?? 0);
+      niveauxParProduit.set(r.produitId, niveauAlerte(qte, Number(r.seuilCritique ?? 2)));
+    }
+
     const etats = await db
       .select({
         produitId: stocks.produitId,
-        quantite: stocks.quantite,
-        seuilAlerte: produits.seuilAlerte,
-        seuilCritique: produits.seuilCritique,
+        quantite: sql<number>`COALESCE(SUM(${stocks.quantite}), 0)`,
         stockMaximum: produits.stockMaximum,
-        titre: produits.titre,
-        codeBarre: produits.codeBarre,
-        cmup: stocks.coutUnitaireMoyen,
       })
       .from(stocks)
       .innerJoin(produits, eq(stocks.produitId, produits.id))
-      .where(eq(stocks.agenceId, agenceId));
+      .where(eq(stocks.agenceId, agenceId))
+      .groupBy(stocks.produitId, produits.stockMaximum);
 
     let nbRuptures = 0;
     let nbStocksBas = 0;
     let nbSurstock = 0;
-    const alertes = [];
     for (const e of etats) {
-      const qte = Number(e.quantite);
-      const seuilAlerte = e.seuilAlerte ?? 5;
-      const seuilCritique = e.seuilCritique ?? 2;
-      if (qte <= 0) { nbRuptures++; alertes.push({ ...e, quantite: qte, niveau: "rupture" }); }
-      else if (qte <= seuilCritique) { nbStocksBas++; alertes.push({ ...e, quantite: qte, niveau: "critique" }); }
-      else if (qte <= seuilAlerte) { nbStocksBas++; alertes.push({ ...e, quantite: qte, niveau: "faible" }); }
-      if (e.stockMaximum && qte > Number(e.stockMaximum)) { nbSurstock++; }
+      const niveaux = niveauxParProduit.get(e.produitId);
+      // Sans seuil défini : l'état reste suivi sur la ligne (surstock), mais
+      // le produit ne « compte » pas comme alerte — il n'a jamais dit quand
+      // il devait être renouvelé.
+      if (!niveaux) {
+        if (e.stockMaximum && Number(e.quantite) > Number(e.stockMaximum)) nbSurstock++;
+        continue;
+      }
+      if (niveaux === "rupture") nbRuptures++;
+      else nbStocksBas++;
+      if (e.stockMaximum && Number(e.quantite) > Number(e.stockMaximum)) nbSurstock++;
     }
-    alertes.sort((a, b) => Number(a.quantite) - Number(b.quantite));
 
     const aAchalander = await db.select({
       produitId: stocks.produitId,
@@ -101,16 +109,22 @@ export const stockRouter = createTRPCRouter({
       nbSurstock,
       mouvementsJour,
       alertesStock: nbRuptures + nbStocksBas,
-      alertes: alertes.slice(0, 20).map(a => ({
-        id: String(a.produitId),
-        produitId: String(a.produitId),
-        titre: a.titre,
-        codeBarre: a.codeBarre,
-        quantite: a.quantite,
-        seuilAlerte: a.seuilAlerte ?? 0,
-        seuilCritique: a.seuilCritique ?? 0,
-        niveau: a.niveau,
-      })),
+      alertes: lignesAlerte
+        .map(r => {
+          const quantite = Number(r.quantiteTotal ?? 0);
+          return {
+            id: String(r.produitId),
+            produitId: String(r.produitId),
+            titre: r.titre,
+            codeBarre: r.codeBarre,
+            quantite,
+            seuilAlerte: Number(r.seuilAlerte ?? 0),
+            seuilCritique: Number(r.seuilCritique ?? 0),
+            niveau: niveauxParProduit.get(r.produitId)!,
+          };
+        })
+        .sort((a, b) => a.quantite - b.quantite)
+        .slice(0, 20),
       aAchalander: aAchalander.map(a => ({
         produitId: String(a.produitId),
         titre: a.titre,
@@ -253,7 +267,10 @@ entry.count++;
         prixVente: produits.prixVente,
         categorieNom: categories.nom,
         derniereVente: sql<Date>`MAX(${mouvementsStock.dateMouvement})`,
-        valeurStock: sql<number>`COALESCE(${stocks.quantite}, 0)::numeric * COALESCE(${produits.prixAchat}, 0)`,
+        // Valorisation unique (lot D) : le CMUP du stock gagne toujours. Le
+        // prix d'achat catalogue n'est qu'un repli quand la ligne n'a jamais
+        // été valorisée par une entrée.
+        valeurStock: sql<number>`COALESCE(${stocks.quantite}, 0)::numeric * COALESCE(NULLIF(${stocks.coutUnitaireMoyen}, ''), ${produits.prixAchat}, 0)`,
       })
         .from(stocks)
         .innerJoin(produits, eq(stocks.produitId, produits.id))
@@ -282,36 +299,28 @@ entry.count++;
     }),
 
   getAlertes: requirePermissionProcedure("stock.consulter").query(async ({ ctx }) => {
-    const agenceId = ctx.user.agenceId;
-    const rows = await db.select({
-      id: stocks.id,
-      produitId: stocks.produitId,
-      quantite: stocks.quantite,
-      titre: produits.titre,
-      codeBarre: produits.codeBarre,
-      seuilAlerte: produits.seuilAlerte,
-      seuilCritique: produits.seuilCritique,
-      categorieNom: categories.nom,
-      typeProduit: produits.typeProduit,
-    })
-      .from(stocks)
-      .innerJoin(produits, eq(stocks.produitId, produits.id))
-      .leftJoin(categories, eq(produits.categorieId, categories.id))
-      .where(and(eq(stocks.agenceId, agenceId), lt(stocks.quantite, produits.seuilAlerte)))
-      .orderBy(stocks.quantite);
+    // Une seule définition d'alerte (lot D) : la même fonction que le KPI
+    // « sous seuil » du tableau de bord catalogue. Une ligne par PRODUIT —
+    // donc un produit jamais stocké mais sous seuil apparaît, et une
+    // quantité à zéro est une « rupture », pas un « faible ».
+    const rows = await lignesAlerteStock(db, ctx.user.agenceId);
 
-    return rows.map(r => ({
-      id: String(r.id),
-      produitId: String(r.produitId),
-      titre: r.titre,
-      codeBarre: r.codeBarre,
-      quantite: r.quantite,
-      seuilAlerte: r.seuilAlerte ?? 0,
-      seuilCritique: r.seuilCritique ?? 0,
-      categorie: r.categorieNom,
-      typeProduit: r.typeProduit,
-      niveau: Number(r.quantite) < (r.seuilCritique ?? 2) ? "critique" : "faible",
-    }));
+    return rows.map(r => {
+      const quantite = Number(r.quantiteTotal ?? 0);
+      const seuilCritique = Number(r.seuilCritique ?? 2);
+      return {
+        id: String(r.produitId),
+        produitId: String(r.produitId),
+        titre: r.titre,
+        codeBarre: r.codeBarre,
+        quantite,
+        seuilAlerte: Number(r.seuilAlerte ?? 0),
+        seuilCritique: Number(r.seuilCritique ?? 0),
+        categorie: r.categorieNom,
+        typeProduit: r.typeProduit,
+        niveau: niveauAlerte(quantite, seuilCritique),
+      };
+    });
   }),
 
   getMouvements: requirePermissionProcedure("stock.consulter")
