@@ -64,7 +64,16 @@ function urlNeon() {
     .split("\n")
     .map((l) => /^\s*#?\s*DATABASE_URL="([^"]+)"/.exec(l))
     .find((m) => m && m[1].includes(".neon.tech"));
-  return ligne ? ligne[1] : null;
+  if (!ligne) return null;
+
+  // L'endpoint POOLER de Neon ouvre ses sessions avec un search_path vide :
+  // tout `SELECT … FROM stocks` y répond « relation does not exist » sur une
+  // base parfaitement saine (voir AGENTS.md, écarts de production). Les
+  // migrations écrivent des requêtes non qualifiées : elles échoueraient
+  // toutes. L'endpoint DIRECT (sans `-pooler`) — celui de l'application —
+  // applique `search_path = "$user", public` : c'est lui que le verrou doit
+  // utiliser, pas le pooler.
+  return ligne[1].replace(/-pooler\./g, ".");
 }
 
 function pas(fn, args, env = {}) {
