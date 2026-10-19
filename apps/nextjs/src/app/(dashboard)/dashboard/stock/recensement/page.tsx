@@ -19,6 +19,8 @@ import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import { EmptyState } from "~/components/ui/empty-state";
 import { BarcodeScanner } from "~/components/stock/BarcodeScanner";
+import { usePermissions } from "~/hooks/usePermissions";
+import { PanneauNouvellePiece } from "./_components/PanneauNouvellePiece";
 
 /**
  * RECENSEMENT — « je compte ce que j'ai dans mon garage ».
@@ -117,6 +119,19 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
     produitChoisi !== null && detailQuery.isLoading && !detailQuery.data;
 
   const sessionOuverte = sessionId !== null;
+
+  // ── Permission — le bouton « créer la fiche » est sincère ─────────────────
+  const { hasPermission } = usePermissions();
+  const peutCreerPiece = hasPermission("stock.modifier");
+
+  // ── Panneau « nouvelle pièce » ─────────────────────────────────────────────
+  const [panneauOuvert, setPanneauOuvert] = useState(false);
+  const [panneauPre, setPanneauPre] = useState({
+    titre: "",
+    codeBarre: null as string | null,
+  });
+  // Le dernier code lu par la caméra — propose la fiche avec le code déjà porté.
+  const [dernierCodeScan, setDernierCodeScan] = useState<string | null>(null);
 
   // ── Session ────────────────────────────────────────────────────────────────
   const ouvrir = api.stockRecensement.ouvrirSession.useMutation({
@@ -492,6 +507,7 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
                 setTexte(valeur);
                 setProduitChoisi(null);
                 setCameraOuverte(false);
+                setDernierCodeScan(valeur);
                 toast.info("Code lu", { description: valeur });
               }}
             />
@@ -511,6 +527,30 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
                 <p className="mt-1 text-muted-foreground">
                   Vérifiez le code-barre saisi, ou créez la fiche pour pouvoir compter cette pièce.
                 </p>
+                {peutCreerPiece ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2"
+                    onClick={() => {
+                      // Le code scanné (s'il y en a un) porte la pièce ; le
+                      // texte cherché préremplit le titre pour ne rien retaper.
+                      const t = texte.trim();
+                      const ressembleCode = /^\d[\d-]{6,}$/.test(t);
+                      setPanneauPre({
+                        titre: ressembleCode ? "" : t,
+                        codeBarre: dernierCodeScan ?? (ressembleCode ? t : null),
+                      });
+                      setPanneauOuvert(true);
+                    }}
+                  >
+                    <Plus size={14} /> Créer la fiche de cette pièce
+                  </Button>
+                ) : (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    La création de fiche demande la permission de modifier le stock.
+                  </p>
+                )}
               </div>
             )}
 
@@ -603,6 +643,35 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
             ) : null}
           </div>
         )}
+        {/* Panneau « nouvelle pièce » — la fiche naît SANS quitter le comptage */}
+        <PanneauNouvellePiece
+          ouvert={panneauOuvert}
+          fermer={() => setPanneauOuvert(false)}
+          sessionId={sessionId}
+          preRemplissage={panneauPre}
+          onCreee={(r) => {
+            // La fiche est créée et (en session) déjà comptée côté serveur :
+            // la ligne entre dans la liste locale, la recherche connaît la
+            // pièce dès maintenant.
+            if (sessionId !== null) {
+              setLignes((l) => [
+                ...l,
+                {
+                  cle: r.ligneId ?? --cleLocaleRef.current,
+                  produitId: r.produitId,
+                  titre: r.titre,
+                  codeBarre: r.codeBarre,
+                  quantite: r.quantite,
+                  emplacementId: r.emplacementId,
+                  theoLieu: 0,
+                  theoTotal: 0,
+                },
+              ]);
+            }
+            utils.stockRecensement.rechercher.invalidate();
+            refRecherche.current?.focus();
+          }}
+        />
       </section>
 
       {/* ── Lignes saisies ─────────────────────────────────────────────────── */}
@@ -673,7 +742,7 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
           {totaux.ecarts > 0 && (
             <p className="mb-2 flex items-start gap-1.5 text-xs text-muted-foreground">
               <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-              {totaux.ecarts} ligne(s) presenting un écart avec le stock connu. « Constater »
+              {totaux.ecarts} ligne(s) présente(nt) un écart avec le stock connu. « Constater »
               enregistre votre relevé sans toucher au stock ; « Ajuster » corrige le stock et
               trace un mouvement par écart.
             </p>

@@ -285,6 +285,35 @@ export async function chercherDoublons(
     }
   }
 
+  // ── Critère 5 : le TITRE est déjà porté — l'identité la plus simple ──────
+  // Le magasinier qui voit « Filtre à huile Dyna RT30 » deux fois voit LA
+  // même pièce : le titre est la seule chose qu'il lit sur le rayon. Deux
+  // fiches ont le même nom → il n'y avait pas de réponse à « combien de
+  // filtres ? ». Normalisé comme les références : casse, accents, ponctuation.
+  const titreNorm = normaliserReference(entete.titre ?? entete.designationCourte ?? "");
+  if (titreNorm) {
+    const lignes = await tx
+      .select({ id: produits.id, titre: produits.titre })
+      .from(produits)
+      .where(
+        and(
+          eq(produits.isActive, true),
+          sql`lower(regexp_replace(coalesce(${produits.titre}, ''), '[^a-zA-Z0-9]', '', 'g')) = ${titreNorm}`,
+          options.exclureProduitId ? ne(produits.id, options.exclureProduitId) : undefined,
+        ),
+      )
+      .limit(5);
+    for (const l of lignes) {
+      if (vus.has(l.id)) continue;
+      ajouter({
+        produitId: l.id,
+        titre: l.titre,
+        motif: "Titre identique — la pièce porte déjà ce nom",
+        reference: l.titre,
+      });
+    }
+  }
+
   // ── Probables : nom voisin. NE BLOQUE PAS. ────────────────────────────────
   const nom = entete.designationCourte || entete.titre || "";
   const probables: DoublonProbable[] = [];

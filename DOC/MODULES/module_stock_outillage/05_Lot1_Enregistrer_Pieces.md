@@ -81,24 +81,33 @@ différente (attendu : Neon pas encore migrée — le push le fera) ;
 | 1.1 | Test ROUGE : une ligne saisie survit à la fermeture de l'écran | `stock-r1-lignes-continue.integration.test.ts` | échoue d'abord (`No procedure found ""enregistrerLigne""`) puis 6/6 verts | ✅ |
 | 1.2 | Table `recensement_lignes` (`0025`) + `enregistrerLigne`/`retirerLigne` — upsert par clé produit+emplacement+lot (NULL traités explicitement), refus sur session appliquée | `0025_recensement_lignes.sql`, `recensement_lignes.ts`, `stock-recensement.ts` | migration rejouée sans erreur ; 1177 verts | ✅ lokal |
 | 1.3 | Reprise réelle : `lignesSession` rend l'attente + l'appliqué une seule fois, la page recharge au clic Reprendre, chaque ajout persiste sur le champ, `valider` consomme l'attente | `stock-recensement.ts`, `recensement/page.tsx` | test appliquer puis relire = 1 ligne (`ecroutes`=1) | ✅ |
-| 2.1 | Test ROUGE : créer une pièce inconnue depuis le recensement | `stock-audit-entree-piece.integration.test.ts` | échoue d'abord | ⬜ |
-| 2.2 | Mutation `creerPieceEtCompter` — 1 transaction : article + variante + unité + code-barres + mouvement + ligne | `stock-recensement.ts` | test 2.1 vert | ⬜ |
-| 2.3 | Garde anti-doublons branché avant écriture | `garde-doublons.ts` | refus si doublon | ⬜ |
-| 2.4 | Unité de base OBLIGATOIRE à la création (refus sinon) | `stock-recensement.ts` | test vert | ⬜ |
-| 3.1 | Panneau latéral « Nouvelle pièce » — Mode Essentiel | `PanneauNouvellePiece.tsx` | saisie sans quitter l'écran | ⬜ |
-| 3.2 | Mode « Identification complète » (marque, OEM, IAM, code-barres, photo) | idem | photo + réf. enregistrées | ⬜ |
-| 3.3 | Champs pilotés par la famille via `ontology.getDefinitionsForCategory` | idem | champs `obligatoire` imposés | ⬜ |
-| 3.4 | Bouton « Créer la fiche » caché sans `stock.modifier` | idem | permission sincère | ⬜ |
+**Découvertes étape 2** : les fixtures integration suivent le pattern m1 —
+les fiches et leurs mouvements restent dans la base (`mouvements_stock` est
+append-only et son FK interdit de supprimer des produits) ; chaque run
+choisit un NS unique (ex. `p2piece<base36>`) pour qu'une exécution passée ne
+fasse jamais dériver une exécution courante, et le nettoyage ne retire que
+les comptages. `creerPieceEtCompter` et `enregistrerLigne` partagent
+l'upsert `inscrireLigne` ; `creerVariante` (articles-router) est réutilisé
+sans dédoublement, et `detectBarcodeType` vit en `server/lib/barcodes.ts`.
+
+| 2.1 | Test ROUGE : créer une pièce inconnue depuis le recensement | `stock-audit-entree-piece.integration.test.ts` | rouge d'abord (`No procedure found "creerPieceEtCompter"`), 6/6 verts ensuite | ✅ |
+| 2.2 | Mutation `creerPieceEtCompter` — 1 transaction : article + variante (réutilisation de `creerVariante` articles-router, titre explicite) + unité + code-barres + mouvement `INITIAL_RECEIPT` référence `RECENS-INIT-<produit>` + ligne via `inscrireLigne` | `stock-recensement.ts` | 6/6 verts (fiche, unité PCE, stock 12, mouvement, ligne, code-barres, session fermée) | ✅ |
+| 2.3 | Garde anti-doublons avant écriture : `exigerPasDeDoublon` (refus CONFLICT, réemploi motivé ≥ 10 caractères) ; **critère 5 ajouté au garde : titre identique = match certain** (l'identité lue par le magasinier) ; détection du type de code-barres extraite en `server/lib/barcodes.ts` | `garde-doublons.ts`, `barcodes.ts` | refus sur code-barres déjà porté (0 fiche orpheline) et sur titre déjà porté | ✅ |
+| 2.4 | Unité de base OBLIGATOIRE : PCE garanti (`garantirUnitePCE`, idempotent) partout où on compte | `stock-recensement.ts` | produit `unite_base_id` = PCE à la création, mouvement refusé sinon | ✅ |
+| 3.1 | Panneau latéral « Nouvelle pièce » — Mode Essentiel (titre, quantité, emplacement ; « Créer la fiche et compter ») déclenché depuis l'état vide de la recherche ; la fiche revient dans la liste locale instantanément, la recherche la trouve aussitôt | `PanneauNouvellePiece.tsx`, `recensement/page.tsx` | saisie sans quitter l'écran | ✅ |
+| 3.2 | Mode « Identification complète » (type, marque, réf. fabricant, OEM, code-barres, prix d'achat, note, photo via `/api/uploads`, classification 3 niveaux) ; le refus CONFLICT ouvre la sortie de réemploi motivé, dans le panneau | idem | photo + réf. enregistrées | ✅ |
+| 3.3 | Champs pilotés par la famille : `ontology.getDefinitionsForCategory` (portée VARIANTE) — select/input/liste rendus selon `typeAttribut`, `obligatoire` bloquant avant soumission | idem + serveur : `categorieId`, `attributs`, `photos` dans `creerPieceEtCompter` | champs `obligatoire` imposés | ✅ |
+| 3.4 | Bouton « Créer la fiche » caché sans `stock.modifier` ; un message explicite remplace le bouton, et le serveur refuse de toute façon (`stock.modifier` requis) | idem | permission sincère | ✅ |
 | 4.1 | Zones d'emplacement (NORMAL, RÉCEPTION, QUARANTAINE, REBETS, PÉRIMÉS) + capacité | `0026_emplacements_stockage.sql` | zones visibles au choix | ⬜ |
 | 4.2 | Étiquette imprimable (code + QR) | `emplacements/page.tsx` | étiquette imprimée | ⬜ |
 | 4.3 | Récapitulatif : colonne emplacement + regroupement par zone + `theoLieu` affiché | `recensement/page.tsx` | visible à l'écran | ⬜ |
 | 5.1 | `planDePrise()` : FEFO DLC effective puis emplacement accessible | `stock-engine.ts` | test vert | ⬜ |
 | 5.2 | Le plan est AFFICHÉ avant confirmation de sortie | `stock-engine.ts` + UI | lisible avant validation | ⬜ |
-| V1 | Suite complète ≥ 1170 verts | — | vitest | ⬜ |
-| V2 | `tsc --noEmit` = 310 | — | tsc | ⬜ |
-| V3 | `next build` exit 0 | — | build | ⬜ |
-| V4 | `pnpm db:sync` puis `pnpm db:check` = PARFAIT | — | db:check | ⬜ |
-| V5 | Passe manuelle de l'écran avec l'utilisateur | — | validation | ⬜ |
+| V1 | Suite complète ≥ 1170 verts | — | vitest | ✅ 1193/1193 (96 fichiers, +1 skipped) |
+| V2 | `tsc --noEmit` = 310 | — | tsc | ✅ 310 exactement (via libellé de helper aligné sur `z.infer<typeof ligneRecensement>`) |
+| V3 | `next build` exit 0 | — | build | ✅ Compiled successfully 76 s (warnings préexistants) |
+| V4 | `pnpm db:sync` puis `pnpm db:check` = PARFAIT | — | db:check | ⬜ pré-push (0023→0025 en attente ; hook pre-push résorbera l'ECART BLOQUANT) |
+| V5 | Passe manuelle de l'écran avec l'utilisateur | — | validation | ⬜ après l'étape 3 |
 
 ---
 

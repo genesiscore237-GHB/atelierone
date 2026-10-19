@@ -114,6 +114,9 @@ function normaliserRef(ref: string): string {
 }
 
 const VARIANTE_INPUT = z.object({
+  // Titre explicite — le seul chemin qui montre au magasinier UNE pièce
+  // désignée (« Filtre à air Dyna ») et non « Variante » générique.
+  titre: z.string().max(200).optional(),
   marque: z.string().optional(),
   referenceFabricant: z.string().optional(),
   refOem: z.string().optional(),
@@ -246,7 +249,7 @@ const COMPAT_INPUT = z.object({
  * - PIECE / CONSOMMABLE → niveau VARIANTE (champs outillage rejetés)
  * - OUTIL / EQUIPEMENT → niveau EXEMPLAIRE (champs commerciaux rejetés)
  */
-async function creerVariante(tx: any, article: { id: number; typeProduit: string }, input: z.infer<typeof VARIANTE_INPUT>, agenceId: number, userId: number) {
+export async function creerVariante(tx: any, article: { id: number; typeProduit: string }, input: z.infer<typeof VARIANTE_INPUT>, agenceId: number, userId: number) {
   const type = article.typeProduit;
   const estExemplaire = type === "OUTIL" || type === "EQUIPEMENT";
   const estPiece = type === "PIECE" || type === "CONSOMMABLE";
@@ -262,7 +265,9 @@ async function creerVariante(tx: any, article: { id: number; typeProduit: string
     if (type === "EQUIPEMENT" && !input.numeroImmobilisation) throw new TRPCError({ code: "BAD_REQUEST", message: "Numéro d'immobilisation requis pour un équipement." });
   }
 
-  const titre = estExemplaire
+  const titre = input.titre
+    ? input.titre
+    : estExemplaire
     ? `${input.marque ?? ""} ${input.referenceFabricant ?? ""}${input.numeroSerie ? ` — SN ${input.numeroSerie}` : ""}`.trim() || "Exemplaire"
     : [input.marque, input.referenceFabricant, input.conditionnement].filter(Boolean).join(" — ") || "Variante";
 

@@ -4,6 +4,8 @@ import { TRPCError } from "@trpc/server";
 import { db } from "~/server/db";
 import {
   produits,
+  produitArticles,
+  codesBarres,
   emplacements,
   stocks,
   inventaires,
@@ -19,6 +21,9 @@ import {
   enregistrerMouvement,
   TYPES_MOUVEMENT,
 } from "~/server/lib/stock-engine";
+import { exigerPasDeDoublon } from "~/server/lib/garde-doublons";
+import { detectBarcodeType } from "~/server/lib/barcodes";
+import { creerVariante } from "./articles-router";
 
 /**
  * RECENSEMENT — « je compte ce que j'ai dans mon garage ».
@@ -231,46 +236,14 @@ export const stockRecensementRouter = createTRPCRouter({
         });
       }
 
-      return db.transaction(async (tx) => {
-        const existante = await tx
-          .select({ id: recensementLignes.id })
-          .from(recensementLignes)
-          .where(cleLigne(input.sessionId, ctx.user.agenceId, ligne))
-          .limit(1);
-
-        const valeurs = {
-          quantite: String(ligne.quantite),
-          uniteId: ligne.uniteId ?? null,
-          prixAchat: ligne.prixAchat != null ? String(ligne.prixAchat) : null,
-          note: ligne.note ?? null,
-          creePar: Number(ctx.user.id),
-        } as const;
-
-        const [row] = existante.length
-          ? await tx
-              .update(recensementLignes)
-              .set(valeurs)
-              .where(eq(recensementLignes.id, existante[0]!.id))
-              .returning({ id: recensementLignes.id })
-          : await tx
-              .insert(recensementLignes)
-              .values({
-                sessionId: input.sessionId,
-                produitId: ligne.produitId,
-                agenceId: ctx.user.agenceId,
-                emplacementId: ligne.emplacementId ?? null,
-                lotId: ligne.lotId ?? null,
-                ...valeurs,
-              } as any)
-              .returning({ id: recensementLignes.id });
-
-        const [total] = await tx
-          .select({ n: sql<number>`count(*)::int` })
-          .from(recensementLignes)
-          .where(eq(recensementLignes.sessionId, input.sessionId));
-
-        return { ligneId: row!.id, totalLignes: total!.n };
-      }) as any;
+      return db.transaction(async (tx) =>
+        inscrireLigne(tx, {
+          sessionId: input.sessionId,
+          agenceId: ctx.user.agenceId,
+          userId: Number(ctx.user.id),
+          ligne,
+        }),
+      ) as any;
     }),
 
   /**
@@ -290,6 +263,236 @@ export const stockRecensementRouter = createTRPCRouter({
       if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Ligne de recensement introuvable." });
       await db.delete(recensementLignes).where(eq(recensementLignes.id, input.ligneId));
       return { retiré: true };
+    }),
+
+  /**
+   * CRÉER LA PIÈCE PUIS LA COMPTER — le CAS D'USAGE DU GARAGE.
+   *
+   * « Est-ce un article que je connais déjà ? » — non. Alors la fiche (article
+   * + variante + unité de base + code-barres) naît ICI, le comptage s'écrit
+   * aussitôt, et personne n'a comparé deux écrans ni perdu une saisie.
+   *
+   * Tout CELA dans UNE transaction : si le code-barres est porté par une
+   * autre pièce, si la session est fermée, si l'unité est absente, la
+   * transaction RETOURNE EN ARRIÈRE — jamais une fiche orpheline.
+   */
+  creerPieceEtCompter: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      sessionId: z.number().int().optional(),
+      titre: z.string().min(2).max(200),
+      typeProduit: z.enum([
+        "PIECE", "CONSOMMABLE", "OUTIL", "EQUIPEMENT",
+        "SERVICE", "FOURNITURE", "KIT",
+      ]).default("PIECE"),
+      quantite: z.number().min(0).default(0),
+      emplacementId: z.number().int().nullish(),
+      lotId: z.number().int().nullish(),
+      uniteBaseId: z.string().uuid().optional(),
+      /* Identification complète (mode « complet » du panneau — facultatif) */
+      codeBarre: z.string().max(64).nullish(),
+      prixAchat: z.number().min(0).nullish(),
+      note: z.string().max(500).nullish(),
+      marque: z.string().max(120).nullish(),
+      refOem: z.string().max(80).nullish(),
+      referenceFabricant: z.string().max(80).nullish(),
+      /* Classification et champs pilotés par la famille (ontologie) */
+      categorieId: z.number().int().nullish(),
+      attributs: z.array(z.object({
+        cle: z.string().min(1).max(100),
+        valeur: z.string().max(500).optional(),
+        unite: z.string().max(40).optional(),
+        typeAttribut: z.string().max(30).optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        precision: z.number().optional(),
+        liste: z.array(z.string()).optional(),
+        uniteId: z.string().uuid().optional(),
+        aide: z.string().optional(),
+      })).optional(),
+      /* Photo au moment de l'enregistrement (≤ 3, URL courte — jamais un data URL). */
+      photos: z.array(z.string().max(500)).max(3).optional(),
+      accepterDoublon: z.boolean().optional(),
+      motifReemploi: z.string().max(500).nullish(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      return db.transaction(async (tx) => {
+        // ── 1. Session — si l'on est en session, elle doit être ouverte ──
+        if (input.sessionId != null) {
+          const session = await tx
+            .select({ statut: inventairesSessions.statut })
+            .from(inventairesSessions)
+            .where(and(
+              eq(inventairesSessions.id, input.sessionId),
+              eq(inventairesSessions.agenceId, ctx.user.agenceId),
+            ))
+            .limit(1);
+          const s = session[0];
+          if (!s) throw new TRPCError({ code: "NOT_FOUND", message: "Session de recensement introuvable." });
+          if (s.statut !== "en_cours" && s.statut !== "brouillon") {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                `Cette session est « ${s.statut} » : elle a déjà été appliquée. ` +
+                `Ouvrez un nouveau recensement pour compter à nouveau.`,
+            });
+          }
+        }
+
+        // ── 2. Garde anti-doublons — AVANT TOUTE ÉCRITURE ────────────────
+        await exigerPasDeDoublon(
+          tx,
+          {
+            titre: input.titre,
+            designationCourte: input.titre,
+            marque: input.marque ?? undefined,
+            referencePrincipale: undefined,
+            referenceFabricant: input.referenceFabricant ?? undefined,
+            refOem: input.refOem ?? undefined,
+            codeArticle: undefined,
+            codeBarre: input.codeBarre ?? undefined,
+            referenceFournisseur: undefined,
+          },
+          {
+            accepterDoublon: input.accepterDoublon,
+            motifReemploi: input.motifReemploi ?? undefined,
+          },
+        );
+
+        // ── 3. Unité de base — OBLIGATOIRE dès qu'il y a du stock ────────
+        const existeUnite = input.uniteBaseId
+          ? (await tx.select({ id: unitesMesure.id }).from(unitesMesure).where(eq(unitesMesure.id, input.uniteBaseId)).limit(1))[0]
+          : undefined;
+        const idUniteBase = existeUnite?.id ?? await garantirUnitePCE(tx);
+        if ((input.quantite ?? 0) > 0 && input.typeProduit !== "SERVICE" && !idUniteBase) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "L'unité de base est obligatoire pour compter une quantité — aucune unité n'est disponible.",
+          });
+        }
+
+        // ── 4. Article ───────────────────────────────────────────────────
+        const [article] = await tx
+          .insert(produitArticles)
+          .values({
+            code: `ART-${Date.now().toString(36)}-${Math.floor(Math.random() * 900 + 100)}`,
+            designation: input.titre.trim(),
+            designationCourte: input.titre.trim().slice(0, 80),
+            typeProduit: input.typeProduit,
+            categorieId: input.categorieId ?? null,
+            etatProduitDefaut: "NEUF",
+            origineProduitDefaut: "AFTERMARKET",
+          } as any)
+          .returning({ id: produitArticles.id });
+
+        // ── 5. Variante — une seule, la pièce comme elle est ─────────────
+        const variante = await creerVariante(
+          tx,
+          { id: article.id, typeProduit: input.typeProduit },
+          {
+            titre: input.titre.trim(),
+            designationCourte: input.titre.trim().slice(0, 80),
+            marque: input.marque ?? undefined,
+            refOem: input.refOem ?? undefined,
+            referenceFabricant: input.referenceFabricant ?? undefined,
+            codeBarre: input.codeBarre ?? undefined,
+            prixAchat: input.prixAchat ?? undefined,
+            /* Champs pilotés par la famille — l'ontologie décide, ici on
+               écrit ce qu'on a reçu : la validation du type vit dans le
+               garde formulaire du panneau. */
+            attributs: input.attributs,
+            // du stock exige l'unité en place ; un SERVICE n'en a pas
+            unites: input.typeProduit !== "SERVICE" && idUniteBase
+              ? [{
+                  uniteId: idUniteBase,
+                  facteurVersBase: 1,
+                  estUniteBase: true,
+                  estUniteAchatDefaut: true,
+                  estUniteVenteDefaut: true,
+                }]
+              : [],
+            fournisseurs: [],
+          } as any,
+          ctx.user.agenceId,
+          Number(ctx.user.id),
+        );
+
+        // ── 6. Unité de base portée par le produit lui-même ──────────────
+        if (idUniteBase && input.typeProduit !== "SERVICE") {
+          await tx
+            .update(produits)
+            .set({ uniteBaseId: idUniteBase } as any)
+            .where(eq(produits.id, variante));
+        }
+        // Photos prises au moment du recensement — une pièce rognée sans
+        // image est une pièce que le prochain ne reconnaîtra pas.
+        if (input.photos?.length) {
+          await tx
+            .update(produits)
+            .set({ photos: input.photos, imageUrl: input.photos[0] } as any)
+            .where(eq(produits.id, variante));
+        }
+
+        // ── 7. Code-barres témoin (croisé) — la pièce porte le code Et la table en reste ──
+        if (input.codeBarre) {
+          await tx
+            .insert(codesBarres)
+            .values({
+              produitId: variante,
+              type: detectBarcodeType(input.codeBarre),
+              valeur: input.codeBarre,
+              estDefaut: true,
+            } as any)
+            .onConflictDoNothing();
+        }
+
+        // ── 8. Stock initial — par le MOTEUR jamais une écriture directe ──
+        if ((input.quantite ?? 0) > 0 && input.typeProduit !== "SERVICE") {
+          await enregistrerMouvement(tx as any, {
+            type: TYPES_MOUVEMENT.INITIAL_RECEIPT as any,
+            sens: "E",
+            produitId: variante,
+            agenceId: ctx.user.agenceId,
+            quantite: input.quantite,
+            emplacementId: input.emplacementId ?? undefined,
+            lotId: input.lotId ?? undefined,
+            uniteId: idUniteBase ?? undefined,
+            coutUnitaireBase: input.prixAchat ?? undefined,
+            reference: `RECENS-INIT-${variante}`,
+            referenceType: "RECENSEMENT",
+            documentLie: input.sessionId != null ? `RECENS-${input.sessionId}` : undefined,
+            motif: `Création de pièce au recensement — ${input.titre.trim()}`,
+            effectuePar: Number(ctx.user.id),
+          });
+        }
+
+        // ── 9. Ligne de comptage dans la session en cours ────────────────
+        let ligneId: number | null = null;
+        if (input.sessionId != null && (input.quantite ?? 0) > 0) {
+          const ligne = await inscrireLigne(tx, {
+            sessionId: input.sessionId,
+            agenceId: ctx.user.agenceId,
+            userId: Number(ctx.user.id),
+            ligne: {
+              produitId: variante,
+              emplacementId: input.emplacementId ?? null,
+              lotId: input.lotId ?? null,
+              quantite: input.quantite,
+              uniteId: idUniteBase ?? null,
+              prixAchat: input.prixAchat ?? null,
+              note: input.note ?? null,
+            },
+          });
+          ligneId = Number(ligne.ligneId);
+        }
+
+        return {
+          articleId: article.id,
+          produitId: variante,
+          codeBarre: input.codeBarre ?? null,
+          sessionId: input.sessionId ?? null,
+          ligneId,
+        };
+      }) as any;
     }),
 
   /**
@@ -723,3 +926,84 @@ async function chargerLibellesEmplacements(
 // La recherche tolérante et le garde-fou anti-doublon vivent dans
 // `~/server/lib/recherche-articles`, partagés avec la réception (M3).
 // Voir ce service pour le détail des mots vides et du score de similarité.
+
+/**
+ * Insère (ou met à jour) une ligne de comptage PENDANT une session — clé
+ * logique (produit, emplacement, lot), ressaisir corrige, n'empile pas.
+ * Utilisé par `enregistrerLigne` et par `creerPieceEtCompter` : la ligne
+ * d'aujourd'hui ne peut pas diverger de celle de demain.
+ */
+async function inscrireLigne(
+  tx: any,
+  p: {
+    sessionId: number;
+    agenceId: number;
+    userId: number;
+    ligne: z.infer<typeof ligneRecensement>;
+  },
+): Promise<{ ligneId: number; totalLignes: number }> {
+  const { sessionId, agenceId, userId, ligne } = p;
+
+  const existante = await tx
+    .select({ id: recensementLignes.id })
+    .from(recensementLignes)
+    .where(cleLigne(sessionId, agenceId, ligne))
+    .limit(1);
+
+  const valeurs = {
+    quantite: String(ligne.quantite),
+    uniteId: ligne.uniteId ?? null,
+    prixAchat: ligne.prixAchat != null ? String(ligne.prixAchat) : null,
+    note: ligne.note ?? null,
+    creePar: userId,
+  } as const;
+
+  const [row] = existante.length
+    ? await tx
+        .update(recensementLignes)
+        .set(valeurs)
+        .where(eq(recensementLignes.id, existante[0]!.id))
+        .returning({ id: recensementLignes.id })
+    : await tx
+        .insert(recensementLignes)
+        .values({
+          sessionId,
+          produitId: ligne.produitId,
+          agenceId,
+          emplacementId: ligne.emplacementId ?? null,
+          lotId: ligne.lotId ?? null,
+          ...valeurs,
+        } as any)
+        .returning({ id: recensementLignes.id });
+
+  const [total] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(recensementLignes)
+    .where(eq(recensementLignes.sessionId, sessionId));
+  return { ligneId: Number(row!.id), totalLignes: Number(total!.n) };
+}
+
+/**
+ * L'unité PCE (« pièce ») — la base universelle du décompte morcelé. Si la
+ * base attend encore sa création, elle nasît ici, idempotente :
+ * `onConflictDoNothing` sur le code unique + relecture.
+ */
+async function garantirUnitePCE(tx: any): Promise<string> {
+  const deja = await tx
+    .select({ id: unitesMesure.id })
+    .from(unitesMesure)
+    .where(eq(unitesMesure.code, "PCE"))
+    .limit(1);
+  if (deja[0]) return deja[0].id;
+  await tx
+    .insert(unitesMesure)
+    .values({ code: "PCE", libelle: "Pièce", symbole: "pce", type: "QUANTITE" } as any)
+    .onConflictDoNothing();
+  const [creee] = await tx
+    .select({ id: unitesMesure.id })
+    .from(unitesMesure)
+    .where(eq(unitesMesure.code, "PCE"))
+    .limit(1);
+  if (!creee) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Unité PCE non créable." });
+  return creee.id;
+}

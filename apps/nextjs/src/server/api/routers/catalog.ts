@@ -8,14 +8,9 @@ import { appendFileSync } from "fs";
 import { join } from "path";
 import { listerKitLignes } from "~/server/lib/kit-service";
 import { getCatalogueQualite, getQualiteDetail } from "~/server/lib/catalog-service";
+import { detectBarcodeType } from "~/server/lib/barcodes";
 
 const ADMIN_ROLES = ["superadmin", "directeur", "admin"];
-
-function detectBarcodeType(v: string): string {
-  if (/^\d{13}$/.test(v)) return "EAN13";
-  if (/^\d{8}$/.test(v)) return "EAN8";
-  return "INTERNE";
-}
 
 // Bornes de validation commune (create + update) : le type de produit doit être
 // une valeur connue et le prix de vente strictement positif (0 FCFA interdit).
