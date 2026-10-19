@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { borneFin } from "~/lib/dates-periode";
+import { ZONES_STOCKAGE } from "~/lib/emplacements";
 import { createTRPCRouter, protectedProcedure, stockProcedure, requirePermissionProcedure } from "~/server/api/trpc";
 import { db, stocks, produits, categories, unitesMesure, mouvementsStock, inventaires, inventairesSessions, deconditionnements, reconditionnements, emplacements, stocksUnites, stocksLots, produitUnites, ventesLignes, ventes, demandesCommande } from "@atelierone/db";
 import { eq, and, desc, sql, lt, lte, gte, isNotNull, isNull, count, sum, avg, asc, inArray } from "drizzle-orm";
@@ -1598,6 +1599,10 @@ if (existing) {
       code: z.string().min(1).regex(/^[A-Za-z0-9-]{1,30}$/, "Code simple : lettres, chiffres, tirets (ex. CASIER-A3, BAC-12, MAG-A-01)"),
       libelle: z.string().optional(),
       type: z.string().default("RAYON"),
+      // Zone fonctionnelle (Lot 1 étape 4) et capacité optionnelle : la
+      // même valeur `z.enum` que la lib partagée, donc jamais désynchronisée.
+      zoneStockage: z.enum(ZONES_STOCKAGE).default("NORMAL"),
+      capacite: z.number().int().min(1).optional(),
       parentId: z.number().int().optional(),
       categorieId: z.number().int().optional(),
       isActive: z.boolean().default(true),
@@ -1647,6 +1652,8 @@ if (existing) {
         code: input.code,
         libelle: input.libelle ?? null,
         type: input.type,
+        zoneStockage: input.zoneStockage,
+        capacite: input.capacite ?? null,
         parentId: input.parentId ?? null,
         profondeur,
         categorieId: input.categorieId ?? null,
@@ -1681,6 +1688,8 @@ if (existing) {
           code: emplacements.code,
           libelle: emplacements.libelle,
           type: emplacements.type,
+          zoneStockage: emplacements.zoneStockage,
+          capacite: emplacements.capacite,
           categorieId: emplacements.categorieId,
           isActive: emplacements.isActive,
         })
@@ -1698,6 +1707,8 @@ if (existing) {
       id: z.number().int(),
       libelle: z.string().optional(),
       type: z.string().optional(),
+      zoneStockage: z.enum(ZONES_STOCKAGE).optional(),
+      capacite: z.number().int().min(1).nullable().optional(),
       isActive: z.boolean().optional(),
       categorieId: z.number().int().nullable().optional(),
     }))

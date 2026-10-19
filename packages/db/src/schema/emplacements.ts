@@ -12,6 +12,12 @@ export const emplacements = pgTable("emplacements", {
   profondeur: integer("profondeur").notNull().default(0),
   categorieId: integer("categorie_id").references(() => categories.id),
   ordre: integer("ordre").notNull().default(0),
+  // Zone FONCTIONNELLE (Lot 1 étape 4) : NORMAL, RECEPTION, QUARANTAINE,
+  // REBUTS, PERIMES — indépendante du type physique (RAYON, BAC…). CHECK
+  // posé par `0029_emplacements_stockage.sql`.
+  zoneStockage: varchar("zone_stockage", { length: 20 }).notNull().default("NORMAL"),
+  // Nombre maximum d'articles supportés ; NULL = pas de limite définie.
+  capacite: integer("capacite"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

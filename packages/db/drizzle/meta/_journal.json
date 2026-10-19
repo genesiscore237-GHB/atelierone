@@ -205,5 +205,12 @@
       "when": 1792800000015,
       "tag": "0028_mirroirs_stock"
     }
+    ,
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792800000016,
+      "tag": "0029_emplacements_stockage"
+    }
   ]
 }
