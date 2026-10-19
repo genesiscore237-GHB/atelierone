@@ -10,8 +10,9 @@ import {
   inventairesSessions,
   lots,
   unitesMesure,
+  recensementLignes,
 } from "@atelierone/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { createTRPCRouter, requirePermissionProcedure } from "~/server/api/trpc";
 import { rechercherArticles } from "~/server/lib/recherche-articles";
 import {
@@ -203,6 +204,92 @@ export const stockRecensementRouter = createTRPCRouter({
         unites,
         lots: lotsDuProduit,
       };
+    }),
+
+  /**
+   * ENREGISTRER UNE LIGNE — immédiatement, pas à la validation.
+   *
+   * Le comptage se fait sur site, la pièce entre les mains. Si la ligne
+   * n'existe que dans le réact, une fermeture d'écran, une perte de
+   * réseau, un appel la tue. La ligne est donc écrite AU MOMENT de la
+   * saisie ; ressaisir la même clé (produit, emplacement, lot) met à jour
+   * la valeur — on corrige un comptage, on n'empile pas.
+   */
+  enregistrerLigne: requirePermissionProcedure("stock.inventaire")
+    .input(z.object({ sessionId: z.number().int(), ligne: ligneRecensement }))
+    .mutation(async ({ ctx, input }) => {
+      const ligne = input.ligne;
+      const session = await sessionDeRecensement(ctx.user.agenceId, input.sessionId);
+      const s = session[0];
+      if (!s) throw new TRPCError({ code: "NOT_FOUND", message: "Session de recensement introuvable." });
+      if (s.statut !== "en_cours" && s.statut !== "brouillon") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            `Cette session est « ${s.statut} » : elle a déjà été appliquée. ` +
+            `Ouvrez un nouveau recensement pour compter à nouveau.`,
+        });
+      }
+
+      return db.transaction(async (tx) => {
+        const existante = await tx
+          .select({ id: recensementLignes.id })
+          .from(recensementLignes)
+          .where(cleLigne(input.sessionId, ctx.user.agenceId, ligne))
+          .limit(1);
+
+        const valeurs = {
+          quantite: String(ligne.quantite),
+          uniteId: ligne.uniteId ?? null,
+          prixAchat: ligne.prixAchat != null ? String(ligne.prixAchat) : null,
+          note: ligne.note ?? null,
+          creePar: Number(ctx.user.id),
+        } as const;
+
+        const [row] = existante.length
+          ? await tx
+              .update(recensementLignes)
+              .set(valeurs)
+              .where(eq(recensementLignes.id, existante[0]!.id))
+              .returning({ id: recensementLignes.id })
+          : await tx
+              .insert(recensementLignes)
+              .values({
+                sessionId: input.sessionId,
+                produitId: ligne.produitId,
+                agenceId: ctx.user.agenceId,
+                emplacementId: ligne.emplacementId ?? null,
+                lotId: ligne.lotId ?? null,
+                ...valeurs,
+              } as any)
+              .returning({ id: recensementLignes.id });
+
+        const [total] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(recensementLignes)
+          .where(eq(recensementLignes.sessionId, input.sessionId));
+
+        return { ligneId: row!.id, totalLignes: total!.n };
+      }) as any;
+    }),
+
+  /**
+   * RETIRER UNE LIGNE — une erreur de comptage disparaît de la liste des
+   * lignes en attente ; elle ne laisse rien derrière elle.
+   */
+  retirerLigne: requirePermissionProcedure("stock.inventaire")
+    .input(z.object({ ligneId: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      const [row] = await db
+        .select({ id: recensementLignes.id })
+        .from(recensementLignes)
+        .where(
+          and(eq(recensementLignes.id, input.ligneId), eq(recensementLignes.agenceId, ctx.user.agenceId)),
+        )
+        .limit(1);
+      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Ligne de recensement introuvable." });
+      await db.delete(recensementLignes).where(eq(recensementLignes.id, input.ligneId));
+      return { retiré: true };
     }),
 
   /**
@@ -420,6 +507,11 @@ export const stockRecensementRouter = createTRPCRouter({
             .where(eq(inventairesSessions.id, input.sessionId));
         }
 
+        // Les lignes en attente sont consumées : elles ont migré dans
+        // `inventaires`. Relire la session les rend une et une seule fois —
+        // sinon chaque reprise doublerait le comptage.
+        await tx.delete(recensementLignes).where(eq(recensementLignes.sessionId, input.sessionId));
+
         return {
           sessionId: input.sessionId,
           lignesEnregistrees: input.lignes.length,
@@ -469,21 +561,67 @@ export const stockRecensementRouter = createTRPCRouter({
         .limit(30);
     }),
 
-  /** Lignes déjà comptées d'une session — pour reprendre sans ressaisir. */
+  /**
+   * Lignes déjà comptées d'une session — pour reprendre sans ressaisir.
+   *
+   * Deux familles, une seule liste :
+   *  · en ATTENTE (recensement_lignes) — ce qui a été compté et pas encore
+   *    appliqué : c'est ce qui fait la reprise réelle d'une session en
+   *    cours ;
+   *  · APPLIQUÉES (inventaires) — ce que la session a déjà consommé ;
+   *    les garder visibles évite de recompter (ou de recouvrir) à l'aveugle.
+   *
+   * Chaque ligne finit exactement une fois : à la validation, l'attente
+   * migre dans les appliquées, jamais dans les deux.
+   */
   lignesSession: requirePermissionProcedure("stock.consulter")
     .input(z.object({ sessionId: z.number().int() }))
     .query(async ({ ctx, input }) => {
-      const rows = await db
+      const enAttente = ((await db
+        .select({
+          id: recensementLignes.id,
+          produitId: recensementLignes.produitId,
+          titre: produits.titre,
+          emplacementId: recensementLignes.emplacementId,
+          lotId: recensementLignes.lotId,
+          uniteId: recensementLignes.uniteId,
+          quantiteReelle: recensementLignes.quantite,
+          prixAchat: recensementLignes.prixAchat,
+          note: recensementLignes.note,
+        })
+        .from(recensementLignes)
+        .innerJoin(produits, eq(recensementLignes.produitId, produits.id))
+        .where(
+          and(
+            eq(recensementLignes.sessionId, input.sessionId),
+            eq(recensementLignes.agenceId, ctx.user.agenceId),
+          ),
+        )
+        .orderBy(sql`${recensementLignes.id} ASC`)) as unknown as []) as {
+        id: number;
+        produitId: number;
+        titre: string;
+        emplacementId: number | null;
+        lotId: number | null;
+        uniteId: string | null;
+        quantiteReelle: string;
+        prixAchat: string | null;
+        note: string | null;
+      }[];
+
+      const appliquees = ((await db
         .select({
           id: inventaires.id,
           produitId: inventaires.produitId,
           titre: produits.titre,
           emplacementId: inventaires.emplacementId,
           lotId: inventaires.lotId,
-          quantiteTheorique: inventaires.quantiteTheorique,
+          uniteId: inventaires.uniteId,
           quantiteReelle: inventaires.quantiteReelle,
-          ecart: inventaires.ecart,
+          prixAchat: sql<string | null>`NULL`,
           note: inventaires.commentaire,
+          quantiteTheorique: inventaires.quantiteTheorique,
+          ecart: inventaires.ecart,
         })
         .from(inventaires)
         .innerJoin(produits, eq(inventaires.produitId, produits.id))
@@ -493,14 +631,67 @@ export const stockRecensementRouter = createTRPCRouter({
             eq(inventaires.agenceId, ctx.user.agenceId),
           ),
         )
-        .orderBy(sql`${inventaires.id} DESC`);
-      return rows;
+        .orderBy(sql`${inventaires.id} ASC`)) as unknown as []) as unknown as {
+        id: number;
+        produitId: number;
+        titre: string;
+        emplacementId: number | null;
+        lotId: number | null;
+        uniteId: string | null;
+        quantiteReelle: string;
+        prixAchat: string | null;
+        note: string | null;
+        quantiteTheorique: string;
+        ecart: string;
+      }[];
+
+      return [
+        ...enAttente.map((l) => ({ ...l, appliquee: false, ecart: null, quantiteTheorique: null })),
+        ...appliquees.map((l) => ({ ...l, appliquee: true })),
+      ];
     }),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Aides
 // ─────────────────────────────────────────────────────────────────────────────
+
+function sessionDeRecensement(agenceId: number, sessionId: number) {
+  return db
+    .select({
+      id: inventairesSessions.id,
+      statut: inventairesSessions.statut,
+      libelle: inventairesSessions.libelle,
+      dateDebut: inventairesSessions.dateDebut,
+    })
+    .from(inventairesSessions)
+    .where(and(eq(inventairesSessions.id, sessionId), eq(inventairesSessions.agenceId, agenceId)))
+    .limit(1);
+}
+
+/**
+ * La clé logique d'une ligne : (produit, emplacement, lot). Ressaisir cette
+ * clé met à jour le comptage — on corrige, on n'empile pas. Les	NULL sont
+ * traités explicitement car PG les considère distincts dans un index unique.
+ */
+function cleLigne(
+  sessionId: number,
+  agenceId: number,
+  ligne: { produitId?: number | null; emplacementId?: number | null; lotId?: number | null },
+) {
+  if (ligne.produitId == null) throw new TRPCError({ code: "BAD_REQUEST", message: "produitId requis." });
+  return and(
+    eq(recensementLignes.sessionId, sessionId),
+    eq(recensementLignes.agenceId, agenceId),
+    eq(recensementLignes.produitId, ligne.produitId),
+    ligne.emplacementId != null
+      ? eq(recensementLignes.emplacementId, ligne.emplacementId)
+      : isNull(recensementLignes.emplacementId),
+    ligne.lotId != null
+      ? eq(recensementLignes.lotId, ligne.lotId)
+      : isNull(recensementLignes.lotId),
+  );
+}
 
 async function tx_insertSession(agenceId: number, libelle: string, userId: number) {
   return db

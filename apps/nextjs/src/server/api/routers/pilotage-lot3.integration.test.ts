@@ -136,7 +136,19 @@ beforeAll(async () => {
   const created = await caller.create({ numRegistre: 9301, immatriculation: I_VEH1, marque: "Lot3", modele: "Test" });
   parkingId = created.id;
   // Affecte un site pour que le join siteNom de vehiculeParCanonique soit renseigné.
-  await db.execute(sql`UPDATE parking_vehicles SET site_id = 1 WHERE id = ${parkingId}`);
+  // Id du site réel du garage — jamais hard-codé : sur une base test constituée
+  // après coup (-S1, -S2…), site 1 n'existe plus et la FK refuse l'affectation.
+  const sites = (await db.execute(
+    sql`SELECT id FROM parking_sites WHERE agence_id = 1 ORDER BY id LIMIT 1`,
+  )) as unknown as Row[];
+  let siteId = Number(sites[0]?.id);
+  if (!Number.isFinite(siteId) || siteId <= 0) {
+    const [s] = (await db.execute(
+      sql`INSERT INTO parking_sites (agence_id, code, nom) VALUES (1, ${`${NS}-SITE`}, ${`${NS} Site`}) RETURNING id`,
+    )) as unknown as Row[];
+    siteId = Number(s.id);
+  }
+  await db.execute(sql`UPDATE parking_vehicles SET site_id = ${siteId} WHERE id = ${parkingId}`);
   const [p] = (await db.execute(
     sql`SELECT vehicule_id FROM parking_vehicles WHERE id = ${parkingId}`,
   )) as unknown as Row[];

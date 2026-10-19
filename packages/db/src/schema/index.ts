@@ -185,12 +185,13 @@ export {
   parkingConfigs,
   parkingVehiclePhotos,
 } from "./parking";
-export type {
-  ParkingGeometry,
-  ParkingZoneType,
-  ParkingSpotStatus,
-  ParkingVehicleStatus,
-  ParkingMovementType,
-  ParkingTransferStatus,
-  ParkingAlertCode,
-} from "./parking";
+  export type {
+    ParkingGeometry,
+    ParkingZoneType,
+    ParkingSpotStatus,
+    ParkingVehicleStatus,
+    ParkingMovementType,
+    ParkingTransferStatus,
+    ParkingAlertCode,
+  } from "./parking";
+  export { recensementLignes } from "./recensement_lignes";

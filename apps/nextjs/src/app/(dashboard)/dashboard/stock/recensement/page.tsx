@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -74,7 +74,8 @@ export default function RecensementPage() {
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [lignes, setLignes] = useState<Ligne[]>([]);
   const [libelleSession, setLibelleSession] = useState("");
-  const [cleSuivante, setCleSuivante] = useState(1);
+  const chargeRef = useRef(false);
+  const cleLocaleRef = useRef(-1);
 
   // ── Champ de saisie ────────────────────────────────────────────────────────
   const [texte, setTexte] = useState("");
@@ -144,10 +145,12 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
       setProduitChoisi(null);
       setEmplacementChoisi(TOUS_EMPLACEMENTS);
       // Le stock a bougé : tout ce qui l'affiche doit le savoir.
+      // lignesSession aussi : les lignes en attente ont été consommées.
       await Promise.all([
         utils.stock.getDashboard.invalidate(),
         utils.stockRecensement.rechercher.invalidate(),
         utils.stockRecensement.sessions.invalidate(),
+        utils.stockRecensement.lignesSession.invalidate(),
         utils.stock.listEmplacements.invalidate(),
       ]);
     },
@@ -160,6 +163,60 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
   const sessions = api.stockRecensement.sessions.useQuery(undefined, {
     enabled: sessionOuverte,
   });
+
+  // ── Lignes persistées — la ligne existe AU MOMENT de la saisie ────────────
+  // Étape 1 du Lot 1 : le comptage fait sur site ne disparaît plus quand
+  // l'écran se ferme. La reprise (`lignesSession`) sert ce qui a déjà été
+  // compté dans la session — appliqué ou non.
+  const lignesSessionQuery = api.stockRecensement.lignesSession.useQuery(
+    { sessionId: sessionId ?? 0 },
+    { enabled: sessionId !== null },
+  );
+
+  const enregistrerLigneApi = api.stockRecensement.enregistrerLigne.useMutation({
+    onError: (e) => toast.error("Ligne non enregistrée", { description: e.message }),
+  });
+  const retirerLigneApi = api.stockRecensement.retirerLigne.useMutation({
+    onMutate: async (vars: { ligneId: number }) => {
+      setLignes((l) => l.filter((x) => x.cle !== vars.ligneId));
+    },
+    onSuccess: () => {
+      utils.stockRecensement.lignesSession.invalidate();
+    },
+    onError: () => {
+      toast.error("Retrait impossible", { description: "Rechargez la page pour retrouver la ligne." });
+      utils.stockRecensement.lignesSession.invalidate();
+    },
+  });
+
+  useEffect(() => {
+    // Reprise d'une session : les lignes déjà comptées COMPTENT — on les fait
+    // réapparaître une seule fois par session ouverte.
+    if (sessionId === null) {
+      chargeRef.current = false;
+      return;
+    }
+    if (chargeRef.current) return;
+    if (!lignesSessionQuery.data || lignesSessionQuery.isLoading) return;
+    setLignes(
+      lignesSessionQuery.data
+        .filter((l) => !l.appliquee)
+        .map((l) => ({
+          cle: l.id,
+          produitId: l.produitId,
+          titre: l.titre,
+          codeBarre: null,
+          quantite: Number(l.quantiteReelle),
+          emplacementId: l.emplacementId,
+          theoLieu: l.emplacementId != null && Number.isFinite(Number(l.quantiteTheorique))
+            ? Number(l.quantiteTheorique)
+            : 0,
+          theoTotal: Number.isFinite(Number(l.quantiteTheorique)) ? Number(l.quantiteTheorique) : 0,
+          note: l.note ?? undefined,
+        })),
+    );
+    chargeRef.current = true;
+  }, [sessionId, lignesSessionQuery.data, lignesSessionQuery.isLoading]);
 
   // ── Saisie d'une ligne ─────────────────────────────────────────────────────
   const selectionnerProduit = useCallback((p: { id: number; titre: string; codeBarre: string | null }) => {
@@ -187,9 +244,14 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
 
   const ajouterLigne = useCallback(() => {
     if (produitChoisi === null || !quantiteValide || !detail) return;
+    if (sessionId === null) return; // impossible : l'écran n'existe qu'en session
 
+    // Clé locale négative (provisoire) ; remplacée par l'identifiant base
+    // dès que l'insertion est confirmée. « retirer » vise toujours la
+    // denrée persistée une fois la ligne arrivée au serveur.
+    const cleLocale = --cleLocaleRef.current;
     const ligne: Ligne = {
-      cle: cleSuivante,
+      cle: cleLocale,
       produitId: produitChoisi,
       titre: detail.produit.titre,
       codeBarre: detail.produit.codeBarre,
@@ -199,10 +261,30 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
       theoTotal: detail.stockConnu.quantite,
     };
     setLignes((l) => [...l, ligne]);
-    setCleSuivante((c) => c + 1);
+
+    // La ligne est ENREGISTRÉE tout de suite : une fermeture d'écran, une
+    // perte de réseau ne détruisent pas le comptage fait sur site.
+    enregistrerLigneApi.mutate(
+      {
+        sessionId,
+        ligne: {
+          produitId: produitChoisi,
+          emplacementId: ligne.emplacementId,
+          quantite: quantiteNombre,
+          note: null,
+        },
+      },
+      {
+        onSuccess: (r) => {
+          setLignes((l) =>
+            l.map((x) => (x.cle === cleLocale ? { ...x, cle: r.ligneId } : x)),
+          );
+        },
+      },
+    );
 
     // On vide, on ne quitte pas l'écran : on compte une étagère après
-    // l'autre. Le magasinier ne doit pas lever le doigt pour.click suivant.
+    // l'autre. Le magasinier ne doit pas lever le doigt pour l'action suivante.
     setTexte("");
     setProduitChoisi(null);
     setQuantite("");
@@ -214,10 +296,19 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
     quantiteNombre,
     emplacementChoisi,
     emplacementConnu,
-    cleSuivante,
+    sessionId,
+    enregistrerLigneApi,
   ]);
 
-  const retirerLigne = (cle: number) => setLignes((l) => l.filter((x) => x.cle !== cle));
+  const retirerLigne = (cle: number) => {
+    // Une ligne identifiable du base (id > 0) part du serveur ; une ligne
+    // non encore confirmée part du local en attendant un retour.
+    if (cle > 0) {
+      retirerLigneApi.mutate({ ligneId: cle });
+    } else {
+      setLignes((l) => l.filter((x) => x.cle !== cle));
+    }
+  };
 
   const totaux = useMemo(() => {
     const articles = new Set(lignes.map((l) => l.produitId)).size;
@@ -253,6 +344,9 @@ const refRecherche = useRef<HTMLInputElement | null>(null);
                       onClick={() => {
                         setSessionId(s.id);
                         setLibelleSession(s.libelle ?? "Recensement");
+                        toast.success("Recensement repris", {
+                          description: "Vos lignes déjà comptées se rechargent dans un instant.",
+                        });
                       }}
                     >
                       Reprendre

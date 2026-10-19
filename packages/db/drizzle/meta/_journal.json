@@ -176,6 +176,13 @@
       "when": 1792800000011,
       "tag": "0024_unites_base_produits",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1792800000012,
+      "tag": "0025_recensement_lignes",
+      "breakpoints": true
     }
   ]
 }
