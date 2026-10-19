@@ -50,6 +50,15 @@ export const SOCLE_PERMISSIONS = [
   { code: "or.consulter", nom: "Consulter les OR", module: "or" },
   { code: "or.creer", nom: "Créer un OR", module: "or" },
   { code: "or.modifier", nom: "Modifier un OR / interventions", module: "or" },
+  // ÉTAPE 7 — écrire SON compte rendu d'intervention.
+  //
+  // Séparée de or.modifier à dessein : modifier un dossier (prix,
+  // diagnostic, clôture) n'est pas la même habilitation que constater
+  // un travail. Dans un atelier, le technicien qui constate n'a pas
+  // toujours le droit de facturer ou de clore.
+  //
+  // C'est l'accreditation « technicien » : peut CONSTATER, pas conclure.
+  { code: "or.intervenir", nom: "Écrire un compte rendu d'intervention", module: "or" },
   { code: "or.valider", nom: "Valider les travaux (clôture)", module: "or" },
   { code: "or.facturer", nom: "Facturer un OR", module: "or" },
   { code: "or.pieces.servir", nom: "Servir les demandes de pièces des OR (magasin)", module: "or" },

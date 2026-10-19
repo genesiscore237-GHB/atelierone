@@ -2331,10 +2331,31 @@ if (or.statut !== "PRET_A_LIVRER") {
 
       await db.update(lignesOrdreReparation).set(rest as any).where(eq(lignesOrdreReparation.id, id));
       // Audit : modification de ligne tracée (qui, quand, quoi)
+      //
+      // ÉTAPE 7 — AVANT, cet audit disait QUELS CHAMPS avaient bougé :
+      // « Ligne modifiée : Embrayage (statut, quantite) ». Pas quelles
+      // valeurs, ni pourquoi.
+      //
+      // Une trace qui dit qu'un événement a eu lieu n'est pas une histoire,
+      // c'est un journal. Et « pourquoi » n'était demandé nulle part.
+      //
+      // On remplit donc les colonnes qui existaient déjà (`ancienne_valeur`,
+      // `nouvelle_valeur`) avec le passage AVANT → APRÈS, champ par champ.
+      const avant = (ligne as Record<string, unknown>) ?? {};
+      const apres = (rest as Record<string, unknown>) ?? {};
+      const decrit = Object.keys(apres)
+        .filter((k) => k !== "updatedAt" && avant[k] !== apres[k])
+        .map((k) => `${k} : ${formatValeur(avant[k])} → ${formatValeur(apres[k])}`)
+        .join(", ");
       await db.insert(orHistorique).values({
         orId: ligne.ordreId,
         type: "LIGNE",
-        commentaire: `Ligne modifiée : ${ligne.libelle} (${Object.keys(rest).join(", ")})`,
+        ancienneValeur: Object.keys(apres)
+          .filter((k) => k !== "updatedAt")
+          .map((k) => `${k}=${formatValeur(avant[k])}`)
+          .join(", ") || null,
+        nouvelleValeur: decrit || null,
+        commentaire: `Ligne modifiée : ${ligne.libelle}${decrit ? ` — ${decrit}` : ""}`,
         changePar: Number(ctx.user.id),
       } as any);
       await recalculerTotaux(ctx.user.agenceId, ligne.ordreId);
@@ -3985,4 +4006,16 @@ async function recalculerTotaux(agenceId: number, ordreId: number) {
     .update(ordresReparation)
     .set({ totalPieces: String(totalPieces), totalMainOeuvre: String(totalMO), totalTTC: String(totalPieces + totalMO) } as any)
     .where(eq(ordresReparation.id, ordreId));
+}
+
+/**
+ * Rend une valeur lisible dans une trace : `null` ne s'affiche pas « null ».
+ *
+ * Une trace qui dit `statut : null → TERMINEE` se lit ; une trace qui dit
+ * `statut : undefined → TERMINEE` se relit et demande ce que ça veut dire.
+ */
+function formatValeur(v: unknown): string {
+  if (v === null || v === undefined) return "(vide)";
+  if (typeof v === "number") return v.toLocaleString("fr-FR");
+  return String(v);
 }
