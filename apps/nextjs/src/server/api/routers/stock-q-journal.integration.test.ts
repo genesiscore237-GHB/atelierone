@@ -125,8 +125,13 @@ beforeAll(async () => {
     RETURNING id`)) as unknown as { id: string }[];
   userId = Number(u!.id);
 
+  // La CI part d'une base test fraîche : l'unité de base est ASSURÉE ici
+  // (pattern upsert de stock-unites-base-migration), pas supposée existante.
   const [uPCE] = (await db.execute(
-    sql`SELECT id FROM unites_mesure WHERE code = 'PCE' LIMIT 1`,
+    sql`INSERT INTO unites_mesure (code, libelle, symbole, type, is_active)
+          VALUES ('PCE', 'Pièce', 'pce', 'QUANTITE', true)
+          ON CONFLICT (code) DO UPDATE SET is_active = true
+          RETURNING id`,
   )) as unknown as { id: string }[];
   uniteId = uPCE!.id;
 
