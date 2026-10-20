@@ -20,9 +20,12 @@ describe("stock-engine constants", () => {
     expect(TYPES_MOUVEMENT.PERTE).toBe("PERTE");
     expect(TYPES_MOUVEMENT.VOL).toBe("VOL");
     expect(TYPES_MOUVEMENT.CASSE).toBe("CASSE");
-    // Specs V2 Â§04 : sortie liÃ©e Ã  un OR + retour atelier
+    // Specs V2 §04 : sortie liée à un OR + retour atelier
     expect(TYPES_MOUVEMENT.SORTIE_OR).toBe("SORTIE_OR");
     expect(TYPES_MOUVEMENT.RETOUR_ATELIER).toBe("RETOUR_ATELIER");
+    // Sortie d'un lot précis (sortirLotExact) : type présent dans des journaux
+    // réels, désormais dans la nomenclature — plus jamais écrit en brute.
+    expect(TYPES_MOUVEMENT.ECHANGE_RETOUR_BLANC).toBe("ECHANGE_RETOUR_BLANC");
   });
 
   it("SENS defines entry and exit", () => {

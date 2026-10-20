@@ -13,9 +13,10 @@ import { SelectSearch } from "~/components/ui/select-search";
 import { ConfirmationDialog } from "~/components/ui/confirmation-dialog";
 import { ArrowLeft, ChevronDown, ChevronUp, Plus, Loader2, Trash2, Save, Package, BadgeCheck, GitCompareArrows, RefreshCcw, Wrench, LogOut, Pencil, MapPin, Car } from "lucide-react";
 import {
-  ETATS_PRODUIT, ORIGINES_PRODUIT, COTES, ESSIEUX, TYPES_OUTIL, ETATS_EQUIPEMENT,
-  ETAT_PRODUIT_LABELS, ORIGINE_PRODUIT_LABELS, LIB_COTE, LIB_ESSIEU,
-  varianteDepuisServeur, payloadEdition,
+  ETATS_PRODUIT, ORIGINES_PRODUIT, COTES, ESSIEUX, ZONES, EMPLACEMENTS_POS, TYPES_OUTIL, ETATS_EQUIPEMENT,
+  ETAT_PRODUIT_LABELS, ORIGINE_PRODUIT_LABELS, LIB_COTE, LIB_ESSIEU, LIB_ZONE, LIB_EMP,
+  varianteDepuisServeur, payloadEdition, positionCoteDuSelect, positionEssieuDuSelect, positionZoneDuSelect,
+  positionEmplacementDuSelect, etatProduitDuSelect, origineProduitDuSelect,
 } from "~/lib/variante-form";
 import type { VarianteFormState } from "~/lib/variante-form";
 
@@ -131,10 +132,14 @@ export default function VarianteDetailPage() {
   });
 
   const { data: compatVariante, isLoading: chComp, isError: errComp, refetch: refetchComp } = api.articles.compatibilitesVariante.useQuery({ varianteId });
-  const [nvComp, setNvComp] = useState({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", position: "" });
+  const [nvComp, setNvComp] = useState({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", position: "", sourceCompat: "", niveauVerification: "NON_VERIFIE" });
   const [supprCompId, setSupprCompId] = useState<number | null>(null);
   const addComp = api.articles.addCompatibilite.useMutation({
-    onSuccess: async () => { toast.success("Compatibilité ajoutée"); setNvComp({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", position: "" }); await refetchComp(); },
+    onSuccess: async (d) => { toast.success("Compatibilité ajoutée"); if (d?.avertissement) toast.warning(d.avertissement); setNvComp({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", position: "", sourceCompat: "", niveauVerification: "NON_VERIFIE" }); await refetchComp(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const qualifierComp = api.articles.qualifierCompatibilite.useMutation({
+    onSuccess: async (d) => { toast.success("Qualification enregistrée"); if (d?.avertissement) toast.warning(d.avertissement); await refetchComp(); },
     onError: (e) => toast.error(e.message),
   });
   const removeComp = api.articles.removeCompatibilite.useMutation({
@@ -147,7 +152,12 @@ export default function VarianteDetailPage() {
   if (!v) return <p className="text-sm text-muted-foreground">Variante introuvable.</p>;
 
   const estExemplaire = v.niveau === "EXEMPLAIRE";
-  const posLabel = [v.positionCote && v.positionCote !== "N_A" ? v.positionCote : null, v.positionEssieu && v.positionEssieu !== "N_A" ? v.positionEssieu : null].filter(Boolean).join(" · ");
+  const posLabel = [
+    v.positionCote && v.positionCote !== "N_A" ? LIB_COTE[v.positionCote] ?? v.positionCote : null,
+    v.positionEssieu && v.positionEssieu !== "N_A" ? LIB_ESSIEU[v.positionEssieu] ?? v.positionEssieu : null,
+    v.positionZone && v.positionZone !== "N_A" ? LIB_ZONE[v.positionZone] ?? v.positionZone : null,
+    v.positionEmplacement && v.positionEmplacement !== "N_A" ? LIB_EMP[v.positionEmplacement] ?? v.positionEmplacement : null,
+  ].filter(Boolean).join(" · ");
 
   return (
     <div className="space-y-5">
@@ -178,6 +188,8 @@ export default function VarianteDetailPage() {
           <div className="grid gap-3 sm:grid-cols-3">
             <div><Label className="text-xs text-muted-foreground">Marque</Label><Input value={editV.marque} onChange={(e) => setEditV({ ...editV, marque: e.target.value })} className="mt-1" /></div>
             <div><Label className="text-xs text-muted-foreground">Référence fabricant</Label><Input value={editV.referenceFabricant} onChange={(e) => setEditV({ ...editV, referenceFabricant: e.target.value })} className="mt-1" /></div>
+            <div><Label className="text-xs text-muted-foreground">Réf. OEM (constructeur)</Label><Input value={editV.refOem} onChange={(e) => setEditV({ ...editV, refOem: e.target.value })} placeholder="Audi/VW… n° d'origine" className="mt-1" /></div>
+            <div><Label className="text-xs text-muted-foreground">Réf. aftermarket</Label><Input value={editV.refAftermarket} onChange={(e) => setEditV({ ...editV, refAftermarket: e.target.value })} placeholder="Réf. rechange du marché" className="mt-1" /></div>
             <div><Label className="text-xs text-muted-foreground">Référence principale</Label><Input value={editV.referencePrincipale} onChange={(e) => setEditV({ ...editV, referencePrincipale: e.target.value })} className="mt-1" /></div>
             <div><Label className="text-xs text-muted-foreground">Conditionnement</Label><Input value={editV.conditionnement} onChange={(e) => setEditV({ ...editV, conditionnement: e.target.value })} placeholder="1 L, jeu de 4…" className="mt-1" /></div>
             <div><Label className="text-xs text-muted-foreground">Code article</Label><Input value={editV.codeArticle} onChange={(e) => setEditV({ ...editV, codeArticle: e.target.value })} className="mt-1" /></div>
@@ -187,12 +199,12 @@ export default function VarianteDetailPage() {
               <SelectSearch value={editV.fournisseurId || null} onChange={(val) => setEditV({ ...editV, fournisseurId: val ? String(val) : "" })} options={optFournisseurs} placeholder="—" searchPlaceholder="Rechercher…" size="sm" className="mt-1" />
             </div>
             <div><Label className="text-xs text-muted-foreground">État</Label>
-              <select value={editV.etatProduit} onChange={(e) => setEditV({ ...editV, etatProduit: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+              <select value={editV.etatProduit} onChange={(e) => setEditV({ ...editV, etatProduit: etatProduitDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
                 {ETATS_PRODUIT.map((t) => <option key={t} value={t}>{ETAT_PRODUIT_LABELS[t]}</option>)}
               </select>
             </div>
             <div><Label className="text-xs text-muted-foreground">Origine</Label>
-              <select value={editV.origineProduit} onChange={(e) => setEditV({ ...editV, origineProduit: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+              <select value={editV.origineProduit} onChange={(e) => setEditV({ ...editV, origineProduit: origineProduitDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
                 {ORIGINES_PRODUIT.map((t) => <option key={t} value={t}>{ORIGINE_PRODUIT_LABELS[t]}</option>)}
               </select>
             </div>
@@ -203,13 +215,23 @@ export default function VarianteDetailPage() {
             <div><Label className="text-xs text-muted-foreground">Prix mini vente (F)</Label><Input type="number" min={0} value={editV.prixMinimumVente} onChange={(e) => setEditV({ ...editV, prixMinimumVente: e.target.value })} className="mt-1" /></div>
             <div><Label className="text-xs text-muted-foreground">TVA (%)</Label><Input type="number" min={0} max={100} value={editV.tva} onChange={(e) => setEditV({ ...editV, tva: e.target.value })} className="mt-1" /></div>
             <div><Label className="text-xs text-muted-foreground">Position côté</Label>
-              <select value={editV.positionCote} onChange={(e) => setEditV({ ...editV, positionCote: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+              <select value={editV.positionCote} onChange={(e) => setEditV({ ...editV, positionCote: positionCoteDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
                 {["N_A", ...COTES.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_COTE[t]}</option>)}
               </select>
             </div>
             <div><Label className="text-xs text-muted-foreground">Position essieu</Label>
-              <select value={editV.positionEssieu} onChange={(e) => setEditV({ ...editV, positionEssieu: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+              <select value={editV.positionEssieu} onChange={(e) => setEditV({ ...editV, positionEssieu: positionEssieuDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
                 {["N_A", ...ESSIEUX.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_ESSIEU[t]}</option>)}
+              </select>
+            </div>
+            <div><Label className="text-xs text-muted-foreground">Position zone</Label>
+              <select value={editV.positionZone} onChange={(e) => setEditV({ ...editV, positionZone: positionZoneDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                {["N_A", ...ZONES.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_ZONE[t]}</option>)}
+              </select>
+            </div>
+            <div><Label className="text-xs text-muted-foreground">Position emplacement</Label>
+              <select value={editV.positionEmplacement} onChange={(e) => setEditV({ ...editV, positionEmplacement: positionEmplacementDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                {["N_A", ...EMPLACEMENTS_POS.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_EMP[t]}</option>)}
               </select>
             </div>
             <div><Label className="text-xs text-muted-foreground">Seuil d'alerte</Label><Input type="number" min={0} value={editV.seuilAlerte} onChange={(e) => setEditV({ ...editV, seuilAlerte: e.target.value })} className="mt-1" /></div>
@@ -267,6 +289,8 @@ export default function VarianteDetailPage() {
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <div><span className="text-xs text-muted-foreground">Référence principale</span><p className="font-mono font-semibold">{v.referencePrincipale ?? "—"}</p></div>
           <div><span className="text-xs text-muted-foreground">Marque</span><p className="font-medium">{v.marque ?? "—"}</p></div>
+          {v.refOem && <div><span className="text-xs text-muted-foreground">Réf. OEM</span><p className="font-mono">{v.refOem}</p></div>}
+          {v.refAftermarket && <div><span className="text-xs text-muted-foreground">Réf. aftermarket</span><p className="font-mono">{v.refAftermarket}</p></div>}
           <div><span className="text-xs text-muted-foreground">État / Origine</span><p className="font-medium">{ETAT_PRODUIT_LABELS[v.etatProduit] ?? v.etatProduit ?? "—"} · {ORIGINE_PRODUIT_LABELS[v.origineProduit] ?? v.origineProduit ?? "—"}</p></div>
           <div><span className="text-xs text-muted-foreground">Position</span><p className="font-medium">{posLabel || "—"}</p></div>
           {!estExemplaire && <div><span className="text-xs text-muted-foreground">Prix vente</span><p className="font-mono">{v.prixVente ? `${Number(v.prixVente).toLocaleString("fr-FR")} F` : "—"}</p></div>}
@@ -607,10 +631,20 @@ export default function VarianteDetailPage() {
                     anneeDe: nvComp.anneeDe ? Number(nvComp.anneeDe) : undefined,
                     anneeA: nvComp.anneeA ? Number(nvComp.anneeA) : undefined,
                     position: nvComp.position || undefined,
+                    sourceCompat: nvComp.sourceCompat || undefined,
+                    niveauVerification: nvComp.niveauVerification as "CONFIRME" | "CONDITIONNEL" | "NON_VERIFIE",
                   },
                 })}>
                   {addComp.isPending ? <Loader2 className="size-3 animate-spin" /> : <Plus size={12} />} Ajouter
                 </Button>
+              </div>
+              <div className="sm:col-span-6"><Label className="text-[11px] text-muted-foreground">Provenance</Label><Input value={nvComp.sourceCompat} onChange={(e) => setNvComp({ ...nvComp, sourceCompat: e.target.value })} placeholder="CATALOGUE, DOCUMENTATION, VIN… (défaut : à la main)" className="mt-0.5 text-xs" title="D'où vient cette compatibilité. Décisif pour les niveaux CONFIRMÉ." /></div>
+              <div className="sm:col-span-6"><Label className="text-[11px] text-muted-foreground">Niveau</Label>
+                <select value={nvComp.niveauVerification} onChange={(e) => setNvComp({ ...nvComp, niveauVerification: e.target.value })} className="mt-0.5 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs" title="Une compatibilité non vérifiée reste une piste, pas une preuve.">
+                  <option value="NON_VERIFIE">À vérifier (défaut)</option>
+                  <option value="CONDITIONNEL">Conditionnelle</option>
+                  <option value="CONFIRME">Confirmée (source sûre)</option>
+                </select>
               </div>
             </div>
           )}
@@ -632,6 +666,24 @@ export default function VarianteDetailPage() {
                   {(c.anneeDe || c.anneeA) && <span className="font-mono text-[11px]">{c.anneeDe ?? "…"}–{c.anneeA ?? "…"}</span>}
                   {c.position && <span className="uppercase text-muted-foreground">· {c.position}</span>}
                   {c.typeCompat === "NEGATIVE" && <span className="rounded bg-destructive/10 px-1.5 py-0.5 font-bold uppercase text-destructive">Non compatible</span>}
+                  {canModifier ? (
+                    <select
+                      value={c.niveauVerification ?? "NON_VERIFIE"}
+                      onChange={(e) => qualifierComp.mutate({ id: c.id, niveauVerification: e.target.value as "CONFIRME" | "CONDITIONNEL" | "NON_VERIFIE" })}
+                      title={`Source : ${c.source ?? "saisie manuelle"} — changez le niveau directement`}
+                      className="rounded border-dashed border-border bg-background px-1 py-0.5 text-[9px] font-bold uppercase"
+                    >
+                      <option value="CONFIRME">Vérifiée</option>
+                      <option value="CONDITIONNEL">Conditionnelle</option>
+                      <option value="NON_VERIFIE">À vérifier</option>
+                    </select>
+                  ) : (c.niveauVerification ?? "NON_VERIFIE") === "CONFIRME" ? (
+                    <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-600">Vérifiée</span>
+                  ) : (c.niveauVerification ?? "NON_VERIFIE") === "CONDITIONNEL" ? (
+                    <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-600">Conditionnelle</span>
+                  ) : (
+                    <span className="rounded-full border border-dashed border-muted-foreground/50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-muted-foreground">À vérifier</span>
+                  )}
                   {canModifier && (
                     supprCompId === c.id ? (
                       <span className="flex items-center gap-1.5">

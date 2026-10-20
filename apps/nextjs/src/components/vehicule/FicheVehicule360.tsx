@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import { RestituerVehicule } from "~/components/or/RestituerVehicule";
@@ -17,6 +17,7 @@ import { STATUTS_LIGNE, STATUTS_LIGNE_LIBELLES } from "~/server/lib/atelier-serv
 import { STATUT_LABELS as OR_STATUT_LABELS, STATUT_BADGE as OR_STATUT_BADGE, PRIORITE_META, MOTIF_ENTREE_LABELS } from "~/server/lib/atelier-service";
 import { usePermissions } from "~/hooks/usePermissions";
 import { PhotoLightbox } from "~/components/photos/PhotoLightbox";
+import { PiecesCompatibles } from "~/components/vehicule/PiecesCompatibles";
 import { photosValides, libellePhotoCategorie } from "~/lib/photos";
 
 const TYPE_CLIENT_LABELS: Record<string, string> = {
@@ -659,7 +660,16 @@ export function FicheVehicule360({
                     </thead>
                     <tbody>
                       {travaux.map((l: any) => (
-                        <LigneTravailEditable key={l.id} ligne={l} techniciens={techniciens} />
+                        <Fragment key={l.id}>
+                          <LigneTravailEditable ligne={l} techniciens={techniciens} />
+                          {orCourant && (
+                            <tr className="border-b border-border/40 bg-muted/10">
+                              <td colSpan={5} className="px-3 pb-3 pt-0">
+                                <ConstatLigne ligne={l} vehiculeId={v.id} />
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -767,6 +777,9 @@ export function FicheVehicule360({
         {/* ═══════ PIÈCES ═══════ */}
         {tab === "Pièces" && (
           <>
+            {/* Le pont catalogue ↔ voiture : ce qui va à CETTE voiture d'abord. */}
+            <PiecesCompatibles vehiculeId={Number(id)} />
+
             <div className="rounded-xl border border-border bg-card p-5">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
                 <PackageSearch size={14} className="text-primary" /> Demandes de pièces ({demandes.length})
@@ -1057,6 +1070,129 @@ export function FicheVehicule360({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * COMPTE RENDU D'INTERVENTION — ce que le technicien a vu, fait, et prévu.
+ *
+ * Étape 7, lot 1 : `or_interventions` est en ajout seul. L'écran ne propose donc
+ * ni modification ni suppression : un compte rendu qu'on peut corriger n'est
+ * plus un compte rendu. La série reste lisible, le suivant corrige sans effacer.
+ *
+ * L'historique n'est chargé qu'à l'ouverture : une ligne de travail n'a pas
+ * besoin de N requêtes pour afficher la fiche.
+ */
+function ConstatLigne({ ligne, vehiculeId }: { ligne: any; vehiculeId: number }) {
+  const { hasPermission } = usePermissions();
+  const utils = api.useUtils();
+  const [ouvert, setOuvert] = useState(false);
+  const [intervention, setIntervention] = useState("");
+  const [constat, setConstat] = useState("");
+  const [suite, setSuite] = useState("");
+
+  const peutLire = hasPermission("or.consulter");
+  const peutEcrire = hasPermission("or.intervenir");
+
+  const { data: historique } = api.interventions.parLigne.useQuery(
+    { ligneId: ligne.id },
+    { enabled: ouvert && peutLire },
+  );
+
+  const ecrire = api.interventions.ecrire.useMutation({
+    onSuccess: () => {
+      toast.success("Compte rendu enregistré.");
+      setIntervention("");
+      setConstat("");
+      setSuite("");
+      setOuvert(false);
+      void utils.interventions.parLigne.invalidate({ ligneId: ligne.id });
+      void utils.interventions.dernierConstat.invalidate({ vehiculeId });
+      void utils.interventions.parVehicule.invalidate({ vehiculeId });
+      void utils.vehicules.get.invalidate();
+      void utils.vehicules.journal.invalidate();
+      void utils.revueParc.file.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  if (!peutLire && !peutEcrire) return null;
+
+  const enregistrer = () => {
+    if (!intervention.trim() && !constat.trim() && !suite.trim()) {
+      toast.error("Un compte rendu vide n'apprend rien : dites au moins ce que vous avez constaté.");
+      return;
+    }
+    ecrire.mutate({
+      ligneId: ligne.id,
+      intervention: intervention.trim() || undefined,
+      constat: constat.trim() || undefined,
+      suite: suite.trim() || undefined,
+    });
+  };
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          Compte rendu
+        </span>
+        <button
+          type="button"
+          onClick={() => setOuvert((o) => !o)}
+          className="ml-auto rounded-md border border-border px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          {ouvert ? "Fermer" : "Ouvrir"}
+        </button>
+      </div>
+
+      {ouvert && (
+        <div className="mt-2 space-y-2">
+          {peutLire && historique && historique.length > 0 && (
+            <div className="space-y-1 border-b border-border/60 pb-2">
+              {historique.map((h: any) => (
+                <div key={h.id} className="text-xs">
+                  <span className="text-[10px] text-muted-foreground">
+                    {fmtDate(h.createdAt)}
+                    {h.technicien?.nom ? ` · ${h.technicien.nom}` : ""}
+                  </span>
+                  {h.constat && <p><span className="font-semibold">Constat :</span> {h.constat}</p>}
+                  {h.intervention && <p><span className="font-semibold">Intervention :</span> {h.intervention}</p>}
+                  {h.suite && <p><span className="font-semibold">Suite :</span> {h.suite}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+          {peutLire && historique && historique.length === 0 && (
+            <p className="text-xs text-muted-foreground">Aucun compte rendu pour cette ligne.</p>
+          )}
+
+          {peutEcrire && (
+            <>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Constat</label>
+                  <textarea value={constat} onChange={(e) => setConstat(e.target.value)} rows={2} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs" placeholder="Ce que j'ai vu…" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Intervention</label>
+                  <textarea value={intervention} onChange={(e) => setIntervention(e.target.value)} rows={2} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs" placeholder="Ce que j'ai fait…" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Suite</label>
+                  <textarea value={suite} onChange={(e) => setSuite(e.target.value)} rows={2} className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs" placeholder="Ce qu'il faut pour la suite…" />
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button size="sm" onClick={enregistrer} disabled={ecrire.isPending}>
+                  {ecrire.isPending ? "Enregistrement…" : "Enregistrer le compte rendu"}
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -20,6 +20,8 @@ export type EntiteCle =
   | "categories"
   | "fournisseurs"
   | "produits"
+  | "references_equiv"
+  | "compatibilites"
   | "produits_unites"
   | "produits_fournisseurs"
   | "tarifs"
@@ -31,6 +33,11 @@ export const ORDRE_IMPORT: EntiteCle[] = [
   "categories",
   "fournisseurs",
   "produits",
+  // La qualification catalogue vient APRÈS les produits (elle rattache des
+  // lignes à des articles) et AVANT les stocks : une compatibilité retient
+  // sa variante, un stock n'a pas besoin d'elle — aucun réordonnement permis.
+  "references_equiv",
+  "compatibilites",
   "produits_unites",
   "produits_fournisseurs",
   "tarifs",
@@ -43,6 +50,8 @@ const FICHIER_PAR_ENTITE: Record<EntiteCle, string> = {
   categories: "categories.jsonl",
   fournisseurs: "fournisseurs.jsonl",
   produits: "produits.jsonl",
+  references_equiv: "references_equiv.jsonl",
+  compatibilites: "compatibilites.jsonl",
   produits_unites: "produits_unites.jsonl",
   produits_fournisseurs: "produits_fournisseurs.jsonl",
   tarifs: "tarifs.jsonl",
@@ -120,6 +129,8 @@ export function schemaParEntite(cle: EntiteCle): z.ZodType {
     categories: schemas.categoriesSchema,
     fournisseurs: schemas.fournisseursSchema,
     produits: schemas.produitsSchema,
+    references_equiv: schemas.referencesEquivSchema,
+    compatibilites: schemas.compatibilitesSchema,
     produits_unites: schemas.produitsUnitesSchema,
     produits_fournisseurs: schemas.produitsFournisseursSchema,
     tarifs: schemas.tarifsSchema,
@@ -129,16 +140,30 @@ export function schemaParEntite(cle: EntiteCle): z.ZodType {
   return map[cle];
 }
 
+/** Clé canonique : minuscules, sans ponctuation. */
+function normaliserCle(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 function cleUpsert(cle: EntiteCle, row: Record<string, unknown>): string | null {
   switch (cle) {
     case "unites":
     case "categories":
     case "fournisseurs":
       return String(row.code ?? "");
-      return String(row.nom ?? "").trim().toLowerCase();
     case "produits":
       return String(row.codeBarre ?? "");
-      return String(row.codeBarre ?? "");
+    case "references_equiv": {
+      // Attachement : designation d'article, sinon code-barres de variante.
+      const attache = row.articleDesignation ? normaliserCle(String(row.articleDesignation)) : String(row.codeBarre ?? "");
+      const ref = normaliserCle(String(row.reference ?? ""));
+      return attache && ref ? `${attache}|${ref}` : null;
+    }
+    case "compatibilites": {
+      const attache = row.codeBarre ? normaliserCle(String(row.codeBarre)) : row.articleDesignation ? normaliserCle(String(row.articleDesignation)) : "";
+      const base = `${attache}|${String(row.typeCompat ?? "")}|${normaliserCle(String(row.marque ?? ""))}|${normaliserCle(String(row.modele ?? ""))}`;
+      return attache && row.marque && row.modele ? base : null;
+    }
     case "produits_unites":
       return row.codeBarre && row.uniteCode ? `${row.codeBarre}|${row.uniteCode}` : "";
     case "produits_fournisseurs":
@@ -160,23 +185,71 @@ interface Maps {
   fournisseurs: Map<string, number>;
   produits: Map<string, number>;
   agences: Map<string, number>;
+  /** designation d'article normalisée → id (produit_articles), enrichi en cours d'import. */
+  articles: Map<string, number>;
+  /** projection dry-run : codeBarre → designationArticle de la variante projetée. */
+  articleParCodeBarre: Map<string, string>;
+  /** Ids négatifs pour la PROJECTION (dry-run seulement) : les maps s'enrichissent
+   *  dans l'ordre d'import SANS écriture — les enfants résolvent comme au run réel. */
+  nextFakeId: () => number;
 }
 
 export async function preparerMaps(): Promise<Maps> {
-  const [cats, unis, four, prods, agences] = await Promise.all([
+  const [cats, unis, four, prods, agences, arts] = await Promise.all([
     db.select({ code: schema.categories.code, id: schema.categories.id }).from(schema.categories),
     db.select({ code: schema.unitesMesure.code, id: schema.unitesMesure.id }).from(schema.unitesMesure),
     db.select({ code: schema.fournisseurs.code, id: schema.fournisseurs.id }).from(schema.fournisseurs),
     db.select({ codeBarre: schema.produits.codeBarre, id: schema.produits.id }).from(schema.produits),
     db.select({ code: schema.agences.code, id: schema.agences.id }).from(schema.agences),
+    db.select({ designation: schema.produitArticles.designation, id: schema.produitArticles.id }).from(schema.produitArticles),
   ]);
+  let faux = 0;
   return {
     categories: new Map(cats.map((c) => [c.code, c.id])),
     unites: new Map(unis.map((u) => [u.code, u.id])),
     fournisseurs: new Map(four.map((f) => [f.code, f.id])),
     produits: new Map(prods.map((p) => [p.codeBarre, p.id])),
     agences: new Map(agences.map((a) => [a.code, a.id])),
+    articles: new Map(arts.map((a) => [a.designation.trim().toLowerCase(), a.id])),
+    articleParCodeBarre: new Map(),
+    nextFakeId: () => --faux,
   };
+}
+
+/**
+ * Résout ou crée l'article par désignation (produit_articles). La désignation
+ * est la clé du grouping formulaire : deux variantes du même produit
+ * conceptuel la partagent. Compare en bas-de-casse — la recherche existe déjà,
+ * la création est réelle ; sans autorisation (dry-run), on renvoie null.
+ */
+async function articleOuCreer(designation: string, typeProduit: string, maps: Maps, autoriserCreation: boolean): Promise<number | null> {
+  const norm = designation.trim().toLowerCase();
+  if (!norm) return null;
+  const connu = maps.articles.get(norm);
+  if (connu) return connu;
+  const [existe] = await db
+    .select({ id: schema.produitArticles.id })
+    .from(schema.produitArticles)
+    .where(sql`lower(${schema.produitArticles.designation}) = ${norm}`)
+    .limit(1);
+  if (existe) { maps.articles.set(norm, existe.id); return existe.id; }
+  if (!autoriserCreation) return null;
+  const [cre] = await db
+    .insert(schema.produitArticles)
+    .values({ designation, typeProduit, isActive: true })
+    .onConflictDoNothing()
+    .returning({ id: schema.produitArticles.id });
+  const id = cre?.id ?? null;
+  if (id) maps.articles.set(norm, id);
+  return id;
+}
+
+/** Article d'une variante (via son code-barres), sans création. */
+async function articleDeVariante(codeBarre: string, maps: Maps): Promise<number | null> {
+  const produitId = maps.produits.get(codeBarre);
+  if (!produitId) return null;
+  const [r] = await db.select({ articleId: schema.produits.articleId }).from(schema.produits).where(eq(schema.produits.id, produitId)).limit(1);
+  return r?.articleId ?? null;
 }
 
 /** Fabrique un mapper de batch : safeParse + retour de l'objet typé ou null. */
@@ -204,6 +277,8 @@ export async function importerEntite(cle: EntiteCle, rows: unknown[], ctx: Impor
       case "categories": ({ creees, skippees } = await upsertCategories(batch, ctx, maps, creees, skippees, details)); break;
       case "fournisseurs": ({ creees, skippees } = await upsertFournisseurs(batch, ctx, maps, creees, skippees, details)); break;
       case "produits": ({ creees, skippees } = await upsertProduits(batch, ctx, maps, creees, skippees, details)); break;
+      case "references_equiv": ({ creees, skippees } = await upsertReferencesEquiv(batch, ctx, maps, creees, skippees, details)); break;
+      case "compatibilites": ({ creees, skippees } = await upsertCompatibilites(batch, ctx, maps, creees, skippees, details)); break;
       case "produits_unites": ({ creees, skippees } = await upsertProduitsUnites(batch, ctx, maps, creees, skippees, details)); break;
       case "produits_fournisseurs": ({ creees, skippees } = await upsertProduitsFournisseurs(batch, ctx, maps, creees, skippees, details)); break;
       case "tarifs": ({ creees, skippees } = await upsertTarifs(batch, ctx, maps, creees, skippees, details)); break;
@@ -311,7 +386,7 @@ async function upsertUnites(batch: unknown[], ctx: ImportContext, maps: Maps, cr
   const lignes = batch.map(mapValide<schemas.UniteImport>("unites")).filter((l): l is schemas.UniteImport => l !== null);
   for (const ligne of lignes) {
     if (maps.unites.has(ligne.code)) { skippees++; details.push(`unite ${ligne.code} : existant`); continue; }
-    if (ctx.dryRun) { creees++; details.push(`unite ${ligne.code} : à créer`); continue; }
+    if (ctx.dryRun) { creees++; details.push(`unite ${ligne.code} : à créer`); maps.unites.set(ligne.code, ligne.code); continue; }
     const [ins] = await db.insert(schema.unitesMesure).values({
       code: ligne.code,
       libelle: ligne.libelle,
@@ -327,7 +402,7 @@ async function upsertUnites(batch: unknown[], ctx: ImportContext, maps: Maps, cr
 async function upsertCategories(batch: unknown[], ctx: ImportContext, maps: Maps, creees: number, skippees: number, details: string[]) {
   const lignes = batch.map(mapValide<schemas.CategorieImport>("categories")).filter((l): l is schemas.CategorieImport => l !== null);
   for (const ligne of lignes) {
-    if (ctx.dryRun) { creees++; details.push(`categorie ${ligne.code} : à créer`); continue; }
+    if (ctx.dryRun) { creees++; details.push(`categorie ${ligne.code} : à créer`); maps.categories.set(ligne.code, maps.nextFakeId()); continue; }
     const id = maps.categories.get(ligne.code);
     if (id) {
       await db.update(schema.categories).set({
@@ -371,7 +446,7 @@ async function upsertFournisseurs(batch: unknown[], ctx: ImportContext, maps: Ma
   const lignes = batch.map(mapValide<schemas.FournisseurImport>("fournisseurs")).filter((l): l is schemas.FournisseurImport => l !== null);
   for (const ligne of lignes) {
     const agenceId = ligne.agenceCode ? maps.agences.get(ligne.agenceCode) ?? null : null;
-    if (ctx.dryRun) { creees++; details.push(`fournisseur ${ligne.code} : à créer`); continue; }
+    if (ctx.dryRun) { creees++; details.push(`fournisseur ${ligne.code} : à créer`); maps.fournisseurs.set(ligne.code, maps.nextFakeId()); continue; }
     if (maps.fournisseurs.has(ligne.code)) {
       const id = maps.fournisseurs.get(ligne.code)!;
       await db.update(schema.fournisseurs).set({
@@ -404,6 +479,19 @@ async function upsertProduits(batch: unknown[], ctx: ImportContext, maps: Maps, 
     const fournisseurId = ligne.fournisseurCode ? maps.fournisseurs.get(ligne.fournisseurCode) ?? null : null;
     const uniteBaseId = maps.unites.get(ligne.uniteBaseCode);
     if (!uniteBaseId) { skippees++; details.push(`produit ${ligne.codeBarre} : REFUSÉ (unite ${ligne.uniteBaseCode} inconnue)`); continue; }
+    // Article conceptuel : créé s'il n'existe pas — le grouping formulaire
+    // regroupe les variantes du même produit (designation partagée).
+    let articleId: number | null = null;
+    if (ligne.designationArticle) {
+      if (ctx.dryRun) {
+        const norm = ligne.designationArticle.trim().toLowerCase();
+        if (!maps.articles.has(norm)) details.push(`article ${ligne.designationArticle} : à créer`);
+        articleId = maps.articles.get(norm) ?? null;
+      } else {
+        articleId = await articleOuCreer(ligne.designationArticle, ligne.typeProduit, maps, true);
+        if (!articleId) { skippees++; details.push(`produit ${ligne.codeBarre} : REFUSÉ (article ${ligne.designationArticle} irrésolvable)`); continue; }
+      }
+    }
     prets.push({
       ligne,
       valeurs: {
@@ -416,6 +504,13 @@ async function upsertProduits(batch: unknown[], ctx: ImportContext, maps: Maps, 
         categorieId,
         fournisseurId,
         uniteBaseId,
+        // Réfs et positions de montage (migration 0023) ; articleId présent
+        // seulement si résolu : un spread à null écraserait un attachement existant.
+        ...(articleId != null ? { articleId } : {}),
+        ...(ligne.refOem ? { refOem: ligne.refOem } : {}),
+        ...(ligne.refAftermarket ? { refAftermarket: ligne.refAftermarket } : {}),
+        ...(ligne.positionCote ? { positionCote: ligne.positionCote } : {}),
+        ...(ligne.positionEssieu ? { positionEssieu: ligne.positionEssieu } : {}),
         prixVente: ligne.prixVente,
         prixMinimumVente: ligne.prixMinimumVente,
         prixAchat: ligne.prixAchat,
@@ -441,35 +536,74 @@ async function upsertProduits(batch: unknown[], ctx: ImportContext, maps: Maps, 
   }
   if (prets.length === 0) return { creees, skippees };
 
-  const connusAvant = new Set(maps.produits.keys());
-
   if (ctx.dryRun) {
     for (const p of prets) {
-      if (connusAvant.has(p.ligne.codeBarre)) { skippees++; details.push(`produit ${p.ligne.codeBarre} : existant`); }
-      else { creees++; details.push(`produit ${p.ligne.codeBarre} : à créer`); }
+      // Projection profonde : la variante et son article existent pour les
+      // entités qui suivent (réfs/compat via codeBarre), sans rien écrire.
+      maps.articleParCodeBarre.set(p.ligne.codeBarre, p.ligne.designationArticle ?? "");
+      if (!maps.produits.has(p.ligne.codeBarre)) {
+        maps.produits.set(p.ligne.codeBarre, maps.nextFakeId());
+        creees++; details.push(`produit ${p.ligne.codeBarre} : à créer`);
+      } else { skippees++; details.push(`produit ${p.ligne.codeBarre} : existant`); }
     }
     return { creees, skippees };
   }
 
-  // UPSERT EN BATCH : une seule requête INSERT ... ON CONFLICT (code_barre)
-  // DO UPDATE SET <colonnes = excluded> — insère les nouveaux et met à jour
-  // les existants, renvoie tous les ids (mise à jour des maps).
-  const set: Record<string, unknown> = {};
-  for (const col of Object.keys(prets[0].valeurs)) {
-    if (col === "codeBarre") continue;
-    const sn = col.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
-    set[col] = sql`excluded.${sql.raw(`"${sn}"`)}`;
-  }
-  const ins = await db.insert(schema.produits)
-    .values(prets.map((p) => p.valeurs) as any[])
-    .onConflictDoUpdate({ target: schema.produits.codeBarre, set: set as any })
-    .returning({ id: schema.produits.id, codeBarre: schema.produits.codeBarre });
+  // Les produits connus sont pris sur la map (populée AVANT cette passe) :
+  // nouveaux → insert, existants → mise à jour champ par champ.
+  const connus = maps.produits;
+  const nouveaux: { ligne: schemas.ProduitImport; valeurs: Record<string, unknown> }[] = [];
+  const existants: { ligne: schemas.ProduitImport; valeurs: Record<string, unknown> }[] = [];
+  for (const p of prets) (connus.has(p.ligne.codeBarre) ? existants : nouveaux).push(p);
 
-  for (const r of ins) {
-    maps.produits.set(r.codeBarre, r.id);
-    if (connusAvant.has(r.codeBarre)) { skippees++; details.push(`produit ${r.codeBarre} : mis à jour`); }
-    else { creees++; details.push(`produit ${r.codeBarre} : créé`); }
+  if (nouveaux.length > 0) {
+    // Un seul INSERT batch pour tous les nouveaux. Les collisions éventuelles
+    // (import concurrent) sont ignorées sans lever d'erreur.
+    const ins = await db.insert(schema.produits)
+      .values(nouveaux.map((p) => p.valeurs) as any[])
+      .onConflictDoNothing({ target: schema.produits.codeBarre })
+      .returning({ id: schema.produits.id, codeBarre: schema.produits.codeBarre });
+    for (const r of ins) { maps.produits.set(r.codeBarre, r.id); creees++; details.push(`produit ${r.codeBarre} : créé`); }
   }
+
+  // Colonnes de mise à jour : tout sauf l'attachement (article/réfs/position),
+  // qui se rattache en one-way APRÈS — jamais dé-taché, jamais écrasé.
+  const ATTACHE_SEULE = new Set(["articleId", "refOem", "refAftermarket", "positionCote", "positionEssieu"]);
+  for (const p of existants) {
+    const id = connus.get(p.ligne.codeBarre)!;
+    const patch: Record<string, unknown> = {};
+    for (const [col, val] of Object.entries(p.valeurs)) {
+      if (ATTACHE_SEULE.has(col)) continue;
+      if (val == null) continue; // champ absent : on ne détruit pas
+      patch[col] = val;
+    }
+    await db.update(schema.produits).set(patch as any).where(eq(schema.produits.id, id));
+    skippees++; details.push(`produit ${p.ligne.codeBarre} : mis à jour`);
+  }
+
+  // Attachement one-way sur les produits EXISTANTS (les nouveaux ont reçu
+  // l'article/réfs à l'insert) : l'attachement ne comble que du vide.
+  const rattacher = async (colonne: string, getter: (v: Record<string, unknown>) => unknown) => {
+    const parValeur = new Map<string, string[]>();
+    for (const p of existants) {
+      const val = getter(p.valeurs);
+      if (val == null) continue;
+      const cle = String(val);
+      const arr = parValeur.get(cle) ?? [];
+      arr.push(p.ligne.codeBarre);
+      parValeur.set(cle, arr);
+    }
+    for (const [cle, codes] of parValeur) {
+      await db.update(schema.produits).set(
+        colonne === "articleId" ? { articleId: Number(cle) } : { [colonne]: cle } as any,
+      ).where(and(inArray(schema.produits.codeBarre, codes), sql`${sql.raw(`"${colonne.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)}"`)} IS NULL`));
+    }
+  };
+  await rattacher("articleId", (v) => v.articleId);
+  await rattacher("refOem", (v) => v.refOem);
+  await rattacher("refAftermarket", (v) => v.refAftermarket);
+  await rattacher("positionCote", (v) => v.positionCote);
+  await rattacher("positionEssieu", (v) => v.positionEssieu);
   return { creees, skippees };
 }
 
@@ -559,6 +693,160 @@ async function upsertProduitsFournisseurs(batch: unknown[], ctx: ImportContext, 
     } else {
       details.push(`produit_fournisseur ${p.ligne.codeBarre}|${p.ligne.fournisseurCode} : créé`);
     }
+  }
+  return { creees, skippees };
+}
+
+async function upsertReferencesEquiv(batch: unknown[], ctx: ImportContext, maps: Maps, creees: number, skippees: number, details: string[]) {
+  const lignes = batch.map(mapValide<schemas.ReferenceEquivImport>("references_equiv")).filter((l): l is schemas.ReferenceEquivImport => l !== null);
+  for (const ligne of lignes) {
+    // Attachement : désignation d'article (créée si absente) — sauf en
+    // dry-run, qui ne crée pas mais projette (-1 = article à créer) — ou
+    // l'article de la variante désignée par code-barres.
+    let articleId: number | null = null;
+    if (ligne.articleDesignation) {
+      articleId = await articleOuCreer(ligne.articleDesignation, "PIECE", maps, !ctx.dryRun);
+      if (!articleId && ctx.dryRun) {
+        details.push(`article ${ligne.articleDesignation} : à créer (attachement référence ${ligne.reference})`);
+        articleId = -1;
+      }
+    } else if (ligne.codeBarre) {
+      if (ctx.dryRun) {
+        // Attachement projeté : la variante peut n'exister qu'en projection
+        // (importée dans le même run) — sa désignation est la clé.
+        const designationProjetee = maps.articleParCodeBarre.get(ligne.codeBarre) ?? "";
+        if (designationProjetee) {
+          articleId = await articleOuCreer(designationProjetee, "PIECE", maps, false);
+          if (!articleId) {
+            details.push(`article ${designationProjetee} : à créer (attachement référence ${ligne.reference})`);
+            articleId = -1;
+          }
+        } else {
+          articleId = maps.produits.has(ligne.codeBarre) ? await articleDeVariante(ligne.codeBarre, maps) : null;
+          if (!articleId) { skippees++; details.push(`reference_equiv ${ligne.reference} : REFUSÉ (variante ${ligne.codeBarre} sans article)`); continue; }
+        }
+      } else {
+        articleId = await articleDeVariante(ligne.codeBarre, maps);
+        if (!articleId) { skippees++; details.push(`reference_equiv ${ligne.reference} : REFUSÉ (variante ${ligne.codeBarre} sans article)`); continue; }
+      }
+    }
+    if (!articleId) { skippees++; details.push(`reference_equiv ${ligne.reference} : REFUSÉ (attachement impossible — ni designation, ni codeBarre)`); continue; }
+    if (ctx.dryRun) { creees++; details.push(`reference_equiv ${ligne.marque ? `${ligne.marque} ` : ""}${ligne.reference} : à créer`); continue; }
+
+    const [ex] = await db
+      .select({ id: schema.produitReferencesEquiv.id })
+      .from(schema.produitReferencesEquiv)
+      .where(and(eq(schema.produitReferencesEquiv.articleId, articleId), eq(schema.produitReferencesEquiv.reference, ligne.reference)))
+      .limit(1);
+    if (ex) {
+      // Ré-import = seuls les champs RENSEIGNÉS sont mis à jour. Un re-catalogue
+      // qui ne mentionne plus la source d'une ligne ne doit pas dégrader une
+      // référence déjà CONFIRMÉE à la main ; patch vide → no-op.
+      const patch = {
+        ...(ligne.marque ? { marque: ligne.marque } : {}),
+        ...(ligne.note ? { note: ligne.note } : {}),
+        ...(ligne.source ? { source: ligne.source } : {}),
+        ...(ligne.niveauVerification ? { niveauVerification: ligne.niveauVerification } : {}),
+      };
+      if (Object.keys(patch).length > 0) {
+        await db.update(schema.produitReferencesEquiv).set(patch).where(eq(schema.produitReferencesEquiv.id, ex.id));
+      }
+      skippees++; details.push(`reference_equiv ${ligne.reference} : mis à jour`);
+      continue;
+    }
+    await db.insert(schema.produitReferencesEquiv).values({
+      articleId,
+      marque: ligne.marque ?? null,
+      reference: ligne.reference,
+      note: ligne.note ?? null,
+      source: ligne.source ?? "CATALOGUE",
+      niveauVerification: ligne.niveauVerification ?? "NON_VERIFIE",
+    }).onConflictDoNothing();
+    creees++;
+  }
+  return { creees, skippees };
+}
+
+async function upsertCompatibilites(batch: unknown[], ctx: ImportContext, maps: Maps, creees: number, skippees: number, details: string[]) {
+  const lignes = batch.map(mapValide<schemas.CompatibiliteImport>("compatibilites")).filter((l): l is schemas.CompatibiliteImport => l !== null);
+  for (const ligne of lignes) {
+    // Portée variante si code-barres connu, sinon article (désignation).
+    let produitId: number | null = null;
+    let articleId: number | null = null;
+    if (ligne.codeBarre) {
+      produitId = maps.produits.get(ligne.codeBarre) ?? null;
+      if (!produitId) { skippees++; details.push(`compatibilite ${ligne.marque} ${ligne.modele} : REFUSÉ (produit ${ligne.codeBarre} inconnu)`); continue; }
+    } else if (ligne.articleDesignation) {
+      articleId = await articleOuCreer(ligne.articleDesignation, "PIECE", maps, !ctx.dryRun);
+      if (!articleId && ctx.dryRun) {
+        details.push(`article ${ligne.articleDesignation} : à créer (attachement compatibilité ${ligne.marque} ${ligne.modele})`);
+        articleId = -1;
+      }
+      if (!articleId) { skippees++; details.push(`compatibilite ${ligne.marque} ${ligne.modele} : REFUSÉ (article ${ligne.articleDesignation} introuvable)`); continue; }
+    }
+    if (ctx.dryRun) { creees++; details.push(`compatibilite ${ligne.typeCompat} ${ligne.marque} ${ligne.modele} : à créer`); continue; }
+
+    // Dédoublement applicatif (la contrainte UNIQUE a été retirée pour
+    // autoriser POSITIVE + NEGATIVE sur le même véhicule) : la même ligne
+    // (portée, type, marque, modèle) n'est pas réinsérée — mais SA
+    // qualification (source/niveau) est mise à jour.
+    const existants = await db
+      .select({ id: schema.compatibilitesProduits.id })
+      .from(schema.compatibilitesProduits)
+      .where(and(
+        produitId != null ? eq(schema.compatibilitesProduits.produitId, produitId) : sql`${schema.compatibilitesProduits.produitId} IS NULL`,
+        articleId != null ? eq(schema.compatibilitesProduits.articleId, articleId) : sql`${schema.compatibilitesProduits.articleId} IS NULL`,
+        eq(schema.compatibilitesProduits.typeCompat, ligne.typeCompat),
+        sql`lower(${schema.compatibilitesProduits.marque}) = ${ligne.marque.toLowerCase()}`,
+        sql`lower(${schema.compatibilitesProduits.modele}) = ${ligne.modele.toLowerCase()}`,
+      )).limit(1);
+    if (existants.length > 0) {
+      // Ré-import : la même ligne existe déjà — SEULE la qualification et les
+      // restrictions documentées sont rafraîchies, champ par champ. Rien
+      // d'absent n'efface ce qu'un magasinier a précisé ; une ligne sans
+      // aucune précision ne produit pas de mise à jour (patch vide = no-op).
+      const patch = {
+        ...(ligne.source ? { source: ligne.source } : {}),
+        ...(ligne.niveauVerification ? { niveauVerification: ligne.niveauVerification } : {}),
+        ...(ligne.anneeDe != null ? { anneeDe: ligne.anneeDe } : {}),
+        ...(ligne.anneeA != null ? { anneeA: ligne.anneeA } : {}),
+        ...(ligne.motorisation ? { motorisation: ligne.motorisation } : {}),
+        ...(ligne.version ? { version: ligne.version } : {}),
+        ...(ligne.codeMoteur ? { codeMoteur: ligne.codeMoteur } : {}),
+        ...(ligne.codeChassis ? { codeChassis: ligne.codeChassis } : {}),
+        ...(ligne.position ? { position: ligne.position } : {}),
+        ...(ligne.notes ? { notes: ligne.notes } : {}),
+      };
+      if (Object.keys(patch).length > 0) {
+        await db.update(schema.compatibilitesProduits).set(patch).where(eq(schema.compatibilitesProduits.id, existants[0].id));
+      }
+      skippees++; details.push(`compatibilite ${ligne.typeCompat} ${ligne.marque} ${ligne.modele} : mis à jour`);
+      continue;
+    }
+    await db.insert(schema.compatibilitesProduits).values({
+      articleId,
+      produitId,
+      typeCompat: ligne.typeCompat,
+      marque: ligne.marque,
+      modele: ligne.modele,
+      anneeDe: ligne.anneeDe ?? null,
+      anneeA: ligne.anneeA ?? null,
+      motorisation: ligne.motorisation ?? null,
+      version: ligne.version ?? null,
+      generation: ligne.generation ?? null,
+      carburant: ligne.carburant ?? null,
+      codeMoteur: ligne.codeMoteur ?? null,
+      boite: ligne.boite ?? null,
+      transmission: ligne.transmission ?? null,
+      carrosserie: ligne.carrosserie ?? null,
+      codeChassis: ligne.codeChassis ?? null,
+      position: ligne.position ?? null,
+      notes: ligne.notes ?? null,
+      source: ligne.source ?? "CATALOGUE",
+      niveauVerification: ligne.niveauVerification ?? "NON_VERIFIE",
+      creePar: ctx.userId ?? null,
+    });
+    creees++;
   }
   return { creees, skippees };
 }

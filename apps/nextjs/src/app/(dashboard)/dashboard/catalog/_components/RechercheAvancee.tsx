@@ -18,6 +18,7 @@ import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { SelectSearch } from "~/components/ui/select-search";
 import { EmptyState } from "~/components/ui/empty-state";
 import {
   Search,
@@ -36,6 +37,7 @@ type FormState = {
   referenceFournisseur: string;
   marqueVehicule: string;
   modeleVehicule: string;
+  anneeVehicule: string;
   motorisation: string;
   position: string;
   codeChassis: string;
@@ -50,6 +52,7 @@ const INITIAL: FormState = {
   referenceFournisseur: "",
   marqueVehicule: "",
   modeleVehicule: "",
+  anneeVehicule: "",
   motorisation: "",
   position: "",
   codeChassis: "",
@@ -72,6 +75,7 @@ export function RechercheAvancee() {
       referenceFournisseur: f.referenceFournisseur || undefined,
       marqueVehicule: f.marqueVehicule || undefined,
       modeleVehicule: f.modeleVehicule || undefined,
+      anneeVehicule: Number(f.anneeVehicule) || undefined,
       motorisation: f.motorisation || undefined,
       position: f.position || undefined,
       codeChassis: f.codeChassis || undefined,
@@ -81,10 +85,30 @@ export function RechercheAvancee() {
     { enabled: soumis }
   );
 
+  // Cascade marque → modèle alimentée par les VALUES réellement en base
+  // (compatibilités POSITIVE) — plus la saisie libre en secours (allowCustom).
+  const { data: referentiel } = api.articles.referentielVehicules.useQuery(undefined, { staleTime: 60_000, retry: false });
+  const referentielList = (referentiel ?? []) as { marque: string; modele: string }[];
+  const marqueSuit = (m: string) => f.marqueVehicule.toLowerCase() === m.toLowerCase();
+  const marquesDisponibles = [...new Set(referentielList.map((r) => r.marque))].sort();
+  const modelesDisponibles = [...new Set(
+    (f.marqueVehicule.trim() ? referentielList.filter((r) => marqueSuit(r.marque)) : referentielList).map((r) => r.modele),
+  )].sort();
+
   const set = (patch: Partial<FormState>) => setF({ ...f, ...patch });
+  const changerMarque = (valeur: string) => {
+    const m = valeur.replace(/\s+/g, " ").trim();
+    // « 308 » ne veut plus rien dire si la marque devenue Toyota : on garde le
+    // modèle seulement s'il reste plausible pour la nouvelle marque.
+    const modelesDeLaNouvelleMarque = referentielList
+      .filter((r) => r.marque.toLowerCase() === m.toLowerCase())
+      .map((r) => r.modele.toLowerCase());
+    const modeleValideIci = !f.modeleVehicule || modelesDeLaNouvelleMarque.length === 0 || modelesDeLaNouvelleMarque.includes(f.modeleVehicule.trim().toLowerCase());
+    set({ marqueVehicule: m, modeleVehicule: modeleValideIci ? f.modeleVehicule : "" });
+  };
   const lancer = (e?: React.FormEvent) => {
     e?.preventDefault();
-    const rien = !f.q.trim() && !f.reference.trim() && !f.referenceFournisseur.trim() && !f.marqueVehicule.trim() && !f.modeleVehicule.trim() && !f.motorisation.trim() && !f.position && !f.codeChassis.trim() && !attrs.some((a) => a.cle.trim() && a.valeur.trim());
+    const rien = !f.q.trim() && !f.reference.trim() && !f.referenceFournisseur.trim() && !f.marqueVehicule.trim() && !f.modeleVehicule.trim() && !f.anneeVehicule.trim() && !f.motorisation.trim() && !f.position && !f.codeChassis.trim() && !attrs.some((a) => a.cle.trim() && a.valeur.trim());
     if (rien) { toast.error("Renseignez au moins un critère de recherche."); return; }
     setSoumis(true);
   };
@@ -116,10 +140,39 @@ export function RechercheAvancee() {
 
         <div className="border-t border-border pt-3">
           <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground"><Car size={13} /> Véhicule compatible</p>
-          <div className="grid gap-2 sm:grid-cols-5">
-            <div><Label className="text-xs text-muted-foreground">Marque véhicule</Label><Input value={f.marqueVehicule} onChange={(e) => set({ marqueVehicule: e.target.value })} placeholder="Peugeot" className="mt-1" /></div>
-            <div><Label className="text-xs text-muted-foreground">Modèle</Label><Input value={f.modeleVehicule} onChange={(e) => set({ modeleVehicule: e.target.value })} placeholder="308" className="mt-1" /></div>
-            <div><Label className="text-xs text-muted-foreground">Motorisation</Label><Input value={f.motorisation} onChange={(e) => set({ motorisation: e.target.value })} placeholder="ex. 1.6 HDi 115" className="mt-1" /></div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div>
+              <Label className="text-xs text-muted-foreground">Marque véhicule</Label>
+              <SelectSearch
+                value={f.marqueVehicule || null}
+                onChange={(v) => changerMarque(String(v))}
+                options={marquesDisponibles.map((m) => ({ value: m, label: m }))}
+                placeholder="Marque véhicule"
+                searchPlaceholder="Marque…"
+                allowCustom
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Modèle</Label>
+              <SelectSearch
+                value={f.modeleVehicule || null}
+                onChange={(v) => set({ modeleVehicule: String(v) })}
+                options={modelesDisponibles.map((m) => ({ value: m, label: m }))}
+                placeholder="Modèle"
+                searchPlaceholder="Modèle…"
+                allowCustom
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Année</Label>
+              <Input value={f.anneeVehicule} onChange={(e) => set({ anneeVehicule: e.target.value.replace(/\D/g, "") })} inputMode="numeric" placeholder="ex. 2014" className="mt-1" />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Motorisation</Label>
+              <Input value={f.motorisation} onChange={(e) => set({ motorisation: e.target.value })} placeholder="ex. 1.6 HDi 115" className="mt-1" />
+            </div>
             <div>
               <Label className="text-xs text-muted-foreground">Position</Label>
               <select value={f.position} onChange={(e) => set({ position: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
@@ -135,6 +188,9 @@ export function RechercheAvancee() {
               </select>
             </div>
           </div>
+          {marquesDisponibles.length === 0 && (
+            <p className="mt-2 text-[11px] text-muted-foreground">Aucun véhicule référencé en base : saisissez librement (les valeurs tapées alimentent la cascade dès qu'une compatibilité existe).</p>
+          )}
         </div>
 
         <div className="border-t border-border pt-3">

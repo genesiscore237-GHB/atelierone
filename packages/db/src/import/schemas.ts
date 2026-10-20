@@ -87,6 +87,16 @@ export const produitsSchema = z.object({
   uniteBaseCode: code,
   uniteVente: texteOptionnel,
   uniteAchat: texteOptionnel,
+  /** Article « conceptuel » qui regroupe les variantes du même produit
+   *  (produit_articles.designation). Créé s'il n'existe pas ; les variantes
+   *  du même article le partagent. Absent → variante sans article. */
+  designationArticle: texteOptionnelMax(255),
+  /** Réf. constructeur (OEM) portée par la variante — migration 0023. */
+  refOem: texteOptionnelMax(255),
+  refAftermarket: texteOptionnelMax(255),
+  /** Position de montage (4 axes V3) : côté / essieu. */
+  positionCote: z.enum(["GAUCHE", "DROITE", "CENTRAL", "LES_DEUX", "N_A"]).optional(),
+  positionEssieu: z.enum(["AVANT", "ARRIERE", "N_A"]).optional(),
   marque: texteOptionnel,
   referenceFabricant: texteOptionnel,
   couleur: texteOptionnel,
@@ -170,6 +180,53 @@ export const stocksSchema = z.object({
   refSource,
 }).strict();
 
+/* --------
+ * QUALIFICATION CATALOGUE — références équivalentes & compatibilités.
+ * Deux entités de la migration 0023 : une ligne importée sans source garde
+ * NON_VERIFIE jusqu'à vérification (le bon cahier des charges).
+ * Attachement : par désignation d'article (créée si absente) OU par code-barres
+ * de variante (article de la variante) — jamais par IDs internes.
+ * -------- */
+export const NIVEAU_VERIFICATION = ["CONFIRME", "CONDITIONNEL", "NON_VERIFIE"] as const;
+export const TYPE_COMPAT = ["POSITIVE", "NEGATIVE"] as const;
+
+/** references_equiv.jsonl — clé d'upsert : attachement + référence (purifiée). */
+export const referencesEquivSchema = z.object({
+  articleDesignation: texteOptionnelMax(255),
+  codeBarre: texteOptionnelMax(100),
+  marque: texteOptionnelMax(100),
+  reference: texteRequis.max(160, "Référence trop longue (max 160)"),
+  note: texteOptionnelMax(255),
+  source: texteOptionnelMax(60),
+  niveauVerification: z.enum(NIVEAU_VERIFICATION).optional(),
+  refSource,
+}).strict();
+
+/** compatibilites.jsonl — véhicule caractérisé ; POSITIVE par défaut. */
+export const compatibilitesSchema = z.object({
+  articleDesignation: texteOptionnelMax(255),
+  codeBarre: texteOptionnelMax(100),
+  typeCompat: z.enum(TYPE_COMPAT).default("POSITIVE"),
+  marque: texteRequis.max(80, "Marque trop longue (max 80)"),
+  modele: texteRequis.max(120, "Modèle trop long (max 120)"),
+  anneeDe: entierOptionnel,
+  anneeA: entierOptionnel,
+  motorisation: texteOptionnelMax(80),
+  version: texteOptionnelMax(120),
+  generation: texteOptionnelMax(120),
+  carburant: texteOptionnelMax(30),
+  codeMoteur: texteOptionnelMax(60),
+  boite: texteOptionnelMax(40),
+  transmission: texteOptionnelMax(40),
+  carrosserie: texteOptionnelMax(40),
+  codeChassis: texteOptionnelMax(60),
+  position: texteOptionnelMax(40),
+  notes: texteOptionnel,
+  source: texteOptionnelMax(60),
+  niveauVerification: z.enum(NIVEAU_VERIFICATION).optional(),
+  refSource,
+}).strict();
+
 export type CategorieImport = z.infer<typeof categoriesSchema>;
 export type UniteImport = z.infer<typeof unitesSchema>;
 export type FournisseurImport = z.infer<typeof fournisseursSchema>;
@@ -179,3 +236,5 @@ export type ProduitFournisseurImport = z.infer<typeof produitsFournisseursSchema
 export type TarifImport = z.infer<typeof tarifsSchema>;
 export type PrixHistoriqueImport = z.infer<typeof prixHistoriqueSchema>;
 export type StockImport = z.infer<typeof stocksSchema>;
+export type ReferenceEquivImport = z.infer<typeof referencesEquivSchema>;
+export type CompatibiliteImport = z.infer<typeof compatibilitesSchema>;

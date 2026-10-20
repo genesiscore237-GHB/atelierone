@@ -54,12 +54,60 @@ export const LIB_ESSIEU: Record<string, string> = {
   N_A: "— non applicable —",
 };
 
+export const LIB_ZONE: Record<string, string> = {
+  INTERIEUR: "Intérieur",
+  EXTERIEUR: "Extérieur",
+  SUPERIEUR: "Supérieur",
+  INFERIEUR: "Inférieur",
+  N_A: "— non applicable —",
+};
+
+export const LIB_EMP: Record<string, string> = {
+  MOTEUR: "Moteur",
+  BOITE: "Boîte",
+  ROUE: "Roue",
+  HABITACLE: "Habitacle",
+  CARROSSERIE: "Carrosserie",
+  FREINAGE: "Freinage",
+  CLIM: "Climatisation",
+  CHASSIS: "Châssis",
+  N_A: "— non applicable —",
+};
+
+/** Conversions des positions de montage. Logique pure (aucune dépendance)
+ * : importable côté client autant que côté serveur. Les unions ci-dessous
+ * sont exactement ce que le serveur accepte — le formulaire ne peut donc
+ * pas produire autre chose. */
+function positionDeListe<E extends string>(liste: readonly E[], valeur: string | null | undefined, sinon: E): E {
+  return valeur && (liste as readonly string[]).includes(valeur) ? (valeur as E) : sinon;
+}
+
+/** Sélection d'un menu déroulant (chaîne du DOM) → valeur de l'état. */
+export const positionCoteDuSelect = (v: string): VarianteFormState["positionCote"] => positionDeListe(COTES, v, "N_A");
+export const positionEssieuDuSelect = (v: string): VarianteFormState["positionEssieu"] => positionDeListe(ESSIEUX, v, "N_A");
+export const positionZoneDuSelect = (v: string): VarianteFormState["positionZone"] => positionDeListe(ZONES, v, "N_A");
+export const positionEmplacementDuSelect = (v: string): VarianteFormState["positionEmplacement"] => positionDeListe(EMPLACEMENTS_POS, v, "N_A");
+
+/** Lecture d'un champ serveur brut (string | null) → valeur de l'état. */
+export const positionCoteDuServeur = positionCoteDuSelect;
+export const positionEssieuDuServeur = positionEssieuDuSelect;
+export const positionZoneDuServeur = positionZoneDuSelect;
+export const positionEmplacementDuServeur = positionEmplacementDuSelect;
+
+/** Sélection d'un menu déroulant (chaîne du DOM) → valeur de l'état. */
+export const etatProduitDuSelect = (v: string): VarianteFormState["etatProduit"] => positionDeListe(ETATS_PRODUIT, v, "NEUF");
+export const origineProduitDuSelect = (v: string): VarianteFormState["origineProduit"] => positionDeListe(ORIGINES_PRODUIT, v, "AFTERMARKET");
+export const etatProduitDuServeur = etatProduitDuSelect;
+export const origineProduitDuServeur = origineProduitDuSelect;
+
 /** État partagé des trois formulaires. Tout en chaînes : la source de
  * vérité de la saisie, la conversion numérique ne se fait qu'au moment
  * du payload (une case vide vaut « non renseigné », jamais zéro). */
 export type VarianteFormState = {
   marque: string;
   referenceFabricant: string;
+  refOem: string;
+  refAftermarket: string;
   referencePrincipale: string;
   codeArticle: string;
   codeBarre: string;
@@ -71,10 +119,14 @@ export type VarianteFormState = {
   prixParticulier: string;
   prixMinimumVente: string;
   tva: string;
-  etatProduit: string;
-  origineProduit: string;
-  positionCote: string;
-  positionEssieu: string;
+  etatProduit: (typeof ETATS_PRODUIT)[number];
+  origineProduit: (typeof ORIGINES_PRODUIT)[number];
+  // Positions de montage : les unions exactes du contrat serveur — l'état ne
+  // peut pas dire autre chose que ce que le backend accepte.
+  positionCote: "GAUCHE" | "DROITE" | "CENTRAL" | "LES_DEUX" | "N_A";
+  positionEssieu: "AVANT" | "ARRIERE" | "N_A";
+  positionZone: "INTERIEUR" | "EXTERIEUR" | "SUPERIEUR" | "INFERIEUR" | "N_A";
+  positionEmplacement: "MOTEUR" | "BOITE" | "ROUE" | "HABITACLE" | "CARROSSERIE" | "FREINAGE" | "CLIM" | "CHASSIS" | "N_A";
   uniteStockId: string;
   stockInitial: string;
   emplacementStockId: string;
@@ -104,6 +156,8 @@ export type VarianteFormState = {
 export const varianteVide = (): VarianteFormState => ({
   marque: "",
   referenceFabricant: "",
+  refOem: "",
+  refAftermarket: "",
   referencePrincipale: "",
   codeArticle: "",
   codeBarre: "",
@@ -119,6 +173,8 @@ export const varianteVide = (): VarianteFormState => ({
   origineProduit: "AFTERMARKET",
   positionCote: "N_A",
   positionEssieu: "N_A",
+  positionZone: "N_A",
+  positionEmplacement: "N_A",
   uniteStockId: "",
   stockInitial: "",
   emplacementStockId: "",
@@ -150,6 +206,8 @@ export const varianteDepuisServeur = (v: any): VarianteFormState => ({
   ...varianteVide(),
   marque: v?.marque ?? "",
   referenceFabricant: v?.referenceFabricant ?? "",
+  refOem: v?.refOem ?? "",
+  refAftermarket: v?.refAftermarket ?? "",
   referencePrincipale: v?.referencePrincipale ?? "",
   codeArticle: v?.codeArticle ?? "",
   codeBarre: v?.codeBarre ?? "",
@@ -161,10 +219,12 @@ export const varianteDepuisServeur = (v: any): VarianteFormState => ({
   prixParticulier: v?.prixParticulier ?? "",
   prixMinimumVente: v?.prixMinimumVente ?? "",
   tva: v?.tva ?? "",
-  etatProduit: v?.etatProduit ?? "NEUF",
-  origineProduit: v?.origineProduit ?? "AFTERMARKET",
-  positionCote: v?.positionCote ?? "N_A",
-  positionEssieu: v?.positionEssieu ?? "N_A",
+  etatProduit: etatProduitDuServeur(v?.etatProduit),
+  origineProduit: origineProduitDuServeur(v?.origineProduit),
+  positionCote: positionCoteDuServeur(v?.positionCote),
+  positionEssieu: positionEssieuDuServeur(v?.positionEssieu),
+  positionZone: positionZoneDuServeur(v?.positionZone),
+  positionEmplacement: positionEmplacementDuServeur(v?.positionEmplacement),
   uniteStockId: v?.uniteStockId ?? "",
   stockInitial: v?.stockInitial ?? "",
   emplacementStockId: v?.emplacementStockId ? String(v.emplacementStockId) : "",
@@ -219,6 +279,8 @@ export function payloadCreation(f: VarianteFormState, typeProduit: string) {
   return {
     marque: strSaisie(f.marque),
     referenceFabricant: strSaisie(f.referenceFabricant),
+    refOem: strSaisie(f.refOem),
+    refAftermarket: strSaisie(f.refAftermarket),
     referencePrincipale: strSaisie(f.referencePrincipale),
     codeArticle: strSaisie(f.codeArticle),
     codeBarre: strSaisie(f.codeBarre),
@@ -242,6 +304,8 @@ export function payloadCreation(f: VarianteFormState, typeProduit: string) {
     origineProduit: f.origineProduit || undefined,
     positionCote: f.positionCote && f.positionCote !== "N_A" ? f.positionCote : undefined,
     positionEssieu: f.positionEssieu && f.positionEssieu !== "N_A" ? f.positionEssieu : undefined,
+    positionZone: f.positionZone && f.positionZone !== "N_A" ? f.positionZone : undefined,
+    positionEmplacement: f.positionEmplacement && f.positionEmplacement !== "N_A" ? f.positionEmplacement : undefined,
     seuilAlerte: numSaisie(f.seuilAlerte),
     stockSecurite: numSaisie(f.stockSecurite),
     pointCommande: numSaisie(f.pointCommande),
@@ -274,6 +338,8 @@ export function payloadEdition(f: VarianteFormState) {
   return {
     marque: strSaisie(f.marque),
     referenceFabricant: strSaisie(f.referenceFabricant),
+    refOem: strSaisie(f.refOem) ?? null,
+    refAftermarket: strSaisie(f.refAftermarket) ?? null,
     referencePrincipale: strSaisie(f.referencePrincipale),
     conditionnement: strSaisie(f.conditionnement),
     codeBarre: strSaisie(f.codeBarre),
@@ -289,6 +355,8 @@ export function payloadEdition(f: VarianteFormState) {
     origineProduit: f.origineProduit || undefined,
     positionCote: f.positionCote && f.positionCote !== "N_A" ? f.positionCote : null,
     positionEssieu: f.positionEssieu && f.positionEssieu !== "N_A" ? f.positionEssieu : null,
+    positionZone: f.positionZone && f.positionZone !== "N_A" ? f.positionZone : null,
+    positionEmplacement: f.positionEmplacement && f.positionEmplacement !== "N_A" ? f.positionEmplacement : null,
     seuilAlerte: numSaisieEffacable(f.seuilAlerte),
     stockSecurite: numSaisieEffacable(f.stockSecurite),
     pointCommande: numSaisieEffacable(f.pointCommande),

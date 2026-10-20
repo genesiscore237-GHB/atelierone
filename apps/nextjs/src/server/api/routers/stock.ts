@@ -713,33 +713,33 @@ if (existing) {
         const [stockRow] = await tx.select()
           .from(stocks)
           .where(and(eq(stocks.produitId, Number(input.produitId)), eq(stocks.agenceId, ctx.user.agenceId)))
+          .orderBy(asc(stocks.id))
           .limit(1);
 
         const stockAvant = Number(stockRow?.quantite ?? 0);
         const stockApres = input.nouvelleQuantite;
         const ecart = stockApres - stockAvant;
 
-        if (stockRow) {
-          await tx.update(stocks).set({ quantite: String(stockApres) } as any).where(eq(stocks.id, stockRow.id));
-        } else {
-          await tx.insert(stocks).values({
-            produitId: Number(input.produitId),
-            agenceId: ctx.user.agenceId,
-            quantite: String(stockApres),
-          } as any) as any;
+        // Rien à corriger : aucun mouvement fantôme dans le journal.
+        if (ecart === 0) {
+          return { stockAvant, stockApres, ecart };
         }
 
-        await tx.insert(mouvementsStock).values({
+        // Une seule ligne d'écriture du stock : le moteur. Il choisit la ligne
+        // de façon déterministe, valide le stock disponible et tient le journal
+        // et la table inséparables — l'écriture à la main (type brut
+        // "AJUSTEMENT", stock mis à jour en parallèle) est supprimée.
+        await enregistrerMouvement(tx, {
           produitId: Number(input.produitId),
           agenceId: ctx.user.agenceId,
-          type: "AJUSTEMENT",
-          sens: ecart >= 0 ? "E" : "S",
-          quantite: String(Math.abs(ecart)),
-          stockAvant: String(stockAvant),
-          stockApres: String(stockApres),
+          type: ecart > 0 ? TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_POSITIF : TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE_NEGATIF,
+          sens: ecart > 0 ? "E" : "S",
+          quantite: Math.abs(ecart),
           motif: input.motif || "Ajustement manuel",
           effectuePar: Number(ctx.user.id),
-        } as any) as any;
+          reference: "AJUSTEMENT-MANUEL",
+          referenceType: "AJUSTEMENT",
+        });
 
         return { stockAvant, stockApres, ecart };
       }) as any;
@@ -964,7 +964,7 @@ if (existing) {
         }
         const facteur = await getFacteurVersBase(tx as any, Number(input.produitId), input.uniteId);
         const qteBase = input.quantite * facteur;
-        const typeMvt = "ECHANGE_RETOUR_BLANC" as any;
+        const typeMvt = TYPES_MOUVEMENT.ECHANGE_RETOUR_BLANC;
 
         const [lotRow] = await tx.select({ q: stocksLots.quantite }).from(stocksLots)
           .where(and(eq(stocksLots.produitId, Number(input.produitId)), eq(stocksLots.lotId, input.lotId)))

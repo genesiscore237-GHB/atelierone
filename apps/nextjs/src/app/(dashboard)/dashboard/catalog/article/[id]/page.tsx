@@ -19,9 +19,10 @@ import {
   Save, Info, Warehouse, X, Search, RefreshCcw, GitCompareArrows, Upload,
 } from "lucide-react";
 import {
-  ETATS_PRODUIT, ORIGINES_PRODUIT, COTES, ESSIEUX, TYPES_OUTIL, ETATS_EQUIPEMENT,
-  ETAT_PRODUIT_LABELS, ORIGINE_PRODUIT_LABELS, LIB_COTE, LIB_ESSIEU,
-  varianteVide, payloadCreation,
+  ETATS_PRODUIT, ORIGINES_PRODUIT, COTES, ESSIEUX, ZONES, EMPLACEMENTS_POS, TYPES_OUTIL, ETATS_EQUIPEMENT,
+  ETAT_PRODUIT_LABELS, ORIGINE_PRODUIT_LABELS, LIB_COTE, LIB_ESSIEU, LIB_ZONE, LIB_EMP,
+  varianteVide, payloadCreation, positionCoteDuSelect, positionEssieuDuSelect, positionZoneDuSelect, positionEmplacementDuSelect,
+  etatProduitDuSelect, origineProduitDuSelect,
 } from "~/lib/variante-form";
 import type { VarianteFormState } from "~/lib/variante-form";
 
@@ -122,8 +123,8 @@ export default function ArticleDetailPage() {
   const [reemploi, setReemploi] = useState({ actif: false, motif: "" });
   const [conflitRef, setConflitRef] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ titre: string; description: string; exec: () => void } | null>(null);
-  const [refEq, setRefEq] = useState({ marque: "", reference: "", note: "", niveauVerification: "NON_VERIFIE" });
-  const [comp, setComp] = useState<any>({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "", niveauVerification: "NON_VERIFIE" });
+  const [refEq, setRefEq] = useState({ marque: "", reference: "", note: "", source: "", niveauVerification: "NON_VERIFIE" });
+  const [comp, setComp] = useState<any>({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "", sourceCompat: "", niveauVerification: "NON_VERIFIE" });
 
   const addVariante = api.articles.addVariante.useMutation({
     onSuccess: () => {
@@ -157,15 +158,23 @@ export default function ArticleDetailPage() {
     onError: (e) => toast.error(e.message),
   });
   const addRef = api.articles.addReferenceEquiv.useMutation({
-    onSuccess: () => { toast.success("Référence équivalente ajoutée"); setRefEq({ marque: "", reference: "", note: "", niveauVerification: "NON_VERIFIE" }); utils.articles.getArticle.invalidate(); },
+    onSuccess: (d) => { toast.success("Référence équivalente ajoutée"); if (d?.avertissement) toast.warning(d.avertissement); setRefEq({ marque: "", reference: "", note: "", source: "", niveauVerification: "NON_VERIFIE" }); utils.articles.getArticle.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
   const removeRef = api.articles.removeReferenceEquiv.useMutation({
     onSuccess: () => { utils.articles.getArticle.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
+  const qualifierComp = api.articles.qualifierCompatibilite.useMutation({
+    onSuccess: (d) => { toast.success("Qualification enregistrée"); if (d?.avertissement) toast.warning(d.avertissement); utils.articles.getArticle.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const qualifierRef = api.articles.qualifierReferenceEquiv.useMutation({
+    onSuccess: (d) => { toast.success("Qualification enregistrée"); if (d?.avertissement) toast.warning(d.avertissement); utils.articles.getArticle.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
   const addComp = api.articles.addCompatibilite.useMutation({
-    onSuccess: () => { toast.success("Compatibilité ajoutée"); setComp({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "", niveauVerification: "NON_VERIFIE" }); utils.articles.getArticle.invalidate(); },
+    onSuccess: (d) => { toast.success("Compatibilité ajoutée"); if (d?.avertissement) toast.warning(d.avertissement); setComp({ marque: "", modele: "", anneeDe: "", anneeA: "", motorisation: "", version: "", codeMoteur: "", transmission: "", position: "", sourceCompat: "", niveauVerification: "NON_VERIFIE" }); utils.articles.getArticle.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
   const removeComp = api.articles.removeCompatibilite.useMutation({
@@ -669,6 +678,9 @@ export default function ArticleDetailPage() {
                   <Input value={comp.version} onChange={(e) => setComp({ ...comp, version: e.target.value })} placeholder="Version" />
                   <Input value={comp.codeMoteur} onChange={(e) => setComp({ ...comp, codeMoteur: e.target.value })} placeholder="Code moteur" />
                   <div>
+                    <Input value={comp.sourceCompat} onChange={(e) => setComp({ ...comp, sourceCompat: e.target.value })} placeholder="Provenance (CATALOGUE, DOC, VIN, à la main…)" title="D'où vient cette compatibilité. Décisif pour les niveaux CONFIRMÉ." />
+                  </div>
+                  <div>
                     <select value={comp.niveauVerification} onChange={(e) => setComp({ ...comp, niveauVerification: e.target.value })} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" title="D'où vient cette compatibilité — et jusqu'où elle est sûre.">
                       <option value="NON_VERIFIE">À vérifier (défaut)</option>
                       <option value="CONDITIONNEL">Conditionnelle</option>
@@ -677,7 +689,7 @@ export default function ArticleDetailPage() {
                   </div>
                 </div>
                 <div className="mt-2 flex justify-end">
-                  <Button size="sm" className="gap-1 text-xs" disabled={addComp.isPending || !comp.marque || !comp.modele} onClick={() => addComp.mutate({ articleId: id, compat: { marque: comp.marque, modele: comp.modele, motorisation: comp.motorisation || undefined, position: comp.position || undefined, anneeDe: comp.anneeDe ? Number(comp.anneeDe) : undefined, anneeA: comp.anneeA ? Number(comp.anneeA) : undefined, version: comp.version || undefined, codeMoteur: comp.codeMoteur || undefined, niveauVerification: comp.niveauVerification } })}>
+                  <Button size="sm" className="gap-1 text-xs" disabled={addComp.isPending || !comp.marque || !comp.modele} onClick={() => addComp.mutate({ articleId: id, compat: { marque: comp.marque, modele: comp.modele, motorisation: comp.motorisation || undefined, position: comp.position || undefined, anneeDe: comp.anneeDe ? Number(comp.anneeDe) : undefined, anneeA: comp.anneeA ? Number(comp.anneeA) : undefined, version: comp.version || undefined, codeMoteur: comp.codeMoteur || undefined, sourceCompat: comp.sourceCompat || undefined, niveauVerification: comp.niveauVerification } })}>
                     <Plus size={13} /> Ajouter
                   </Button>
                 </div>
@@ -692,8 +704,19 @@ export default function ArticleDetailPage() {
                     <Car size={12} className="text-primary" />
                     {c.marque} {c.modele}{c.anneeDe ? ` ${c.anneeDe}${c.anneeA ? `–${c.anneeA}` : ""}` : ""}{c.motorisation ? ` · ${c.motorisation}` : ""}{c.position ? ` · ${c.position}` : ""}{c.codeMoteur ? ` · ${c.codeMoteur}` : ""}
                     {/* Une compatibilité non vérifiée ne doit JAMAIS s'afficher comme
-                        une certitude : le niveau se voit sur chaque ligne. */}
-                    {c.niveauVerification === "CONFIRME" ? (
+                        une certitude : le niveau se voit — et se corrige — sur chaque ligne. */}
+                    {canModifier ? (
+                      <select
+                        value={c.niveauVerification ?? "NON_VERIFIE"}
+                        onChange={(e) => qualifierComp.mutate({ id: c.id, niveauVerification: e.target.value as "CONFIRME" | "CONDITIONNEL" | "NON_VERIFIE" })}
+                        title={`Source : ${c.source ?? "saisie manuelle"} — changez le niveau directement`}
+                        className="rounded border-dashed border-border bg-background px-1 py-0.5 text-[9px] font-bold uppercase"
+                      >
+                        <option value="CONFIRME">Vérifiée</option>
+                        <option value="CONDITIONNEL">Conditionnelle</option>
+                        <option value="NON_VERIFIE">À vérifier</option>
+                      </select>
+                    ) : c.niveauVerification === "CONFIRME" ? (
                       <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-600">Vérifiée</span>
                     ) : c.niveauVerification === "CONDITIONNEL" ? (
                       <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-600">Conditionnelle</span>
@@ -787,12 +810,13 @@ export default function ArticleDetailPage() {
               <div className="flex flex-wrap gap-2">
                 <Input value={refEq.marque} onChange={(e) => setRefEq({ ...refEq, marque: e.target.value })} placeholder="Marque (MANN, Bosch, OEM Toyota…)" className="min-w-48 flex-1" />
                 <Input value={refEq.reference} onChange={(e) => setRefEq({ ...refEq, reference: e.target.value })} placeholder="Référence (W 712/95, 90915-YZZD2…)" className="min-w-40 flex-1" />
+                <Input value={refEq.source} onChange={(e) => setRefEq({ ...refEq, source: e.target.value })} placeholder="Provenance (CATALOGUE, DOC…)" title="D'où vient cette équivalence. Décisif pour les niveaux CONFIRMÉ." className="min-w-40 flex-1" />
                 <select value={refEq.niveauVerification} onChange={(e) => setRefEq({ ...refEq, niveauVerification: e.target.value })} className="rounded-lg border border-border bg-background px-2 py-1.5 text-xs" title="Une équivalence non vérifiée reste une piste, pas une preuve.">
                   <option value="NON_VERIFIE">À vérifier (défaut)</option>
                   <option value="CONDITIONNEL">Conditionnelle</option>
                   <option value="CONFIRME">Confirmée (source sûre)</option>
                 </select>
-                <Button size="sm" className="gap-1" disabled={addRef.isPending || !refEq.reference} onClick={() => addRef.mutate({ articleId: id, marque: refEq.marque || undefined, reference: refEq.reference, niveauVerification: refEq.niveauVerification as "CONFIRME" | "CONDITIONNEL" | "NON_VERIFIE" })}>
+                <Button size="sm" className="gap-1" disabled={addRef.isPending || !refEq.reference} onClick={() => addRef.mutate({ articleId: id, marque: refEq.marque || undefined, reference: refEq.reference, source: refEq.source || undefined, niveauVerification: refEq.niveauVerification as "CONFIRME" | "CONDITIONNEL" | "NON_VERIFIE" })}>
                   <Plus size={13} /> Ajouter
                 </Button>
               </div>
@@ -802,9 +826,20 @@ export default function ArticleDetailPage() {
             ) : (
               <div className="mt-3 flex flex-wrap gap-2">
                 {referencesEquiv.map((r: any) => (
-                  <span key={r.id} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-mono">
+                  <span key={r.id} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-mono" title={`Source : ${r.source ?? "saisie manuelle"}`}>
                     {r.marque ? `${r.marque} : ` : ""}{r.reference}
-                    {r.niveauVerification === "CONFIRME" ? (
+                    {canModifier ? (
+                      <select
+                        value={r.niveauVerification ?? "NON_VERIFIE"}
+                        onChange={(e) => qualifierRef.mutate({ id: r.id, niveauVerification: e.target.value as "CONFIRME" | "CONDITIONNEL" | "NON_VERIFIE" })}
+                        title={`Source : ${r.source ?? "saisie manuelle"} — changez le niveau directement`}
+                        className="rounded border-dashed border-border bg-background px-1 py-0.5 font-sans text-[9px] font-bold uppercase"
+                      >
+                        <option value="CONFIRME">Vérifiée</option>
+                        <option value="CONDITIONNEL">Conditionnelle</option>
+                        <option value="NON_VERIFIE">À vérifier</option>
+                      </select>
+                    ) : r.niveauVerification === "CONFIRME" ? (
                       <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase text-emerald-600">Vérifiée</span>
                     ) : r.niveauVerification === "CONDITIONNEL" ? (
                       <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 font-sans text-[9px] font-bold uppercase text-amber-600">Conditionnelle</span>
@@ -898,27 +933,39 @@ export default function ArticleDetailPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div><Label className="text-xs text-muted-foreground">Marque</Label><Input value={nv.marque} onChange={(e) => setNv({ ...nv, marque: e.target.value })} placeholder="Bosch, Total…" className="mt-1" /></div>
               <div><Label className="text-xs text-muted-foreground">Référence fabricant</Label><Input value={nv.referenceFabricant} onChange={(e) => setNv({ ...nv, referenceFabricant: e.target.value })} placeholder="BP1234, W712/95…" className="mt-1" /></div>
+              <div><Label className="text-xs text-muted-foreground">Réf. OEM (constructeur)</Label><Input value={nv.refOem} onChange={(e) => setNv({ ...nv, refOem: e.target.value })} placeholder="N° d'origine Audi/VW…" className="mt-1" /></div>
+              <div><Label className="text-xs text-muted-foreground">Réf. aftermarket</Label><Input value={nv.refAftermarket} onChange={(e) => setNv({ ...nv, refAftermarket: e.target.value })} placeholder="Réf. rechange du marché" className="mt-1" /></div>
               <div><Label className="text-xs text-muted-foreground">Référence principale</Label><Input value={nv.referencePrincipale} onChange={(e) => setNv({ ...nv, referencePrincipale: e.target.value })} placeholder="Réf. utilisée par défaut" className="mt-1" /></div>
               <div><Label className="text-xs text-muted-foreground">Conditionnement</Label><Input value={nv.conditionnement} onChange={(e) => setNv({ ...nv, conditionnement: e.target.value })} placeholder="1 L, jeu de 4, boîte…" className="mt-1" /></div>
               <div><Label className="text-xs text-muted-foreground">Code article</Label><Input value={nv.codeArticle} onChange={(e) => setNv({ ...nv, codeArticle: e.target.value })} className="mt-1" /></div>
               <div><Label className="text-xs text-muted-foreground">État</Label>
-                <select value={nv.etatProduit} onChange={(e) => setNv({ ...nv, etatProduit: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                <select value={nv.etatProduit} onChange={(e) => setNv({ ...nv, etatProduit: etatProduitDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
                   {ETATS_PRODUIT.map((t) => <option key={t} value={t}>{ETAT_PRODUIT_LABELS[t]}</option>)}
                 </select>
               </div>
               <div><Label className="text-xs text-muted-foreground">Origine</Label>
-                <select value={nv.origineProduit} onChange={(e) => setNv({ ...nv, origineProduit: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                <select value={nv.origineProduit} onChange={(e) => setNv({ ...nv, origineProduit: origineProduitDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
                   {ORIGINES_PRODUIT.map((t) => <option key={t} value={t}>{ORIGINE_PRODUIT_LABELS[t]}</option>)}
                 </select>
               </div>
               <div><Label className="text-xs text-muted-foreground">Position côté</Label>
-                <select value={nv.positionCote} onChange={(e) => setNv({ ...nv, positionCote: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                <select value={nv.positionCote} onChange={(e) => setNv({ ...nv, positionCote: positionCoteDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
                   {["N_A", ...COTES.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_COTE[t]}</option>)}
                 </select>
               </div>
               <div><Label className="text-xs text-muted-foreground">Position essieu</Label>
-                <select value={nv.positionEssieu} onChange={(e) => setNv({ ...nv, positionEssieu: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                <select value={nv.positionEssieu} onChange={(e) => setNv({ ...nv, positionEssieu: positionEssieuDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
                   {["N_A", ...ESSIEUX.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_ESSIEU[t]}</option>)}
+                </select>
+              </div>
+              <div><Label className="text-xs text-muted-foreground">Position zone</Label>
+                <select value={nv.positionZone} onChange={(e) => setNv({ ...nv, positionZone: positionZoneDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                  {["N_A", ...ZONES.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_ZONE[t]}</option>)}
+                </select>
+              </div>
+              <div><Label className="text-xs text-muted-foreground">Position emplacement</Label>
+                <select value={nv.positionEmplacement} onChange={(e) => setNv({ ...nv, positionEmplacement: positionEmplacementDuSelect(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                  {["N_A", ...EMPLACEMENTS_POS.filter((t) => t !== "N_A")].map((t) => <option key={t} value={t}>{LIB_EMP[t]}</option>)}
                 </select>
               </div>
               {/* Occasion : ces renseignements n'apparaissent que pour une pièce

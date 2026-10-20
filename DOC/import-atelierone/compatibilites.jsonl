@@ -1,0 +1,8 @@
+# COMPATIBILITÉS VÉHICULE — POSITIVE (compatible avec) / NEGATIVE (compatible SAUF).
+# Attache : par designationArticle (article, portée famille) OU par codeBarre
+# (portée variante). Sans typeCompat → POSITIVE ; sans niveau → NON_VERIFIE.
+# codeChassis : PRÉFIXE du VIN complet du véhicule réel.
+{"articleDesignation":"Plaquettes de frein","marque":"Toyota","modele":"Corolla","anneeDe":2014,"anneeA":2019,"motorisation":"1.6","boite":"MANUELLE","position":"AVANT","source":"CATALOGUE_EDI","niveauVerification":"CONFIRME","refSource":"demo-atelierone"}
+{"articleDesignation":"Plaquettes de frein","typeCompat":"NEGATIVE","marque":"Nissan","modele":"Qashqai","anneeDe":2014,"anneeA":2019,"notes":"J18 ajustés : dégage sur le support","source":"SAISIE_MAGASINIER","refSource":"demo-atelierone"}
+{"codeBarre":"GPJ-PCE-0004","marque":"Toyota","modele":"Corolla","anneeDe":2014,"anneeA":2019,"position":"AVANT","source":"CATALOGUE_EDI","niveauVerification":"CONDITIONNEL","refSource":"demo-atelierone"}
+{"codeBarre":"GPJ-PCE-0010","marque":"Toyota","modele":"Hilux","anneeDe":2016,"codeChassis":"MR0FX3","source":"CATALOGUE_EDI","refSource":"demo-atelierone"}

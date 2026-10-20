@@ -19,6 +19,7 @@ import {
   stocks,
   unitesMesure,
   emplacements,
+  vehicules,
   achats,
   achatsLignes,
   lots,
@@ -120,6 +121,7 @@ const VARIANTE_INPUT = z.object({
   marque: z.string().optional(),
   referenceFabricant: z.string().optional(),
   refOem: z.string().optional(),
+  refAftermarket: z.string().optional(),
   codeBarre: z.string().optional(),
   codeArticle: z.string().optional(),
   designationCourte: z.string().optional(),
@@ -281,6 +283,7 @@ export async function creerVariante(tx: any, article: { id: number; typeProduit:
       marque: input.marque ?? null,
       referenceFabricant: input.referenceFabricant ?? null,
       refOem: input.refOem ?? null,
+      refAftermarket: input.refAftermarket ?? null,
       codeBarre: input.codeBarre ?? `VAR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       codeArticle: input.codeArticle ?? null,
       referencePrincipale: input.referencePrincipale ?? input.referenceFabricant ?? null,
@@ -427,6 +430,10 @@ export async function creerVariante(tx: any, article: { id: number; typeProduit:
       uniteId: estExemplaire ? undefined : (uniteBase?.uniteId ?? input.uniteStockId),
       emplacementId: input.emplacementStockId ?? null,
       lotId,
+      // CMUP à la naissance : le stock initial sans coût d'entrée laissait la
+      // ligne sans valorisation (CMUP NULL) — le prix d'achat saisi existe, il
+      // est déjà porté par le lot ci-dessus ; le moteur doit le connaître aussi.
+      coutUnitaireBase: input.prixAchat ?? undefined,
       motif: `Stock initial (article #${article.id})`,
       effectuePar: userId,
       reference: lotId ? `LOT ${input.numeroLot ?? ""}`.trim() || undefined : undefined,
@@ -1016,11 +1023,15 @@ export const articlesRouter = createTRPCRouter({
             marque: input.marque ?? null,
             reference: input.reference.trim(),
             note: input.note ?? null,
-            source: input.source ?? null,
+            source: input.source ?? "MANUELLE",
             niveauVerification: input.niveauVerification ?? "NON_VERIFIE",
           } as any)
           .onConflictDoNothing();
-        return { success: true };
+        // Même doctrine que addCompatibilite : avertissement, pas un refus.
+        const avertissement = input.niveauVerification === "CONFIRME" && !input.source
+          ? "Référence marquée CONFIRMÉE sans provenance documentée : précisez la source (catalogue, documentation…) dès que possible."
+          : undefined;
+        return { success: true, avertissement };
       }),
   removeReferenceEquiv: requirePermissionProcedure("stock.modifier")
     .input(z.object({ id: z.number().int() }))
@@ -1039,14 +1050,78 @@ export const articlesRouter = createTRPCRouter({
       if (v.articleId == null && v.produitId == null) ctx.addIssue({ code: "custom", message: "Il faut cibler un article ou une variante." });
     }))
     .mutation(async ({ ctx, input }) => {
-      await db.insert(compatibilitesProduits).values({ articleId: input.articleId ?? null, produitId: input.produitId ?? null, ...input.compat } as any);
-      return { success: true };
+      // L'input nomme la provenance « sourceCompat », la colonne « source » :
+      // un spread brut la perdait silencieusement — la qualification ne
+      // survivait pas au trajet. Défauts prudents identiques au wizard :
+      // une saisie sans qualification = MANUELLE + NON_VERIFIE, jamais CONFIRMÉ.
+      const { sourceCompat, niveauVerification, ...compat } = input.compat;
+      await db.insert(compatibilitesProduits).values({
+        articleId: input.articleId ?? null,
+        produitId: input.produitId ?? null,
+        ...compat,
+        source: sourceCompat ?? "MANUELLE",
+        niveauVerification: niveauVerification ?? "NON_VERIFIE",
+        creePar: Number(ctx.user.id) || null,
+      } as any);
+      // Avertissement, pas un refus : on documente la limite au moment de
+      // l'ajout plutôt que de bloquer un magasinier pressé.
+      const avertissement = niveauVerification === "CONFIRME" && !sourceCompat
+        ? "Compatibilité marquée CONFIRMÉE sans provenance documentée : précisez la source (catalogue, documentation, VIN…) dès que possible."
+        : undefined;
+      return { success: true, avertissement };
     }),
   removeCompatibilite: requirePermissionProcedure("stock.modifier")
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       await db.delete(compatibilitesProduits).where(eq(compatibilitesProduits.id, input.id));
       return { success: true };
+    }),
+
+  // ─── Qualification a posteriori (catalogue de confiance) ───────────────────
+  // Deux lignes importées d'un fichier CSV sans source restent hors catalogue
+  // tant que quelqu'un n'a pas vérifié. Saisie au doigt = MANUELLE ; document
+  // ou catalogue = la source dit quoi — et le niveau peut monter.
+  qualifierCompatibilite: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      id: z.number().int(),
+      source: z.string().max(60).optional(),
+      niveauVerification: z.enum(["CONFIRME", "CONDITIONNEL", "NON_VERIFIE"]).optional(),
+    }).superRefine((v, ctx) => {
+      if (v.source == null && v.niveauVerification == null) ctx.addIssue({ code: "custom", message: "Donner une source ou un niveau de vérification." });
+    }))
+    .mutation(async ({ input }) => {
+      const values: Record<string, unknown> = {};
+      if (input.source != null) values.source = input.source;
+      if (input.niveauVerification != null) values.niveauVerification = input.niveauVerification;
+      const [ligne] = await db.update(compatibilitesProduits).set(values as any).where(eq(compatibilitesProduits.id, input.id)).returning({ id: compatibilitesProduits.id, source: compatibilitesProduits.source, niveauVerification: compatibilitesProduits.niveauVerification });
+      if (!ligne) throw new TRPCError({ code: "NOT_FOUND", message: "Compatibilité introuvable." });
+      return {
+        success: true,
+        avertissement: ligne.niveauVerification === "CONFIRME" && !ligne.source
+          ? "Niveau CONFIRMÉ sans provenance documentée : une saisie manuelle ne se confirme pas toute seule — la source dit ce qui a été vérifié."
+          : undefined,
+      };
+    }),
+  qualifierReferenceEquiv: requirePermissionProcedure("stock.modifier")
+    .input(z.object({
+      id: z.number().int(),
+      source: z.string().max(60).optional(),
+      niveauVerification: z.enum(["CONFIRME", "CONDITIONNEL", "NON_VERIFIE"]).optional(),
+    }).superRefine((v, ctx) => {
+      if (v.source == null && v.niveauVerification == null) ctx.addIssue({ code: "custom", message: "Donner une source ou un niveau de vérification." });
+    }))
+    .mutation(async ({ input }) => {
+      const values: Record<string, unknown> = {};
+      if (input.source != null) values.source = input.source;
+      if (input.niveauVerification != null) values.niveauVerification = input.niveauVerification;
+      const [ligne] = await db.update(produitReferencesEquiv).set(values as any).where(eq(produitReferencesEquiv.id, input.id)).returning({ id: produitReferencesEquiv.id, source: produitReferencesEquiv.source, niveauVerification: produitReferencesEquiv.niveauVerification });
+      if (!ligne) throw new TRPCError({ code: "NOT_FOUND", message: "Référence équivalente introuvable." });
+      return {
+        success: true,
+        avertissement: ligne.niveauVerification === "CONFIRME" && !ligne.source
+          ? "Niveau CONFIRMÉ sans provenance documentée : précisez la source qui a motivé la confirmation."
+          : undefined,
+      };
     }),
 
   // ─── Documents liés à l'article ───
@@ -1073,6 +1148,8 @@ export const articlesRouter = createTRPCRouter({
       conditionnement: z.string().optional(),
       codeBarre: z.string().optional(),
       codeArticle: z.string().optional(),
+      refOem: z.string().max(255).nullable().optional(),
+      refAftermarket: z.string().max(255).nullable().optional(),
       fournisseurId: z.number().int().nullable().optional(),
       prixAchat: z.number().min(0).nullable().optional(),
       prixVente: z.number().min(0).nullable().optional(),
@@ -1148,6 +1225,7 @@ export const articlesRouter = createTRPCRouter({
           referenceFabricant: produits.referenceFabricant,
           referencePrincipale: produits.referencePrincipale,
           refOem: produits.refOem,
+          refAftermarket: produits.refAftermarket,
           codeBarre: produits.codeBarre,
           codeArticle: produits.codeArticle,
           conditionnement: produits.conditionnement,
@@ -1515,6 +1593,9 @@ export const articlesRouter = createTRPCRouter({
       marqueVehicule: z.string().optional(),
       modeleVehicule: z.string().optional(),
       motorisation: z.string().optional(),
+      // Filtre d'année : tombe dans la fourchette de compatibilité du caractère
+      // (bornes absentes de la compatibilité = ouvertes).
+      anneeVehicule: z.number().int().optional(),
       position: z.string().optional(),
       // VIN / numéro de châssis (compatibilité véhicule)
       codeChassis: z.string().optional(),
@@ -1561,6 +1642,10 @@ export const articlesRouter = createTRPCRouter({
         conditions.push(sql`EXISTS (SELECT 1 FROM ${produitsFournisseurs} pf WHERE pf.produit_id = ${produits.id} AND lower(regexp_replace(coalesce(pf.reference_fournisseur, ''), '[^a-zA-Z0-9]', '', 'g')) = ${norm})`);
       }
 
+      // Filtre d'année véhicule : la fourchette de compatibilité doit couvrir
+      // l'année donnée (bornes absentes = ouvertes sur ce côté).
+      const condAnneesCompatRef = sql` AND (c.annee_de IS NULL OR c.annee_de <= ${safe.anneeVehicule}) AND (c.annee_a IS NULL OR c.annee_a >= ${safe.anneeVehicule})`;
+
       // VIN / numéro de châssis
       if (safe.codeChassis?.trim()) {
         const vin = `%${safe.codeChassis.trim().toUpperCase()}%`;
@@ -1572,10 +1657,10 @@ export const articlesRouter = createTRPCRouter({
         conditions.push(or(ilike(produits.titre, q), ilike(produits.marque, q), ilike(produitArticles.designation, q))!);
       }
       if (safe.marqueVehicule) {
-        conditions.push(sql`EXISTS (SELECT 1 FROM ${compatibilitesProduits} c WHERE (c.article_id = ${produits.articleId} OR c.produit_id = ${produits.id}) AND c.type_compat = 'POSITIVE' AND c.marque ILIKE ${safe.marqueVehicule})`);
+        conditions.push(sql`EXISTS (SELECT 1 FROM ${compatibilitesProduits} c WHERE (c.article_id = ${produits.articleId} OR c.produit_id = ${produits.id}) AND c.type_compat = 'POSITIVE' AND c.marque ILIKE ${safe.marqueVehicule}${safe.anneeVehicule != null ? condAnneesCompatRef : sql``})`);
       }
       if (safe.modeleVehicule) {
-        conditions.push(sql`EXISTS (SELECT 1 FROM ${compatibilitesProduits} c WHERE (c.article_id = ${produits.articleId} OR c.produit_id = ${produits.id}) AND c.type_compat = 'POSITIVE' AND c.modele ILIKE ${safe.modeleVehicule})`);
+        conditions.push(sql`EXISTS (SELECT 1 FROM ${compatibilitesProduits} c WHERE (c.article_id = ${produits.articleId} OR c.produit_id = ${produits.id}) AND c.type_compat = 'POSITIVE' AND c.modele ILIKE ${safe.modeleVehicule}${safe.anneeVehicule != null ? condAnneesCompatRef : sql``})`);
       }
       if (safe.motorisation) {
         conditions.push(sql`EXISTS (SELECT 1 FROM ${compatibilitesProduits} c WHERE (c.article_id = ${produits.articleId} OR c.produit_id = ${produits.id}) AND c.type_compat = 'POSITIVE' AND c.motorisation ILIKE ${safe.motorisation})`);
@@ -1633,7 +1718,7 @@ export const articlesRouter = createTRPCRouter({
         if (safe.referenceFournisseur?.trim()) explications.push(`Référence fournisseur « ${safe.referenceFournisseur.trim()} »`);
         if (safe.q?.trim()) explications.push(`Texte « ${safe.q.trim()} » (titre / marque / désignation)`);
         if (safe.marqueVehicule || safe.modeleVehicule) {
-          explications.push(`Compatible véhicule ${safe.marqueVehicule ?? ""} ${safe.modeleVehicule ?? ""}${safe.motorisation ? " · " + safe.motorisation : ""}`.trim());
+          explications.push(`Compatible véhicule ${safe.marqueVehicule ?? ""} ${safe.modeleVehicule ?? ""}${safe.motorisation ? " · " + safe.motorisation : ""}${safe.anneeVehicule != null ? " · " + safe.anneeVehicule : ""}`.trim());
         }
         if (safe.position) explications.push(`Position montage « ${safe.position} »`);
         for (const a of safe.attributs ?? []) {
@@ -1651,6 +1736,159 @@ export const articlesRouter = createTRPCRouter({
           },
         };
       });
+    }),
+
+  // ─── Référentiel véhicule connu du catalogue (cascade marque → modèle) ───
+  // Les valeurs saisies à la main partout finissent en couples
+  // marque/modèle des compatibilités POSITIVE : en proposer la liste évite au
+  // magasinier de retaper « Toyota » une quatrième orthographe différente.
+  referentielVehicules: requirePermissionProcedure("stock.consulter").query(async () => {
+    const rows = await db
+      .select({ marque: compatibilitesProduits.marque, modele: compatibilitesProduits.modele })
+      .from(compatibilitesProduits)
+      .where(eq(compatibilitesProduits.typeCompat, "POSITIVE"))
+      .groupBy(compatibilitesProduits.marque, compatibilitesProduits.modele)
+      .orderBy(asc(compatibilitesProduits.marque), asc(compatibilitesProduits.modele))
+      .limit(500);
+    return rows.filter((r): r is { marque: string; modele: string } => !!r.marque && !!r.modele);
+  }),
+
+  // ─── Pièces compatibles avec un véhicule réel (fiche parking / OR) ───
+  // Le moteur de compatibilité existait (recherche : marque/modèle/motorisation,
+  // châssis) mais n'était branché ni sur la fiche du véhicule ni sur l'OR.
+  // Ici la fiche véhicule sert de jeu de critères : marque + modèle (· fourchette
+  // d'années quand la base la porte · version/motorisation en affine), ou le
+  // châssis/VIN seul. Une ligne NEGATIVE (« compatible sauf avec ») exclut la
+  // variante même si l'article est compatible — l'équivalence n'implique jamais
+  // la compatibilité (schéma compatibilites_produits).
+  pourVehicule: requirePermissionProcedure("stock.consulter")
+    .input(z.object({
+      vehiculeId: z.number().int(),
+      q: z.string().optional(),
+      limit: z.number().int().min(5).max(100).default(30),
+    }))
+    .query(async ({ ctx, input }) => {
+      const [vehi] = await db.select({
+        marque: vehicules.marque,
+        modele: vehicules.modele,
+        version: vehicules.version,
+        annee: vehicules.annee,
+        numeroChassis: vehicules.numeroChassis,
+        carburant: vehicules.carburant,
+      })
+        .from(vehicules)
+        .where(and(eq(vehicules.id, input.vehiculeId), eq(vehicules.agenceId, ctx.user.agenceId)))
+        .limit(1);
+
+      if (!vehi) {
+        throw new TRPCError({ code: "NOT_FOUND", message: `Véhicule #${input.vehiculeId} introuvable dans cette agence.` });
+      }
+
+      const marque = vehi.marque?.trim() || null;
+      const modele = vehi.modele?.trim() || null;
+      const annee = vehi.annee ?? null;
+      const chassis = vehi.numeroChassis?.trim().toUpperCase() || null;
+      const version = vehi.version?.trim() || null;
+
+      if (!marque && !chassis) {
+        // Rien à déduire : on ne fabrique pas des critères (on ne déduit pas).
+        return { items: [], ficheIncomplete: true, criteres: { marque, modele, annee, chassis, version } };
+      }
+
+      // Critères primaires pour un alias donné (c / neg). Fourchette d'années :
+      // bornes absentes = ouvertes sur ce côté. Aucun fragment ne commence par
+      // AND/OR : la composition est confiée à sql.join, jamais modifiée après
+      // coup (interpolation de template applatie, pas de .replace).
+      const critPrimaires = (p: string) =>
+        sql`(${sql.raw(p)}.marque ILIKE ${marque}${modele ? sql` AND ${sql.raw(p)}.modele ILIKE ${modele}` : sql``}${annee != null ? sql` AND (${sql.raw(p)}.annee_de IS NULL OR ${sql.raw(p)}.annee_de <= ${annee}) AND (${sql.raw(p)}.annee_a IS NULL OR ${sql.raw(p)}.annee_a >= ${annee})` : sql``})`;
+      // Le châssis d'une compatibilité est un PRÉFIXE du VIN complet du
+      // véhicule (de plus en plus précis au fil des qualifications) : la ligne
+      // fait le pont si le début du VIN de la fiche coïncide avec elle.
+      const pontChassis = (p: string) =>
+        sql`coalesce(${sql.raw(p)}.code_chassis, '') <> '' AND left(${chassis}, length(coalesce(${sql.raw(p)}.code_chassis, ''))) = upper(coalesce(${sql.raw(p)}.code_chassis, ''))`;
+
+      // POSITIVE : une ligne doit porter l'identité (marque/modèle/années) OU le
+      // châssis — le pont VIN vaut même sans marque sur la fiche.
+      const listesPositifs = [
+        ...(marque ? [critPrimaires("c")] : []),
+        ...(chassis ? [pontChassis("c")] : []),
+      ];
+      const listesNegatifs = [
+        ...(marque ? [critPrimaires("neg")] : []),
+        ...(chassis ? [pontChassis("neg")] : []),
+      ];
+
+      const existePositif = (avecVersion: boolean) =>
+        sql`EXISTS (
+          SELECT 1 FROM ${compatibilitesProduits} c
+          WHERE (c.article_id = ${produits.articleId} OR c.produit_id = ${produits.id})
+            AND c.type_compat = 'POSITIVE'
+            AND (${sql.join(listesPositifs, sql` OR `)})
+            ${avecVersion && version ? sql` AND (coalesce(c.motorisation, '') ILIKE ${"%" + version + "%"} OR coalesce(c.version, '') ILIKE ${"%" + version + "%"})` : sql``})`;
+      // Exclusion NEGATIVE : un « compatible sauf avec » au niveau
+      // marque/modèle/année ou châssis retire la variante, même POSITIVE ailleurs.
+      const existeNegatif = sql`NOT EXISTS (
+          SELECT 1 FROM ${compatibilitesProduits} neg
+          WHERE (neg.article_id = ${produits.articleId} OR neg.produit_id = ${produits.id})
+            AND neg.type_compat = 'NEGATIVE'
+            AND (${sql.join(listesNegatifs, sql` OR `)}))`;
+
+      const conditionTexte = input.q?.trim()
+        ? or(ilike(produits.titre, `%${input.q.trim()}%`), ilike(produits.marque, `%${input.q.trim()}%`), ilike(produitArticles.designation, `%${input.q.trim()}%`))!
+        : null;
+
+      const lancer: (avecVersion: boolean) => Promise<any[]> = async (avecVersion) =>
+        (await db
+          .select({
+            id: produits.id,
+            titre: produits.titre,
+            marque: produits.marque,
+            referencePrincipale: produits.referencePrincipale,
+            codeArticle: produits.codeArticle,
+            typeProduit: produitArticles.typeProduit,
+            articleId: produits.articleId,
+            articleDesignation: produitArticles.designation,
+            positionCote: produits.positionCote,
+            positionEssieu: produits.positionEssieu,
+            prixVente: produits.prixVente,
+          })
+          .from(produits)
+          .innerJoin(produitArticles, eq(produitArticles.id, produits.articleId))
+          .where(and(existePositif(avecVersion), existeNegatif, ...(conditionTexte ? [conditionTexte] : [])))
+          .orderBy(asc(produits.titre))
+          .limit(input.limit)) as any[];
+
+      // Version affinante d'abord ; si elle ne rehausse rien, on la relâche —
+      // on ne rejette pas des pièces réellement compatibles parce que le
+      // libellé de la fiche n'est pas calibré comme une ligne catalogue.
+      let rows = await lancer(true);
+      if (version && rows.length === 0) rows = await lancer(false);
+
+      const ids = rows.map((r) => r.id);
+      const stocksTot: Record<number, number> = {};
+      if (ids.length) {
+        const s = await db
+          .select({ produitId: stocks.produitId, q: sql<number>`COALESCE(SUM(${stocks.quantite} - COALESCE(${stocks.quantiteReservee},0) - COALESCE(${stocks.quantiteBloquee},0)), 0)::int` })
+          .from(stocks)
+          .where(and(inArray(stocks.produitId, ids), eq(stocks.agenceId, ctx.user.agenceId)))
+          .groupBy(stocks.produitId);
+        for (const x of s) stocksTot[x.produitId] = x.q;
+      }
+
+      const baseCriteres = [marque, modele].filter(Boolean).join(" ");
+      return {
+        items: rows.map((r) => ({
+          ...r,
+          stockDisponible: stocksTot[r.id] ?? 0,
+          explications: [
+            `${baseCriteres}${annee != null ? " · " + annee : ""}`.trim(),
+            chassis ? `Châssis ${chassis.slice(-8)}` : null,
+            version ? `Version ${version}` : null,
+          ].filter(Boolean) as string[],
+        })),
+        ficheIncomplete: false,
+        criteres: { marque, modele, annee, chassis, version },
+      };
     }),
 
   // ─── Détection des doublons (moteur universel, multi-critères) ───
@@ -1959,6 +2197,8 @@ export const articlesRouter = createTRPCRouter({
           codeMoteur: compatibilitesProduits.codeMoteur,
           codeChassis: compatibilitesProduits.codeChassis,
           position: compatibilitesProduits.position,
+          source: compatibilitesProduits.source,
+          niveauVerification: compatibilitesProduits.niveauVerification,
           portee: sql<"ARTICLE" | "VARIANTE">`CASE WHEN ${compatibilitesProduits.produitId} IS NOT NULL THEN 'VARIANTE' ELSE 'ARTICLE' END`,
         })
         .from(compatibilitesProduits)

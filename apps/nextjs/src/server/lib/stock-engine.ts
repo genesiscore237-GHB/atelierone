@@ -30,6 +30,11 @@ export const TYPES_MOUVEMENT = {
 // Specs V2 Â§04/Â§05 : sortie atelier liÃ©e Ã  un OR + retour atelier
   SORTIE_OR: "SORTIE_OR",
   RETOUR_ATELIER: "RETOUR_ATELIER",
+  // Sortie d'un lot précis choisi à la main (retour blanc d'échange standard,
+  // mise au rebut, contrôle qualité…) — utilisée par `sortirLotExact` en plus
+  // de la sortie FEFO automatique. Type déjà écrit dans des journaux réels :
+  // il entre dans la nomenclature, il ne disparaît pas.
+  ECHANGE_RETOUR_BLANC: "ECHANGE_RETOUR_BLANC",
   SORTIE_OUTIL: "SORTIE_OUTIL",
   RETOUR_OUTIL: "RETOUR_OUTIL",
   // Conception Stock + Bureau (MVP) : approvisionnement du bureau depuis un

@@ -1,0 +1,9 @@
+# RÉFÉRENCES ÉQUIVALENTES — cotes croisées d'un article.
+# Attache : par designationArticle (créé s'il n'existe pas) OU par codeBarre
+# de variante. Clé d'upsert : attache + référence (RG-009/RG-010 : pas de doublon).
+# Sans niveauVerification → NON_VERIFIE ; sans source → CATALOGUE.
+{"articleDesignation":"Filtre à huile","marque":"Toyota OEM","reference":"90915-YZZD2","note":"Réf. constructeur du filtre à huile","source":"CATALOGUE_IRIS","niveauVerification":"CONDITIONNEL","refSource":"demo-atelierone"}
+{"articleDesignation":"Filtre à huile","marque":"MANN","reference":"W68/3","note":"Équivalent de l'OEM 90915-YZZD2","source":"CATALOGUE_MANN","refSource":"demo-atelierone"}
+{"articleDesignation":"Plaquettes de frein","marque":"Toyota OEM","reference":"04465-02250","source":"CATALOGUE_IRIS","niveauVerification":"CONFIRME","refSource":"demo-atelierone"}
+{"articleDesignation":"Plaquettes de frein","marque":"BREMBO","reference":"P24030","source":"CATALOGUE_BREMBO","refSource":"demo-atelierone"}
+{"articleDesignation":"Disque de frein","codeBarre":"GPJ-PCE-0004","marque":"MIDAS","reference":"MD-DF-AV","source":"SAISIE_MAGASINIER","niveauVerification":"NON_VERIFIE","refSource":"demo-atelierone"}

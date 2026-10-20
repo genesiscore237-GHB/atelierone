@@ -8,7 +8,7 @@ import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import {
   Package, PackageOpen, Undo2, Loader2, Plus, Trash2, History, Boxes, ClipboardList,
-  RefreshCw, UserRound, Truck, ArrowLeftRight, Lock, Send,
+  RefreshCw, UserRound, Truck, ArrowLeftRight, Lock, Send, Car,
 } from "lucide-react";
 import { useOrPermissions } from "../../../_hooks/useOrPermissions";
 import { SelectSearch } from "~/components/ui/select-search";
@@ -29,6 +29,15 @@ export function PiecesTab({ or }: { or: any }) {
 
   const { data: produits } = api.catalog.list.useQuery({ limit: 200 });
   const produitsList = (produits?.items ?? []) as any[];
+  // C1 — le dossier connaît SA voiture (ordres_reparation.vehicule_id NOT NULL) :
+  // proposer d'abord ce qui lui va. Sans compatibilité référencée, retombe sur
+  // la liste catalogue — jamais un écran plus pauvre que l'ancien.
+  const idVehicule = Number(or?.vehiculeId ?? 0);
+  const { data: compatData } = api.articles.pourVehicule.useQuery(
+    { vehiculeId: idVehicule, limit: 50 },
+    { enabled: idVehicule > 0, retry: false },
+  );
+  const compatList = (compatData?.items ?? []) as any[];
   const { data: fournisseurs } = api.reference.listFournisseurs.useQuery();
   const fournisseursList = (fournisseurs ?? []) as any[];
   const { data: demandes, refetch: refetchDemandes } = api.or.listerDemandesPieces.useQuery({ orId: id });
@@ -45,7 +54,12 @@ export function PiecesTab({ or }: { or: any }) {
     refetchPC();
   };
 
-  const optProduits = produitsList.map((p: any) => ({ value: p.id, label: `${p.codeArticle ?? ""} ${p.titre}`.trim(), hint: p.typeProduit }));
+  const sourceProduits = compatList.length > 0 ? compatList : produitsList;
+  const optProduits = sourceProduits.map((p: any) => ({
+    value: p.id,
+    label: `${p.codeArticle ?? p.referencePrincipale ?? ""} ${p.titre}`.trim(),
+    hint: p.stockDisponible != null ? `stock ${p.stockDisponible}` : p.typeProduit,
+  }));
   const optFournisseurs = fournisseursList.map((f: any) => ({ value: f.id, label: f.nom }));
 
   // ─── Formulaires génériques stock ───
@@ -133,6 +147,15 @@ export function PiecesTab({ or }: { or: any }) {
       {!peutGererStock && (
         <p className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
           <Lock size={13} /> Vous n'avez pas la permission de gérer le stock des OR — consultation seule.
+        </p>
+      )}
+
+      {idVehicule > 0 && compatData && !compatData.ficheIncomplete && (
+        <p className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary">
+          <Car size={13} />
+          {compatList.length > 0
+            ? `${compatList.length} pièce(s) compatibles au véhicule du dossier proposées en premier dans les sélecteurs.`
+            : "Aucune compatibilité référencée pour le véhicule du dossier — liste catalogue complète."}
         </p>
       )}
 

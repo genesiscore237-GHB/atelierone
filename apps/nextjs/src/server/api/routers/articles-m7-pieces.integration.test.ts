@@ -472,6 +472,50 @@ describe("Pièces — qualification saisie", () => {
     expect(comp!.source).toBe("MANUELLE");
   });
 
+  it("un ajout de compatibilité autonome conserve SA qualification (source)", async () => {
+    // L'input nomme la provenance « sourceCompat », la colonne « source » :
+    // un spread brut la perdait silencieusement — l'ajout d'une compatibilité
+    // depuis la fiche jetait donc la qualification à la corbeille.
+    const r = await api().createArticle({
+      designation: `${NS} Compat autonome`,
+      typeProduit: "PIECE",
+      variantes: [{ referencePrincipale: `${NS}-COMP-AUTO` }],
+    } as never);
+    const [v] = (await db.execute(
+      sql`SELECT id FROM produits WHERE reference_principale = ${`${NS}-COMP-AUTO`} LIMIT 1`,
+    )) as unknown as { id: number }[];
+    await api().addCompatibilite({
+      produitId: Number(v!.id),
+      compat: { typeCompat: "POSITIVE", marque: "NISSAN", modele: "PATROL", sourceCompat: "CATALOGUE", niveauVerification: "CONFIRME" },
+    } as never);
+
+    const [comp] = (await db.execute(
+      sql`SELECT source, niveau_verification FROM compatibilites_produits
+           WHERE marque = 'NISSAN' AND modele = 'PATROL' AND produit_id = ${Number(v!.id)}`,
+    )) as unknown as Record<string, string>[];
+
+    expect(comp!.source, "la source doit survivre au trajet").toBe("CATALOGUE");
+    expect(comp!.niveau_verification).toBe("CONFIRME");
+  });
+
+  it("CONFIRMÉ sans source : averti, pas refusé", async () => {
+    const [v] = (await db.execute(
+      sql`SELECT id FROM produits WHERE reference_principale = ${`${NS}-COMP-AUTO`} LIMIT 1`,
+    )) as unknown as { id: number }[];
+    const r = await api().addCompatibilite({
+      produitId: Number(v!.id),
+      compat: { typeCompat: "POSITIVE", marque: "MAZDA", modele: "BT50", niveauVerification: "CONFIRME" },
+    } as never);
+    expect((r as any).avertissement).toBeTruthy();
+
+    const [comp] = (await db.execute(
+      sql`SELECT niveau_verification, source FROM compatibilites_produits
+           WHERE marque = 'MAZDA' AND modele = 'BT50' AND produit_id = ${Number(v!.id)}`,
+    )) as unknown as Record<string, string>[];
+    expect(comp!.niveau_verification).toBe("CONFIRME");
+    expect(comp!.source, "l'avertissement ne repose pas sur des suppositions : sans source déclarée, MANUELLE").toBe("MANUELLE");
+  });
+
   it("un contenu de conditionnement confirmé par le magasinier est conservé", async () => {
     const r = await api().createArticle({
       designation: `${NS} Filtres en boîte`,
