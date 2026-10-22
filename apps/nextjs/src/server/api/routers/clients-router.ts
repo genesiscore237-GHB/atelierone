@@ -32,6 +32,7 @@ import {
 } from "~/server/lib/client-service";
 import { verrouillerSequence, prochaineSequence } from "~/server/lib/facturation-service";
 import { STATUTS_OR_TERMINAUX } from "~/server/lib/atelier-service";
+import { listeCanoniqueVehicules } from "~/server/lib/liste-canonique-vehicules";
 
 /** MODULE CLIENTS — fiche 360°, types, statuts, contacts, adresses, interactions. */
 export const clientsRouter = createTRPCRouter({
@@ -91,7 +92,7 @@ export const clientsRouter = createTRPCRouter({
         .limit(1);
       if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Client introuvable." });
 
-      const [contacts, adresses, interactions, historique, contrats, vehiculesClient, factures] = await Promise.all([
+      const [contacts, adresses, interactions, historique, contrats, vehiculesClient, factures, canonique] = await Promise.all([
         db.select().from(clientContacts).where(eq(clientContacts.clientId, input.id)).orderBy(desc(clientContacts.estContactPrincipal)),
         db.select().from(clientAdresses).where(eq(clientAdresses.clientId, input.id)).orderBy(desc(clientAdresses.estPrincipale)),
         db.select().from(clientInteractions).where(eq(clientInteractions.clientId, input.id)).orderBy(desc(clientInteractions.dateHeure)),
@@ -102,11 +103,20 @@ export const clientsRouter = createTRPCRouter({
           .select({ montantTotal: ventes.montantTotal, montantPaye: ventes.montantPaye })
           .from(ventes)
           .where(and(eq(ventes.clientId, input.id), eq(ventes.agenceId, ctx.user.agenceId), sql`${ventes.montantPaye} < ${ventes.montantTotal}`)),
+        // La fiche client doit montrer le même statut, la même position et le
+        // même OR que la liste canonique des véhicules. Recalculer ces champs
+        // ici avec une autre requête serait la énième copie divergente.
+        listeCanoniqueVehicules(db, {
+          agenceId: ctx.user.agenceId,
+          clientId: input.id,
+          limit: 200,
+          offset: 0,
+        }),
       ]);
 
       const solde = Math.round(factures.reduce((s, v) => s + (Number(v.montantTotal) - Number(v.montantPaye ?? 0)), 0) * 100) / 100;
 
-      return { client, contacts, adresses, interactions, historique, contrats, vehiculesClient, solde };
+      return { client, contacts, adresses, interactions, historique, contrats, vehiculesClient, vehiculesCanoniques: canonique.lignes, solde };
     }),
 
   // ─── Création (champs dynamiques selon le type) ───

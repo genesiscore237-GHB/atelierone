@@ -173,7 +173,20 @@ export const revueParcRouter = createTRPCRouter({
                 OR ${parkingVehicles.clientNom} ILIKE ${q}
                 OR ${parkingVehicles.marque} ILIKE ${q}
                 OR ${parkingVehicles.motif} ILIKE ${q}
-                OR ${parkingVehicles.numRegistre}::text ILIKE ${q})`,
+                OR ${parkingVehicles.numRegistre}::text ILIKE ${q}
+                OR EXISTS (
+                  SELECT 1 FROM vehicules v
+                  LEFT JOIN clients c ON c.id = v.client_id
+                  WHERE v.id = ${parkingVehicles.vehiculeId}
+                    AND (v.immatriculation ILIKE ${q}
+                      OR v.marque ILIKE ${q}
+                      OR v.modele ILIKE ${q}
+                      OR v.version ILIKE ${q}
+                      OR v.numero_chassis ILIKE ${q}
+                      OR c.nom ILIKE ${q}
+                      OR c.prenom ILIKE ${q}
+                      OR c.raison_sociale ILIKE ${q})
+                ))`,
         );
       }
 
@@ -207,11 +220,26 @@ export const revueParcRouter = createTRPCRouter({
         : [];
       const nomsClients = fiches.length
         ? await db
-            .select({ id: clients.id, nom: clients.nom })
+            .select({
+              id: clients.id,
+              nom: clients.nom,
+              prenom: clients.prenom,
+              raisonSociale: clients.raisonSociale,
+            })
             .from(clients)
             .where(inArray(clients.id, fiches.map((f) => f.clientId).filter((c): c is number => c != null)))
         : [];
-      const nomParClient = new Map(nomsClients.map((c) => [c.id, c.nom]));
+      const nomParClient = new Map(
+        nomsClients.map((c) => [
+          c.id,
+          c.raisonSociale?.trim() ||
+            [c.prenom, c.nom]
+              .map((v) => v?.trim() || "")
+              .filter(Boolean)
+              .join(" ") ||
+            null,
+        ]),
+      );
       const ficheParId = new Map(fiches.map((f) => [f.id, f]));
 
       const lignes = base.map((b) => {

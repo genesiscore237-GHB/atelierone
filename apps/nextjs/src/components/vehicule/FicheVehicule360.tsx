@@ -63,7 +63,11 @@ export function FicheVehicule360({
   const utils = api.useUtils();
   const router = useRouter();
   const { data, isLoading, isError } = api.vehicules.get.useQuery({ id: Number(id) });
-  const { data: clientsData } = api.clients.list.useQuery({ statut: "ACTIF", limit: 200 });
+  // Toutes les fiches client, y compris PROVISOIRE : en production, les 31
+  // fiches issues du parking sont provisoires. Filtrer sur ACTIF vidait le
+  // sélecteur de propriétaire et empêchait de rattacher un véhicule à son
+  // vrai client.
+  const { data: clientsData } = api.clients.list.useQuery({ limit: 200 });
   const { data: contratsData } = api.vehicules.listContratsActifs.useQuery();
   // Lot 3 — lien croisé 360° : emplacement parking du véhicule canonique lié.
   const { data: parking } = api.garage.vehiculeParCanonique.useQuery(
@@ -158,12 +162,14 @@ export function FicheVehicule360({
     };
   }, [data]);
 
+  const hrefRetour = contexte === "garage" ? "/dashboard/garage/vehicules" : "/dashboard/vehicules";
+
   if (isLoading) return <div className="h-64 animate-pulse rounded-xl bg-muted" />;
   if (isError || !data360) {
     return (
       <div className="rounded-xl border border-border bg-card p-8 text-center">
         <p className="text-sm text-muted-foreground">Véhicule introuvable.</p>
-        <Link href="/dashboard/vehicules" className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-primary">
+        <Link href={hrefRetour} className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-primary">
           <ArrowLeft size={14} /> Retour au parc
         </Link>
       </div>
@@ -218,15 +224,15 @@ export function FicheVehicule360({
       {/* ── Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Link href="/dashboard/vehicules" className="rounded-lg p-1.5 text-muted-foreground hover:bg-accent" title="Retour">
+          <Link href={hrefRetour} className="rounded-lg p-1.5 text-muted-foreground hover:bg-accent" title="Retour">
             <ArrowLeft size={18} />
           </Link>
           <div>
             <h1 className="flex items-center gap-2 font-mono text-xl font-bold tracking-tight text-foreground">
-              <Car size={18} className="text-primary" /> {v.immatriculation}
+              <Car size={18} className="text-primary" /> {v.immatriculation ?? "Sans plaque"}
             </h1>
             <p className="text-xs text-muted-foreground">
-              {v.marque} {v.modele}{v.annee ? ` · ${v.annee}` : ""}{v.couleur ? ` · ${v.couleur}` : ""}
+              {v.marque} {v.modele}{v.version ? ` · ${v.version}` : ""}{v.annee ? ` · ${v.annee}` : ""}{v.couleur ? ` · ${v.couleur}` : ""}
               {v.carburant ? ` · ${v.carburant}` : ""}
             </p>
           </div>
@@ -235,6 +241,16 @@ export function FicheVehicule360({
           {estFlotte && (
             <span className="inline-block rounded-full bg-violet-500/15 px-2.5 py-1 text-[10px] font-bold uppercase text-violet-400">
               Flotte {client.raisonSociale ? `· ${client.raisonSociale}` : ""}
+            </span>
+          )}
+          {client?.statut === "PROVISOIRE" && (
+            <span className="inline-block rounded-full bg-warning/10 px-2.5 py-1 text-[10px] font-bold uppercase text-warning-foreground" title="Fiche client issue du parking, à confirmer">
+              Client provisoire
+            </span>
+          )}
+          {v.isActive === false && (
+            <span className="inline-block rounded-full bg-muted px-2.5 py-1 text-[10px] font-bold uppercase text-muted-foreground">
+              Fiche inactive
             </span>
           )}
           {orCourant?.priorite && prioMeta && (
@@ -369,6 +385,7 @@ export function FicheVehicule360({
                 </h3>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
                   <Field label="Propriétaire" value={displayName ? `${displayName} (${client?.codeClient})` : "—"} />
+                  <Field label="Statut client" value={client?.statut ? (client.statut === "PROVISOIRE" ? "Provisoire" : client.statut) : "—"} />
                   <Field label="Type de client" value={client ? (TYPE_CLIENT_LABELS[client.typeClient] ?? client.typeClient) : "—"} />
                   <Field label="Chauffeur" value={v.chauffeurNom} />
                   <Field label="Téléphone propriétaire" value={client?.telephone ?? "—"} />
@@ -511,13 +528,24 @@ export function FicheVehicule360({
               <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
                 <Field label="Immatriculation" value={v.immatriculation} mono />
                 <Field label="Marque / Modèle" value={v.marque && v.modele ? `${v.marque} ${v.modele}` : (v.marque ?? v.modele)} />
+                <Field label="Version / finition" value={v.version} />
                 <Field label="Année" value={v.annee} />
                 <Field label="Couleur" value={v.couleur} />
                 <Field label="N° châssis" value={v.numeroChassis} />
                 <Field label="Kilométrage" value={v.kilometrage !== null && v.kilometrage !== undefined ? `${v.kilometrage.toLocaleString("fr-FR")} km` : "—"} />
                 <Field label="Carburant" value={v.carburant} />
                 <Field label="Type" value={v.typeVehicule} />
+                <Field
+                  label="Dimensions (L × l × H)"
+                  value={
+                    v.longueur || v.largeur || v.hauteur
+                      ? [v.longueur, v.largeur, v.hauteur].map((x) => (x != null ? `${x} m` : "—")).join(" × ")
+                      : "—"
+                  }
+                />
+                <Field label="Poids" value={v.poids != null ? `${Number(v.poids).toLocaleString("fr-FR")} kg` : "—"} />
                 <Field label="Enregistré le" value={fmtDate(v.createdAt)} />
+                <Field label="Mis à jour le" value={fmtDate(v.updatedAt)} />
               </div>
 
               {canModifier && (

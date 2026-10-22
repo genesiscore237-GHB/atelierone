@@ -347,7 +347,12 @@ export async function resoudreOuCreerClientDepuisIdentite(
       telephone: params.telephone?.trim() || null,
       codeClient,
       typeClient: "PART",
-      statut: "ACTIF",
+      // Une fiche née au parking n'a pas encore été confirmée par un accueil :
+      // elle reste PROVISOIRE jusqu'à la réception (ou une validation
+      // explicite). La marquer ACTIF la ferait passer pour vérifiée et
+      // alimenterait les sélecteurs « clients actifs » avec des fiches non
+      // contrôlées.
+      statut: "PROVISOIRE",
     } as any)
     .returning({ id: clients.id });
 

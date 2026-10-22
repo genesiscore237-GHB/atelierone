@@ -49,12 +49,11 @@ export interface VehiculeFormModel {
 
 interface Props {
   open: boolean;
-  vehicule: VehiculeFormModel | null;
+  vehicule: VehiculeFormModel;
   onClose: () => void;
 }
 
 interface FormState {
-  numRegistre: string;
   marque: string;
   modele: string;
   version: string;
@@ -80,41 +79,37 @@ interface FormState {
   dateDerniereRelance: string;
 }
 
-const emptyForm: FormState = {
-  numRegistre: "",
-  marque: "",
-  modele: "",
-  version: "",
-  couleur: "",
-  immatriculation: "",
-  vin: "",
-  clientNom: "",
-  clientTelephone: "",
-  statut: "EN_PARKING",
-  motif: "",
-  longueur: "",
-  largeur: "",
-  hauteur: "",
-  poids: "",
-  dimensionsEstimees: false,
-  provenance: "",
-  notes: "",
-  photos: [],
-  dateEntree: "",
-  dateDevis: "",
-  dateCommande: "",
-  dateFinTravaux: "",
-  dateDerniereRelance: "",
-};
-
 function toDateInput(d: string | null | undefined): string {
   if (!d) return "";
   return new Date(d).toISOString().slice(0, 10);
 }
 
 export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
-  const isEdit = vehicule !== null;
-  const [form, setForm] = useState<FormState>(emptyForm);
+  const [form, setForm] = useState<FormState>({
+    marque: vehicule.marque ?? "",
+    modele: vehicule.modele ?? "",
+    version: vehicule.version ?? "",
+    couleur: vehicule.couleur ?? "",
+    immatriculation: vehicule.immatriculation ?? "",
+    vin: vehicule.vin ?? "",
+    clientNom: vehicule.clientNom ?? "",
+    clientTelephone: vehicule.clientTelephone ?? "",
+    statut: vehicule.statut,
+    motif: vehicule.motif ?? "",
+    longueur: vehicule.longueur != null ? String(vehicule.longueur) : "",
+    largeur: vehicule.largeur != null ? String(vehicule.largeur) : "",
+    hauteur: vehicule.hauteur != null ? String(vehicule.hauteur) : "",
+    poids: vehicule.poids != null ? String(vehicule.poids) : "",
+    dimensionsEstimees: vehicule.dimensionsEstimees === true,
+    provenance: vehicule.provenance ?? "",
+    notes: vehicule.notes ?? "",
+    photos: (vehicule.photos ?? []).map((p) => ({ url: p.url, categorie: p.categorie ?? "AUTRE" })),
+    dateEntree: toDateInput(vehicule.dateEntree),
+    dateDevis: toDateInput(vehicule.dateDevis),
+    dateCommande: toDateInput(vehicule.dateCommande),
+    dateFinTravaux: toDateInput(vehicule.dateFinTravaux),
+    dateDerniereRelance: toDateInput(vehicule.dateDerniereRelance),
+  });
   const [faceChoisie, setFaceChoisie] = useState<string>(PHOTO_CATEGORIES[0]);
   const [cameraOuverte, setCameraOuverte] = useState(false);
   const [confirmerAbandon, setConfirmerAbandon] = useState(false);
@@ -122,16 +117,6 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
   const saisieNativeRef = useRef<HTMLInputElement | null>(null);
   const utils = api.useUtils();
 
-  const create = api.garage.create.useMutation({
-    onSuccess: () => {
-      utils.garage.overview.invalidate();
-      utils.garage.vehicles.invalidate();
-      utils.garage.plan.invalidate();
-      toast.success("Véhicule créé au registre");
-      onClose();
-    },
-    onError: (e) => toast.error(e.message),
-  });
   const update = api.garage.update.useMutation({
     onSuccess: () => {
       utils.garage.overview.invalidate();
@@ -146,44 +131,37 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    if (isEdit && vehicule) {
-      const initial: FormState = {
-        numRegistre: String(vehicule.numRegistre),
-        marque: vehicule.marque ?? "",
-        modele: vehicule.modele ?? "",
-        version: vehicule.version ?? "",
-        couleur: vehicule.couleur ?? "",
-        immatriculation: vehicule.immatriculation ?? "",
-        vin: vehicule.vin ?? "",
-        clientNom: vehicule.clientNom ?? "",
-        clientTelephone: vehicule.clientTelephone ?? "",
-        statut: vehicule.statut,
-        motif: vehicule.motif ?? "",
-        longueur: vehicule.longueur != null ? String(vehicule.longueur) : "",
-        largeur: vehicule.largeur != null ? String(vehicule.largeur) : "",
-        hauteur: vehicule.hauteur != null ? String(vehicule.hauteur) : "",
-        poids: vehicule.poids != null ? String(vehicule.poids) : "",
-        dimensionsEstimees: vehicule.dimensionsEstimees === true,
-        provenance: vehicule.provenance ?? "",
-        notes: vehicule.notes ?? "",
-        photos: (vehicule.photos ?? []).map((p) => ({ url: p.url, categorie: p.categorie ?? "AUTRE" })),
-        dateEntree: toDateInput(vehicule.dateEntree),
-        dateDevis: toDateInput(vehicule.dateDevis),
-        dateCommande: toDateInput(vehicule.dateCommande),
-        dateFinTravaux: toDateInput(vehicule.dateFinTravaux),
-        dateDerniereRelance: toDateInput(vehicule.dateDerniereRelance),
-      };
-      setForm(initial);
-      // Reference pour detecter une saisie non enregistree avant fermeture.
-      snapshotRef.current = JSON.stringify(initial);
-    } else {
-      setForm(emptyForm);
-      snapshotRef.current = JSON.stringify(emptyForm);
-    }
+    const initial: FormState = {
+      marque: vehicule.marque ?? "",
+      modele: vehicule.modele ?? "",
+      version: vehicule.version ?? "",
+      couleur: vehicule.couleur ?? "",
+      immatriculation: vehicule.immatriculation ?? "",
+      vin: vehicule.vin ?? "",
+      clientNom: vehicule.clientNom ?? "",
+      clientTelephone: vehicule.clientTelephone ?? "",
+      statut: vehicule.statut,
+      motif: vehicule.motif ?? "",
+      longueur: vehicule.longueur != null ? String(vehicule.longueur) : "",
+      largeur: vehicule.largeur != null ? String(vehicule.largeur) : "",
+      hauteur: vehicule.hauteur != null ? String(vehicule.hauteur) : "",
+      poids: vehicule.poids != null ? String(vehicule.poids) : "",
+      dimensionsEstimees: vehicule.dimensionsEstimees === true,
+      provenance: vehicule.provenance ?? "",
+      notes: vehicule.notes ?? "",
+      photos: (vehicule.photos ?? []).map((p) => ({ url: p.url, categorie: p.categorie ?? "AUTRE" })),
+      dateEntree: toDateInput(vehicule.dateEntree),
+      dateDevis: toDateInput(vehicule.dateDevis),
+      dateCommande: toDateInput(vehicule.dateCommande),
+      dateFinTravaux: toDateInput(vehicule.dateFinTravaux),
+      dateDerniereRelance: toDateInput(vehicule.dateDerniereRelance),
+    };
+    setForm(initial);
+    snapshotRef.current = JSON.stringify(initial);
     setConfirmerAbandon(false);
-  }, [open, isEdit, vehicule]);
+  }, [open, vehicule]);
 
-  const isPending = create.isPending || update.isPending;
+  const isPending = update.isPending;
 
   const modifie = JSON.stringify(form) !== snapshotRef.current;
 
@@ -198,12 +176,6 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
   }
 
   const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
-
-  function numOrUndef(s: string): number | undefined {
-    if (!s.trim()) return undefined;
-    const n = Number(s);
-    return Number.isFinite(n) && n > 0 ? n : undefined;
-  }
 
   function numOrNull(s: string): number | null {
     if (!s.trim()) return null;
@@ -301,55 +273,30 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (isEdit && vehicule) {
-      update.mutate({
-        id: vehicule.id,
-        marque: form.marque || null,
-        modele: form.modele || null,
-        version: form.version || null,
-        couleur: form.couleur || null,
-        immatriculation: form.immatriculation || null,
-        vin: form.vin || null,
-        clientNom: form.clientNom || null,
-        clientTelephone: form.clientTelephone || null,
-        statut: form.statut as never,
-        motif: form.motif || null,
-        notes: form.notes || null,
-        photos: form.photos.map(({ url, categorie }) => ({ url, categorie })),
-        longueur: numOrNull(form.longueur),
-        largeur: numOrNull(form.largeur),
-        hauteur: numOrNull(form.hauteur),
-        poids: numOrNull(form.poids),
-        provenance: form.provenance || null,
-        dateEntree: dateOrNull(form.dateEntree),
-        dateDevis: dateOrNull(form.dateDevis),
-        dateCommande: dateOrNull(form.dateCommande),
-        dateFinTravaux: dateOrNull(form.dateFinTravaux),
-        dateDerniereRelance: dateOrNull(form.dateDerniereRelance),
-      });
-      return;
-    }
-
-    create.mutate({
-      numRegistre: form.numRegistre.trim() ? Number(form.numRegistre) : undefined,
-      marque: form.marque || undefined,
-      modele: form.modele || undefined,
-      version: form.version || undefined,
-      couleur: form.couleur || undefined,
-      immatriculation: form.immatriculation || undefined,
-      vin: form.vin || undefined,
-      clientNom: form.clientNom || undefined,
-      clientTelephone: form.clientTelephone || undefined,
-      statut: (form.statut === "SORTI" ? "EN_PARKING" : form.statut) as never,
-      motif: form.motif || undefined,
-      longueur: numOrUndef(form.longueur),
-      largeur: numOrUndef(form.largeur),
-      hauteur: numOrUndef(form.hauteur),
-      poids: numOrUndef(form.poids),
-      dimensionsEstimees: form.dimensionsEstimees || numOrUndef(form.longueur) != null || numOrUndef(form.largeur) != null,
-      provenance: form.provenance || undefined,
-      notes: form.notes || undefined,
+    update.mutate({
+      id: vehicule.id,
+      marque: form.marque || null,
+      modele: form.modele || null,
+      version: form.version || null,
+      couleur: form.couleur || null,
+      immatriculation: form.immatriculation || null,
+      vin: form.vin || null,
+      clientNom: form.clientNom || null,
+      clientTelephone: form.clientTelephone || null,
+      statut: form.statut as never,
+      motif: form.motif || null,
+      notes: form.notes || null,
       photos: form.photos.map(({ url, categorie }) => ({ url, categorie })),
+      longueur: numOrNull(form.longueur),
+      largeur: numOrNull(form.largeur),
+      hauteur: numOrNull(form.hauteur),
+      poids: numOrNull(form.poids),
+      provenance: form.provenance || null,
+      dateEntree: dateOrNull(form.dateEntree),
+      dateDevis: dateOrNull(form.dateDevis),
+      dateCommande: dateOrNull(form.dateCommande),
+      dateFinTravaux: dateOrNull(form.dateFinTravaux),
+      dateDerniereRelance: dateOrNull(form.dateDerniereRelance),
     });
   }
 
@@ -361,23 +308,11 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
 <Dialog open={open} onOpenChange={(o) => { if (!o) demanderFermeture(); }} className="max-w-2xl">
       <div className="p-6">
         <DialogTitle className="mb-5">
-          {isEdit ? `Modifier le véhicule n°${vehicule?.numRegistre ?? ""}` : "Nouveau véhicule (registre GPJ)"}
+          Modifier le véhicule n°{vehicule.numRegistre}
         </DialogTitle>
 
         <form onSubmit={submit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-            {!isEdit && (
-              <div className="space-y-1.5">
-                <Label>N° registre</Label>
-                <Input
-                  type="number"
-                  value={form.numRegistre}
-                  onChange={(e) => set({ numRegistre: e.target.value })}
-                  placeholder="Auto si vide"
-                  className="text-sm"
-                />
-              </div>
-            )}
             <div className="space-y-1.5">
               <Label>Marque</Label>
               <Input value={form.marque} onChange={(e) => set({ marque: e.target.value })} placeholder="Ex: Toyota" maxLength={100} />
@@ -420,7 +355,7 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
             <select
               value={form.statut}
               onChange={(e) => set({ statut: e.target.value })}
-              disabled={isEdit && form.statut === "SORTI"}
+              disabled={form.statut === "SORTI"}
               className={inputCls}
             >
               {STATUTS_VEHICULE_OPTIONS.map((s) => (
@@ -556,8 +491,7 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
             )}
           </div>
 
-          {isEdit && (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">
                 <Label>Date d'entrée</Label>
                 <Input type="date" value={form.dateEntree} onChange={(e) => set({ dateEntree: e.target.value })} className="text-sm" />
@@ -579,7 +513,6 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
                 <Input type="date" value={form.dateDerniereRelance} onChange={(e) => set({ dateDerniereRelance: e.target.value })} className="text-sm" />
               </div>
             </div>
-          )}
 
           <div className="flex justify-end gap-3 pt-2">
             <Button type="button" variant="outline" onClick={demanderFermeture}>Annuler</Button>
@@ -587,10 +520,10 @@ export function VehiculeFormDialog({ open, vehicule, onClose }: Props) {
               {isPending ? (
                 <span className="flex items-center gap-2">
                   <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-foreground/30 border-t-foreground" />
-                  {isEdit ? "Modification..." : "Création..."}
+                  Modification...
                 </span>
               ) : (
-                isEdit ? "Enregistrer" : "Créer au registre"
+                "Enregistrer"
               )}
             </Button>
           </div>

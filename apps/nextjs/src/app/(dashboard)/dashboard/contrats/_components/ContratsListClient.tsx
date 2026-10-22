@@ -70,9 +70,12 @@ export function ContratsListClient() {
   const [grp, setGrp] = useState(EMPTY_GRP);
 
   const { data, isLoading } = api.contrats.list.useQuery({ search: search || undefined, statut: statutFilter || undefined, limit: 100 });
-  const { data: clientsData } = api.clients.list.useQuery({ typeClient: "ENTR", statut: "ACTIF", limit: 100 });
-  const { data: clientsAdmin } = api.clients.list.useQuery({ typeClient: "ADMIN", statut: "ACTIF", limit: 100 });
-  const { data: clientsFlotte } = api.clients.list.useQuery({ typeClient: "FLOTTE", statut: "ACTIF", limit: 100 });
+  // Les fiches issues du parking sont PROVISOIRE : les filtrer sur ACTIF
+  // vidait le sélecteur de contrat alors qu'elles sont la majorité du parc.
+  // On garde ACTIF et PROVISOIRE, jamais ARCHIVE/BLOQUE.
+  const { data: clientsData } = api.clients.list.useQuery({ typeClient: "ENTR", limit: 200 });
+  const { data: clientsAdmin } = api.clients.list.useQuery({ typeClient: "ADMIN", limit: 200 });
+  const { data: clientsFlotte } = api.clients.list.useQuery({ typeClient: "FLOTTE", limit: 200 });
 
   const create = api.contrats.create.useMutation({
     onSuccess: (r) => {
@@ -108,7 +111,11 @@ export function ContratsListClient() {
   });
 
   const contrats = (data?.contrats ?? []) as any[];
-  const eligible = [...((clientsData?.clients ?? []) as any[]), ...((clientsAdmin?.clients ?? []) as any[]), ...((clientsFlotte?.clients ?? []) as any[])];
+  const eligible = [
+    ...((clientsData?.clients ?? []) as any[]),
+    ...((clientsAdmin?.clients ?? []) as any[]),
+    ...((clientsFlotte?.clients ?? []) as any[]),
+  ].filter((cl) => cl.statut === "ACTIF" || cl.statut === "PROVISOIRE");
   const canModifier = hasPermission("contrats.modifier") || hasPermission("contrats.creer");
 
   const submit = () => {
@@ -285,9 +292,14 @@ export function ContratsListClient() {
                 <Label className="text-xs text-muted-foreground">Client (entreprise / administration / flotte) *</Label>
                 <select value={form.clientId} onChange={(e) => setForm({ ...form, clientId: Number(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
                   <option value={0}>Sélectionner…</option>
-                  {eligible.map((cl: any) => <option key={cl.id} value={cl.id}>{cl.raisonSociale ?? `${cl.prenom ?? ""} ${cl.nom}`}</option>)}
+                  {eligible.map((cl: any) => (
+                    <option key={cl.id} value={cl.id}>
+                      {cl.raisonSociale ?? `${cl.prenom ?? ""} ${cl.nom}`}
+                      {cl.statut === "PROVISOIRE" ? " (provisoire)" : ""}
+                    </option>
+                  ))}
                 </select>
-                {eligible.length === 0 && <p className="mt-1 text-[11px] text-warning-foreground">Créez d'abord un client Entreprise/Administration/Flotte actif.</p>}
+                {eligible.length === 0 && <p className="mt-1 text-[11px] text-warning-foreground">Créez d'abord un client Entreprise/Administration/Flotte actif ou provisoire.</p>}
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground">Libellé *</Label>

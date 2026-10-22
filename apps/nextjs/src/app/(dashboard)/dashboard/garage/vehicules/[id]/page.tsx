@@ -54,6 +54,7 @@ import { VehiculeFormDialog, type VehiculeFormModel } from "../../_components/Ve
 import { PhotoLightbox } from "../../_components/PhotoLightbox";
 import { vehiculeVersFormModel } from "../../_components/vehicule-form-model";
 import { ExportVehiculesDialog } from "../../_components/ExportVehiculesDialog";
+import { STATUT_LABELS as VEH_STATUT_LABELS, STATUT_STYLE as VEH_STATUT_STYLE } from "~/server/lib/vehicule-service";
 
 export default function GarageVehiculeFichePage() {
   const { id } = useParams<{ id: string }>();
@@ -316,6 +317,7 @@ export default function GarageVehiculeFichePage() {
     { label: "Couleur", value: v.couleur ?? "—" },
     { label: "VIN", value: v.vin ?? "—" },
     { label: "Client", value: v.clientNom ?? "—" },
+    { label: "Statut client", value: v.clientStatut === "PROVISOIRE" ? "Provisoire (à confirmer)" : v.clientStatut ?? "—" },
     { label: "Téléphone", value: v.clientTelephone ?? "—" },
     { label: "Motif", value: v.motif ?? "—" },
     { label: "Date d'entrée", value: formatDate(v.dateEntree) },
@@ -414,9 +416,14 @@ export default function GarageVehiculeFichePage() {
               <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs text-foreground print-hidden">{v.immatriculation}</span>
             )}
             <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium print-alerte-badge print-alerte-${v.statut} ${STATUTS_VEHICULE_COLORS[v.statut] ?? "bg-muted text-muted-foreground"}`}>
+              <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium print-alerte-badge print-alerte-${v.statut} ${STATUTS_VEHICULE_COLORS[v.statut] ?? "bg-muted text-muted-foreground"}`} title="Statut parking">
                 {STATUTS_VEHICULE_LABELS[v.statut] ?? v.statut}
               </span>
+              {v.statutCanonique && (
+                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${VEH_STATUT_STYLE[v.statutCanonique] ?? "bg-muted text-muted-foreground"}`} title="Statut atelier (fiche véhicule)">
+                  Atelier : {VEH_STATUT_LABELS[v.statutCanonique] ?? v.statutCanonique}
+                </span>
+              )}
               {v.zoneId != null && v.centreX != null ? (
                 <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
                   <MapPin size={12} /> Positionné sur la carte
@@ -722,7 +729,9 @@ export default function GarageVehiculeFichePage() {
         lignesVisibles={1}
       />
 
-      <VehiculeFormDialog open={editing !== null} vehicule={editing} onClose={() => setEditing(null)} />
+      {editing && (
+        <VehiculeFormDialog open vehicule={editing} onClose={() => setEditing(null)} />
+      )}
 
       <ConfirmationDialog
         isOpen={confirmSortie}

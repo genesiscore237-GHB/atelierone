@@ -18,24 +18,35 @@ import {
   UserPlus,
   Users,
   Wallet,
-  ChevronRight,
+  Wrench,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { usePermissions } from "~/hooks/usePermissions";
+import { STATUT_LABELS as VEH_STATUT_LABELS, STATUT_STYLE as VEH_STATUT_STYLE } from "~/server/lib/vehicule-service";
 import { ActivitesClient } from "./ActivitesClient";
 
 const TYPE_LABELS: Record<string, string> = {
   PART: "Particulier", ENTR: "Entreprise", ADMIN: "Administration", ASSUR: "Assurance", FLOTTE: "Flotte", PROSP: "Prospect",
 };
 const STATUT_STYLE: Record<string, string> = {
+  PROVISOIRE: "bg-warning/10 text-warning-foreground",
   ACTIF: "bg-success/10 text-success-foreground",
   PROSPECT: "bg-sky-500/10 text-sky-400",
   INACTIF: "bg-muted text-muted-foreground",
   BLOQUE: "bg-destructive/10 text-destructive",
   ARCHIVE: "bg-muted text-muted-foreground line-through",
+};
+
+const STATUT_LABELS: Record<string, string> = {
+  PROVISOIRE: "Provisoire",
+  ACTIF: "Actif",
+  PROSPECT: "Prospect",
+  INACTIF: "Inactif",
+  BLOQUE: "Bloqué",
+  ARCHIVE: "Archivé",
 };
 
 const TABS = [
@@ -102,7 +113,7 @@ export function CustomerDetail({ id }: { id: string }) {
   const contacts = (data.contacts ?? []) as any[];
   const adresses = (data.adresses ?? []) as any[];
   const contrats = (data.contrats ?? []) as any[];
-  const vehicules = (data.vehiculesClient ?? []) as any[];
+  const vehicules = ((data as any).vehiculesCanoniques ?? data.vehiculesClient ?? []) as any[];
   const interactions = (data.interactions ?? []) as any[];
   const historique = (data.historique ?? []) as any[];
   const solde = Number(data.solde ?? 0);
@@ -128,10 +139,26 @@ export function CustomerDetail({ id }: { id: string }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`inline-block rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${STATUT_STYLE[c.statut] ?? ""}`}>{c.statut}</span>
+          <span className={`inline-block rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${STATUT_STYLE[c.statut] ?? ""}`}>
+            {STATUT_LABELS[c.statut] ?? c.statut}
+          </span>
           <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2.5 py-1 text-[10px] font-bold text-warning-foreground">
             <Wallet size={11} /> Solde : {fmtFCFA(solde)} F
           </span>
+          {canModifier && c.statut === "PROVISOIRE" && (
+            <Button size="sm" className="gap-1.5" onClick={() => changerStatut.mutate({ id: c.id, nouveauStatut: "ACTIF", motif: "Validation de la fiche provisoire" })}>
+              <Check size={13} /> Valider la fiche
+            </Button>
+          )}
+          {hasPermission("or.modifier") && (
+            <Link
+              href="/dashboard/atelier/reception"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-accent"
+              title="Créer un ordre de réparation depuis la réception atelier"
+            >
+              <Wrench size={13} /> Nouvelle réception
+            </Link>
+          )}
           {canModifier && c.statut === "ACTIF" && (
             <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirmStatut({ vers: "BLOQUE" })}>
               <Lock size={13} /> Bloquer
@@ -297,18 +324,46 @@ export function CustomerDetail({ id }: { id: string }) {
           <div className="space-y-2">
             {vehicules.length === 0 && <p className="text-sm text-muted-foreground">Aucun véhicule lié.</p>}
             {vehicules.map((v: any) => (
-              <Link
+              <div
                 key={v.id}
-                href={`/dashboard/vehicules/${v.id}`}
-                className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm transition-colors hover:border-primary/50 hover:bg-accent"
-                title="Voir la fiche 360° du véhicule"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm transition-colors hover:border-primary/50 hover:bg-accent"
               >
-                <span className="font-mono font-semibold">{v.immatriculation}</span>
-                <span className="flex items-center gap-2 text-muted-foreground">
-                  {v.marque} {v.modele}{v.annee ? ` · ${v.annee}` : ""}
-                  <ChevronRight size={14} />
-                </span>
-              </Link>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link href={`/dashboard/vehicules/${v.id}`} className="font-mono font-semibold hover:text-primary" title="Voir la fiche 360° du véhicule">
+                      {v.immatriculation ?? "Sans plaque"}
+                    </Link>
+                    {v.statutImmobilisation && (
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${VEH_STATUT_STYLE[v.statutImmobilisation] ?? "bg-muted text-muted-foreground"}`}>
+                        {VEH_STATUT_LABELS[v.statutImmobilisation] ?? v.statutImmobilisation}
+                      </span>
+                    )}
+                    {v.orEnCours && (
+                      <Link href={`/dashboard/ordres-reparation/${v.orEnCours.id}`} className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase text-primary hover:bg-primary/20">
+                        OR {v.orEnCours.numero}
+                      </Link>
+                    )}
+                  </div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {v.marque} {v.modele}{v.version ? ` · ${v.version}` : ""}{v.annee ? ` · ${v.annee}` : ""}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  {v.position ? (
+                    <Link
+                      href={v.parkingRowId ? `/dashboard/garage/vehicules/${v.parkingRowId}` : "/dashboard/garage/vehicules"}
+                      className="inline-flex items-center gap-1 hover:text-primary"
+                      title="Voir la fiche parking"
+                    >
+                      <MapPin size={12} />
+                      {[v.position.siteNom, v.position.zoneNom, v.position.spotCode].filter(Boolean).join(" · ") || `N° ${v.position.numRegistre ?? "—"}`}
+                    </Link>
+                  ) : (
+                    <span>Non positionné</span>
+                  )}
+                  <Link href={`/dashboard/vehicules/${v.id}`} className="font-semibold text-primary hover:underline">Fiche</Link>
+                </div>
+              </div>
             ))}
           </div>
         )}

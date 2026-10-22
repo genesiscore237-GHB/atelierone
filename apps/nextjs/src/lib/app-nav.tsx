@@ -322,7 +322,7 @@ export const DOMAINS: AppDomain[] = [
     color: "text-[var(--module-customers)]",
     bg: "bg-[var(--module-customers-bg)]",
     desc: "Fiches clients et contrats de maintenance flotte",
-    href: "/dashboard/clients",
+    href: "/dashboard/customers",
     modules: [
       {
         id: "clients-fiches",

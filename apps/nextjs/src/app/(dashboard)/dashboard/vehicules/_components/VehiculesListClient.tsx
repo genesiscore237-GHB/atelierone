@@ -1,16 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { toast } from "sonner";
 import { api } from "~/trpc/react";
-import { Car, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Plus, Search } from "lucide-react";
+import { Car, ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
 import Link from "next/link";
-import { Button } from "~/components/ui/button";
+import { Button, buttonVariants } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { Label } from "~/components/ui/label";
 import { STATUT_STYLE } from "~/server/lib/vehicule-service";
 import { libelleTypeVehicule } from "~/server/lib/vehicule-service";
-import { FormulaireVehicule } from "~/components/vehicule/FormulaireVehicule";
 import { usePermissions } from "~/hooks/usePermissions";
 import { useDebounce } from "~/lib/useDebounce";
 import { PhotoLightbox } from "~/components/photos/PhotoLightbox";
@@ -19,34 +16,11 @@ import { useTempsReel } from "~/hooks/useTempsReel";
 
 const TAILLE_PAGE = 25;
 
-const EMPTY_FORM = {
-  immatriculation: "",
-  clientId: 0,
-  marque: "",
-  modele: "",
-  version: "",
-  annee: "",
-  couleur: "",
-  numeroChassis: "",
-  kilometrage: "",
-  carburant: "diesel",
-  typeVehicule: "voiture",
-  longueur: "",
-  largeur: "",
-  hauteur: "",
-  poids: "",
-  dimensionsEstimees: false,
-  notes: "",
-};
-
 export function VehiculesListClient() {
   const { hasPermission } = usePermissions();
-  const utils = api.useUtils();
   const [search, setSearch] = useState("");
   const [statutFilter, setStatutFilter] = useState("");
   const [page, setPage] = useState(0);
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
 
   const recherche = useDebounce(search);
   // Changer un filtre renvoie en première page : rester sur la page 7 d'un
@@ -65,27 +39,20 @@ export function VehiculesListClient() {
   const { data, isLoading, isError, error } = api.vehicules.listeCanonique.useQuery(filtres, {
     refetchInterval: intervalle,
   });
-  const { data: clientsData } = api.clients.list.useQuery({ statut: "ACTIF", limit: 200 });
-  const create = api.vehicules.create.useMutation({
-    onSuccess: (r: any) => {
-      if (r?.vehiculeReconcilie) {
-        toast.info(`Véhicule déjà connu (${r.immatriculation}) — fiche complétée, rien n'a été écrasé`);
-      } else {
-        toast.success("Véhicule créé (en réception)");
-      }
-      utils.vehicules.listeCanonique.invalidate();
-      setShowForm(false);
-      setForm(EMPTY_FORM);
-    },
-    onError: (e) => toast.error(e.message),
-  });
 
   const list = data?.vehicules ?? [];
   const total = data?.total ?? 0;
   const pageCourante = data?.page;
   const optionsStatut = data?.optionsStatut ?? [];
-  const clientsList = (clientsData?.clients ?? []) as any[];
-  const canCreer = hasPermission("vehicules.creer");
+  /**
+   * Une seule porte d'entrée pour créer un véhicule : la réception.
+   *
+   * L'écran atelier ne crée plus de fiche canonique isolée (ni de ligne
+   * parking) : il aurait fallu inventer un client, un OR et une position, et
+   * ces fiches incomplètes finissaient par diverger de la réception.
+   * La permission est celle de l'endpoint `or.receptionner`.
+   */
+  const canReceptionner = hasPermission("or.modifier");
 
   /**
    * Visionneuse — ouverte au clic sur une vignette.
@@ -120,32 +87,6 @@ export function VehiculesListClient() {
     return liste;
   })();
 
-  const submit = () => {
-    if (!form.immatriculation.trim()) {
-      toast.error("L'immatriculation est requise");
-      return;
-    }
-    create.mutate({
-      immatriculation: form.immatriculation.trim(),
-      clientId: form.clientId || undefined,
-      marque: form.marque || undefined,
-      modele: form.modele || undefined,
-      version: form.version || undefined,
-      annee: form.annee ? Number(form.annee) : undefined,
-      couleur: form.couleur || undefined,
-      numeroChassis: form.numeroChassis || undefined,
-      kilometrage: form.kilometrage ? Number(form.kilometrage) : undefined,
-      carburant: form.carburant as any,
-      typeVehicule: form.typeVehicule as any,
-      longueur: form.longueur ? Number(form.longueur) : undefined,
-      largeur: form.largeur ? Number(form.largeur) : undefined,
-      hauteur: form.hauteur ? Number(form.hauteur) : undefined,
-      poids: form.poids ? Number(form.poids) : undefined,
-      dimensionsEstimees: !!form.dimensionsEstimees,
-      notes: form.notes || undefined,
-    });
-  };
-
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -155,10 +96,10 @@ export function VehiculesListClient() {
             Chaque véhicule appartient à un client. Un ordre de réparation s'ouvre sur un véhicule — statuts d'immobilisation suivis de la réception à la sortie.
           </p>
         </div>
-        {canCreer && (
-          <Button onClick={() => setShowForm(true)} className="gap-2">
-            <Plus size={16} /> Nouveau véhicule
-          </Button>
+        {canReceptionner && (
+          <Link href="/dashboard/atelier/reception" className={buttonVariants({ className: "gap-2" })}>
+            <Plus size={16} /> Nouvelle réception
+          </Link>
         )}
       </div>
 
@@ -236,7 +177,7 @@ export function VehiculesListClient() {
                 <Car size={32} className="mx-auto mb-2 opacity-40" />
                 {recherche || statutFilter
                   ? "Aucun véhicule ne correspond à cette recherche."
-                  : "Aucun véhicule au parc. Enregistrez le premier véhicule."}
+                  : "Aucun véhicule au parc. Les fiches se créent depuis la réception atelier."}
               </td></tr>
             ) : (
               list.map((v) => (
@@ -285,7 +226,9 @@ export function VehiculesListClient() {
                       // corrompue : c'est un état métier normal.
                       <span className="text-xs italic text-muted-foreground">Sans plaque relevée</span>
                     )}
-                    <div className="text-xs text-muted-foreground">{v.marque} {v.modele}{v.annee ? ` · ${v.annee}` : ""}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {v.marque} {v.modele}{v.version ? ` · ${v.version}` : ""}{v.annee ? ` · ${v.annee}` : ""}
+                    </div>
                     {v.orEnCours && (
                       <Link
                         href={`/dashboard/ordres-reparation/${v.orEnCours.id}`}
@@ -300,7 +243,14 @@ export function VehiculesListClient() {
                       {libelleTypeVehicule(v.typeVehicule)}
                     </span>
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-muted-foreground">{v.clientNom ?? "—"}</td>
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                    <span>{v.clientNom ?? "—"}</span>
+                    {v.clientStatut === "PROVISOIRE" && (
+                      <span className="ml-1 rounded-full bg-warning/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-warning-foreground" title="Fiche créée depuis le parking, à confirmer en réception">
+                        Provisoire
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">
                     {v.position
                       ? [v.position.siteNom, v.position.zoneNom, v.position.spotCode].filter(Boolean).join(" · ") || `N° ${v.position.numRegistre}`
@@ -355,47 +305,6 @@ export function VehiculesListClient() {
         onClose={() => setPhotoDe(null)}
         nomFichierBase={photoDe?.label || "vehicule"}
       />
-
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4" onClick={() => setShowForm(false)}>
-          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-background p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
-                <Car size={18} className="text-primary" /> Nouveau véhicule
-              </h2>
-              <button onClick={() => setShowForm(false)} className="rounded-lg p-1.5 hover:bg-accent">✕</button>
-            </div>
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-xs text-muted-foreground">Propriétaire (client)</Label>
-                  <select value={form.clientId} onChange={(e) => setForm({ ...form, clientId: Number(e.target.value) })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                    <option value={0}>— Aucun —</option>
-                    {clientsList.map((cl: any) => (
-                      <option key={cl.id} value={cl.id}>{cl.raisonSociale ?? `${cl.prenom ?? ""} ${cl.nom}`}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              {/* LOT U0b — fiche VÉHICULE partagées avec la réception : une
-                  seule définition des champs, donc plus de divergence possible
-                  entre les deux points de saisie. */}
-              <FormulaireVehicule
-                value={form}
-                onChange={(champ, valeur) => setForm({ ...form, [champ]: valeur })}
-                avecDimensions
-              />
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowForm(false)}>Annuler</Button>
-              <Button onClick={submit} disabled={create.isPending} className="gap-2">
-                {create.isPending ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 size={15} />}
-                Créer le véhicule
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

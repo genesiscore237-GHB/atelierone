@@ -22,6 +22,8 @@ import {
   utilisateurs,
   auditLogs,
   ordresReparation,
+  vehicules,
+  clients,
   type ParkingGeometry,
 } from "@atelierone/db";
 import {
@@ -464,6 +466,10 @@ spots: spots.map((s) => {
         conditions.push(
           sql`(lower(${parkingVehicles.marque}) like ${q} or lower(${parkingVehicles.modele}) like ${q}
             or lower(${parkingVehicles.immatriculation}) like ${q} or lower(${parkingVehicles.clientNom}) like ${q}
+            or lower(${vehicules.marque}) like ${q} or lower(${vehicules.modele}) like ${q}
+            or lower(${vehicules.immatriculation}) like ${q}
+            or lower(${clients.nom}) like ${q} or lower(${clients.prenom}) like ${q}
+            or lower(${clients.raisonSociale}) like ${q}
             or ${parkingVehicles.numRegistre}::text like ${q} or ${parkingVehicles.numRegistre}::text = ${input.search.trim()})`,
         );
       }
@@ -475,6 +481,7 @@ spots: spots.map((s) => {
       const rows = await db
         .select({
           id: parkingVehicles.id,
+          vehiculeId: parkingVehicles.vehiculeId,
           numRegistre: parkingVehicles.numRegistre,
           marque: parkingVehicles.marque,
           modele: parkingVehicles.modele,
@@ -484,6 +491,17 @@ spots: spots.map((s) => {
           clientNom: parkingVehicles.clientNom,
           clientTelephone: parkingVehicles.clientTelephone,
           statut: parkingVehicles.statut,
+          statutCanonique: vehicules.statutImmobilisation,
+          marqueCanonique: vehicules.marque,
+          modeleCanonique: vehicules.modele,
+          versionCanonique: vehicules.version,
+          couleurCanonique: vehicules.couleur,
+          immatriculationCanonique: vehicules.immatriculation,
+          clientCanoniqueNom: clients.nom,
+          clientCanoniquePrenom: clients.prenom,
+          clientCanoniqueRaisonSociale: clients.raisonSociale,
+          clientCanoniqueTelephone: clients.telephone,
+          clientCanoniqueStatut: clients.statut,
           motif: parkingVehicles.motif,
           siteId: parkingVehicles.siteId,
           zoneId: parkingVehicles.zoneId,
@@ -510,9 +528,21 @@ spots: spots.map((s) => {
         .leftJoin(parkingSites, eq(parkingVehicles.siteId, parkingSites.id))
         .leftJoin(parkingZones, eq(parkingVehicles.zoneId, parkingZones.id))
         .leftJoin(parkingSpots, eq(parkingVehicles.spotId, parkingSpots.id))
+        // Le parking ne doit pas réinventer l'identité ni le client : il
+        // affiche la fiche canonique quand elle existe, et retombe sur ses
+        // colonnes historiques pour les lignes sans plaque.
+        .leftJoin(vehicules, eq(vehicules.id, parkingVehicles.vehiculeId))
+        .leftJoin(clients, eq(clients.id, vehicules.clientId))
         .where(and(...conditions))
         .orderBy(asc(parkingVehicles.numRegistre))
         .limit(input.limit);
+
+      const [totalRow] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(parkingVehicles)
+        .leftJoin(vehicules, eq(vehicules.id, parkingVehicles.vehiculeId))
+        .leftJoin(clients, eq(clients.id, vehicules.clientId))
+        .where(and(...conditions));
 
       const [alertes] = await Promise.all([
         db
@@ -538,18 +568,30 @@ spots: spots.map((s) => {
       }
 
       return {
-        total: rows.length,
-        vehicules: rows.map((v) => ({
+        total: totalRow?.n ?? rows.length,
+        vehicules: rows.map((v) => {
+          const clientCanoniqueNom =
+            v.clientCanoniqueRaisonSociale?.trim() ||
+            [v.clientCanoniquePrenom, v.clientCanoniqueNom]
+              .map((x) => x?.trim() || "")
+              .filter(Boolean)
+              .join(" ") ||
+            null;
+
+          return {
           id: v.id,
+          vehiculeId: v.vehiculeId,
           numRegistre: v.numRegistre,
-          marque: v.marque,
-          modele: v.modele,
-          version: v.version,
-          couleur: v.couleur,
-          immatriculation: v.immatriculation,
-          clientNom: v.clientNom,
-          clientTelephone: v.clientTelephone,
+          marque: v.marqueCanonique?.trim() || v.marque,
+          modele: v.modeleCanonique?.trim() || v.modele,
+          version: v.versionCanonique?.trim() || v.version,
+          couleur: v.couleurCanonique?.trim() || v.couleur,
+          immatriculation: v.immatriculationCanonique?.trim() || v.immatriculation,
+          clientNom: clientCanoniqueNom ?? v.clientNom,
+          clientTelephone: v.clientCanoniqueTelephone ?? v.clientTelephone,
+          clientStatut: v.clientCanoniqueStatut ?? null,
           statut: v.statut,
+          statutCanonique: v.statutCanonique ?? null,
           motif: v.motif,
           siteId: v.siteId,
           zoneId: v.zoneId,
@@ -570,7 +612,8 @@ spots: spots.map((s) => {
               }
             : null,
           alertes: alertesParVehicle.get(v.id) ?? [],
-        })),
+          };
+        }),
       };
     }),
 
@@ -586,12 +629,20 @@ spots: spots.map((s) => {
           zone: parkingZones.nom,
           spot: parkingSpots.code,
           agenceNom: agences.nom,
+          statutCanonique: vehicules.statutImmobilisation,
+          clientCanoniqueNom: clients.nom,
+          clientCanoniquePrenom: clients.prenom,
+          clientCanoniqueRaisonSociale: clients.raisonSociale,
+          clientCanoniqueTelephone: clients.telephone,
+          clientCanoniqueStatut: clients.statut,
         })
         .from(parkingVehicles)
         .leftJoin(parkingSites, eq(parkingSites.id, parkingVehicles.siteId))
         .leftJoin(parkingZones, eq(parkingZones.id, parkingVehicles.zoneId))
         .leftJoin(parkingSpots, eq(parkingSpots.id, parkingVehicles.spotId))
         .leftJoin(agences, eq(agences.id, parkingVehicles.agenceId))
+        .leftJoin(vehicules, eq(vehicules.id, parkingVehicles.vehiculeId))
+        .leftJoin(clients, eq(clients.id, vehicules.clientId))
         .where(and(eq(parkingVehicles.id, input.id), eq(parkingVehicles.agenceId, ctx.user.agenceId)))
         .limit(1);
       if (!v) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
@@ -635,9 +686,30 @@ spots: spots.map((s) => {
         atelier = { ors: orsAtelier };
       }
 
+      const {
+        statutCanonique,
+        clientCanoniqueNom,
+        clientCanoniquePrenom,
+        clientCanoniqueRaisonSociale,
+        clientCanoniqueTelephone,
+        clientCanoniqueStatut,
+        ...vehiculeParking
+      } = v;
+      const nomClientCanonique =
+        clientCanoniqueRaisonSociale?.trim() ||
+        [clientCanoniquePrenom, clientCanoniqueNom]
+          .map((x) => x?.trim() || "")
+          .filter(Boolean)
+          .join(" ") ||
+        null;
+
       return {
         vehicule: {
-          ...v,
+          ...vehiculeParking,
+          clientNom: nomClientCanonique ?? v.clientNom,
+          clientTelephone: clientCanoniqueTelephone ?? v.clientTelephone,
+          clientStatut: clientCanoniqueStatut ?? null,
+          statutCanonique: statutCanonique ?? null,
           alertes,
           hasAlertes: alertes.length > 0,
         },

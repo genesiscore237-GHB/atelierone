@@ -58,7 +58,7 @@ import { and, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 const POSITION_PARKING_RECENT = sql`
   LEFT JOIN LATERAL (
     SELECT pv.id, pv.num_registre, pv.statut, pv.centre_x, pv.centre_y,
-           pv.date_entree, pv.immatriculation, pv.photo_presente, pv.photos,
+           pv.site_id, pv.date_entree, pv.immatriculation, pv.photo_presente, pv.photos,
            ps.nom  AS site_nom,
            pz.nom  AS zone_nom,
            psp.code AS spot_code
@@ -99,6 +99,7 @@ export type LigneCanonique = {
   clientId: number | null;
   clientNom: string | null;
   clientTelephone: string | null;
+  clientStatut: string | null;
 
   position: {
     numRegistre: number | null;
@@ -188,6 +189,7 @@ function conditionSearch(search: string): SQL | undefined {
     ilike(sql`v.modele`, motif),
     ilike(sql`v.version`, motif),
     ilike(sql`c.nom`, motif),
+    ilike(sql`c.prenom`, motif),
     ilike(sql`c.raison_sociale`, motif),
     ilike(sql`pos.num_registre::text`, motif),
     ilike(sql`pos.immatriculation`, motif),
@@ -230,6 +232,11 @@ function versLigne(r: Record<string, unknown>): LigneCanonique {
   const aUnePosition = r.pos_id != null;
   const nbPhotos = Number(r.nb_photos ?? 0);
   const photoUrl = (r.photo_url ?? null) as string | null;
+  const raisonSociale = ((r.client_raison_sociale ?? null) as string | null)?.trim() || null;
+  const prenomNom = [r.client_prenom, r.client_nom]
+    .map((v) => ((v ?? null) as string | null)?.trim() || "")
+    .filter(Boolean)
+    .join(" ");
   return {
     id: r.id as number,
     immatriculation: (r.immatriculation ?? null) as string | null,
@@ -244,8 +251,9 @@ function versLigne(r: Record<string, unknown>): LigneCanonique {
     kilometrage: (r.kilometrage ?? null) as number | null,
     statutImmobilisation: (r.statut_immobilisation ?? null) as string | null,
     clientId: (r.client_id ?? null) as number | null,
-    clientNom: (r.client_nom ?? null) as string | null,
+    clientNom: raisonSociale || prenomNom || null,
     clientTelephone: (r.client_telephone ?? null) as string | null,
+    clientStatut: (r.client_statut ?? null) as string | null,
     position: aUnePosition
       ? {
           numRegistre,
@@ -280,7 +288,9 @@ const SELECT_COLONNES = sql`
   v.id, v.immatriculation, v.immat_norm, v.marque, v.modele, v.annee,
   v.couleur, v.version, v.numero_chassis, v.type_vehicule, v.kilometrage,
   v.statut_immobilisation, v.client_id,
-  c.nom AS client_nom, c.telephone AS client_telephone,
+  c.nom AS client_nom, c.prenom AS client_prenom,
+  c.raison_sociale AS client_raison_sociale, c.statut AS client_statut,
+  c.telephone AS client_telephone,
   pos.id AS pos_id, pos.num_registre, pos.statut AS statut_parking,
   pos.site_nom, pos.zone_nom, pos.spot_code, pos.date_entree,
   pos.photo_presente,

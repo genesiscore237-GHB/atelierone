@@ -292,6 +292,7 @@ techniciens: requirePermissionProcedure("vehicules.consulter")
           immatriculation: vehicules.immatriculation,
           marque: vehicules.marque,
           modele: vehicules.modele,
+          version: vehicules.version,
           annee: vehicules.annee,
           couleur: vehicules.couleur,
           numeroChassis: vehicules.numeroChassis,
@@ -300,11 +301,18 @@ techniciens: requirePermissionProcedure("vehicules.consulter")
           chauffeurNom: vehicules.chauffeurNom,
           chauffeurTelephone: vehicules.chauffeurTelephone,
           typeVehicule: vehicules.typeVehicule,
+          longueur: vehicules.longueur,
+          largeur: vehicules.largeur,
+          hauteur: vehicules.hauteur,
+          poids: vehicules.poids,
+          dimensionsEstimees: vehicules.dimensionsEstimees,
           statutImmobilisation: vehicules.statutImmobilisation,
           siteId: vehicules.siteId,
           emplacementId: vehicules.emplacementId,
           notes: vehicules.notes,
+          isActive: vehicules.isActive,
           createdAt: vehicules.createdAt,
+          updatedAt: vehicules.updatedAt,
         })
         .from(vehicules)
         .where(and(eq(vehicules.id, input.id), eq(vehicules.agenceId, ctx.user.agenceId)))
@@ -325,7 +333,7 @@ techniciens: requirePermissionProcedure("vehicules.consulter")
               telephoneSecondaire: clients.telephoneSecondaire,
             })
             .from(clients)
-            .where(eq(clients.id, vehicule.clientId))
+            .where(and(eq(clients.id, vehicule.clientId), eq(clients.agenceId, ctx.user.agenceId)))
             .limit(1)
         : [null];
 
@@ -569,7 +577,7 @@ venteId: ordresReparation.venteId,
         ? await db
             .select({ id: vehicules.id, immatriculation: vehicules.immatriculation, marque: vehicules.marque, modele: vehicules.modele, statutImmobilisation: vehicules.statutImmobilisation })
             .from(vehicules)
-            .where(and(eq(vehicules.clientId, vehicule.clientId), eq(vehicules.isActive, true), sql`${vehicules.id} != ${input.id}`))
+            .where(and(eq(vehicules.clientId, vehicule.clientId), eq(vehicules.agenceId, ctx.user.agenceId), eq(vehicules.isActive, true), sql`${vehicules.id} != ${input.id}`))
             .orderBy(desc(vehicules.createdAt))
             .limit(10)
         : [];

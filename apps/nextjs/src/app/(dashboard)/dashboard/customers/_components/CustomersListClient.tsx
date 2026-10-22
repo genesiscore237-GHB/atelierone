@@ -31,11 +31,21 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const STATUT_STYLE: Record<string, string> = {
+  PROVISOIRE: "bg-warning/10 text-warning-foreground",
   ACTIF: "bg-success/10 text-success-foreground",
   PROSPECT: "bg-sky-500/10 text-sky-400",
   INACTIF: "bg-muted text-muted-foreground",
   BLOQUE: "bg-destructive/10 text-destructive",
   ARCHIVE: "bg-muted text-muted-foreground line-through",
+};
+
+const STATUT_LABELS: Record<string, string> = {
+  PROVISOIRE: "Provisoire",
+  ACTIF: "Actif",
+  PROSPECT: "Prospect",
+  INACTIF: "Inactif",
+  BLOQUE: "Bloqué",
+  ARCHIVE: "Archivé",
 };
 
 const EMPTY_FORM = {
@@ -71,7 +81,7 @@ export function CustomersListClient() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
 
-  const { data, isLoading } = api.clients.list.useQuery({
+  const { data, isLoading, isError, error, refetch } = api.clients.list.useQuery({
     search: search || undefined,
     typeClient: typeFilter || undefined,
     statut: statutFilter || undefined,
@@ -90,6 +100,7 @@ export function CustomersListClient() {
     onSuccess: (r) => {
       toast.success(`Statut mis à jour : ${r.statut}`);
       utils.clients.list.invalidate();
+      utils.clients.get.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -106,7 +117,10 @@ export function CustomersListClient() {
     return s;
   }, [list]);
 
+  const total = data?.total ?? list.length;
+
   const canModifier = hasPermission("clients.modifier") || hasPermission("clients.creer");
+  const canValider = hasPermission("clients.modifier");
 
   const submit = () => {
     const payload: Record<string, unknown> = {
@@ -152,9 +166,15 @@ export function CustomersListClient() {
         )}
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <Link href="/dashboard/customers" className="rounded-full bg-primary/10 px-3 py-1 font-semibold text-primary">Clients</Link>
+        <Link href="/dashboard/contrats" className="rounded-full bg-muted px-3 py-1 font-medium text-muted-foreground hover:text-foreground">Contrats flottes</Link>
+        <Link href="/dashboard/clients/doublons" className="rounded-full bg-muted px-3 py-1 font-medium text-muted-foreground hover:text-foreground">Doublons</Link>
+      </div>
+
       {list.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">{list.length} clients</span>
+          <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">{total} client{total > 1 ? "s" : ""}</span>
           {Object.entries(stats).map(([t, n]) => (
             <span key={t} className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
               {TYPE_LABELS[t] ?? t} : {n}
@@ -179,7 +199,9 @@ export function CustomersListClient() {
         </select>
         <select value={statutFilter} onChange={(e) => setStatutFilter(e.target.value)} className="h-10 rounded-lg border border-border bg-accent/30 px-3 text-sm text-foreground outline-none">
           <option value="">Tous les statuts</option>
-          {["ACTIF", "PROSPECT", "INACTIF", "BLOQUE", "ARCHIVE"].map((s) => <option key={s} value={s} className="bg-background">{s}</option>)}
+          {["PROVISOIRE", "ACTIF", "PROSPECT", "INACTIF", "BLOQUE", "ARCHIVE"].map((s) => (
+            <option key={s} value={s} className="bg-background">{STATUT_LABELS[s] ?? s}</option>
+          ))}
         </select>
       </div>
 
@@ -197,10 +219,17 @@ export function CustomersListClient() {
           <tbody className="divide-y divide-border/60">
             {isLoading ? (
               <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">Chargement…</td></tr>
+            ) : isError ? (
+              <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-destructive">
+                {error?.message ?? "Impossible de charger les clients."}
+                <button type="button" onClick={() => void refetch()} className="ml-2 font-semibold underline">Réessayer</button>
+              </td></tr>
             ) : list.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-12 text-center text-sm text-muted-foreground">
                 <Users size={32} className="mx-auto mb-2 opacity-40" />
-                Aucun client. Créez votre premier client en 1 minute.
+                {search || typeFilter || statutFilter
+                  ? "Aucun client ne correspond à ces critères."
+                  : "Aucun client. Créez votre premier client en 1 minute."}
               </td></tr>
             ) : (
               list.map((c) => (
@@ -222,11 +251,22 @@ export function CustomersListClient() {
                     {c.email && <span className="ml-2 truncate">{c.email}</span>}
                   </td>
                   <td className="px-4 py-2.5 text-center">
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${STATUT_STYLE[c.statut] ?? STATUT_STYLE.ACTIF}`}>{c.statut}</span>
+                    <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${STATUT_STYLE[c.statut] ?? "bg-muted text-muted-foreground"}`}>
+                      {STATUT_LABELS[c.statut] ?? c.statut}
+                    </span>
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <div className="flex justify-end gap-1">
                       <Link href={`/dashboard/customers/${c.id}`} className="rounded-lg px-2 py-1 text-xs font-semibold text-primary hover:bg-primary/10">Fiche</Link>
+                      {canValider && c.statut === "PROVISOIRE" && (
+                        <button
+                          onClick={() => changerStatut.mutate({ id: c.id, nouveauStatut: "ACTIF", motif: "Validation de la fiche provisoire depuis la liste" })}
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-success-foreground hover:bg-success/10"
+                          title="Confirmer que la fiche est réelle et joignable"
+                        >
+                          <ShieldCheck size={12} /> Valider
+                        </button>
+                      )}
                       {canModifier && c.statut === "ACTIF" && (
                         <button
                           onClick={() => changerStatut.mutate({ id: c.id, nouveauStatut: "BLOQUE", motif: "Blocage depuis la liste" })}

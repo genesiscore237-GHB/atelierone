@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { EmptyState } from "~/components/ui/empty-state";
 import { ErrorState } from "~/components/ui/error-state";
 import { Button } from "~/components/ui/button";
+import { usePermissions } from "~/hooks/usePermissions";
 import { STATUTS_VEHICULE_LABELS, STATUTS_VEHICULE_COLORS } from "./_components/statuts";
 
 const container = {
@@ -21,6 +22,8 @@ const item = {
 };
 
 export default function GarageDashboardPage() {
+  const { hasPermission } = usePermissions();
+  const canReceptionner = hasPermission("or.modifier");
   const { data, isLoading, isError, error, refetch } = api.garage.overview.useQuery();
 
   if (isLoading) {
@@ -71,11 +74,13 @@ export default function GarageDashboardPage() {
       </motion.div>
 
       <motion.div variants={item} className="flex flex-wrap gap-3">
-        <Button asChild>
-          <Link href="/dashboard/garage/vehicules?nouveau=1">
-            <Plus size={16} className="mr-1.5" /> Enregistrer un véhicule
-          </Link>
-        </Button>
+        {canReceptionner && (
+          <Button asChild>
+            <Link href="/dashboard/atelier/reception">
+              <Plus size={16} className="mr-1.5" /> Réception véhicule
+            </Link>
+          </Button>
+        )}
         <Button asChild variant="outline">
           <Link href="/dashboard/garage/carte">
             <Map size={16} className="mr-1.5" /> Ouvrir la carte

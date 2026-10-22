@@ -197,15 +197,11 @@ export function RevueVehicules({ q }: { q?: string }) {
                       )}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      {r.vehiculeId != null ? (
-                        <Button size="sm" variant="outline" asChild className="text-xs">
-                          <Link href={`/dashboard/garage/vehicules/${r.vehiculeId}`}>
-                            Voir <ArrowRight size={13} className="ml-1" />
-                          </Link>
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
+                      <Button size="sm" variant="outline" asChild className="text-xs">
+                        <Link href={`/dashboard/garage/vehicules/${r.id}`}>
+                          Voir <ArrowRight size={13} className="ml-1" />
+                        </Link>
+                      </Button>
                     </td>
                   </tr>
                 );

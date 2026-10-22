@@ -9,7 +9,7 @@ import { api } from "~/trpc/react";
 import { Card } from "~/components/ui/card";
 import { EmptyState } from "~/components/ui/empty-state";
 import { ErrorState } from "~/components/ui/error-state";
-import { Button } from "~/components/ui/button";
+import { Button, buttonVariants } from "~/components/ui/button";
 import { ConfirmationDialog } from "~/components/ui/confirmation-dialog";
 import { usePermissions } from "~/hooks/usePermissions";
 import { toast } from "sonner";
@@ -35,6 +35,7 @@ import {
 } from "../_components/filtres";
 import { PrintVehiculesList } from "@/lib/PrintVehiculesList";
 import { RevueVehicules } from "@/components/vehicule/RevueVehicules";
+import { STATUT_LABELS as VEH_STATUT_LABELS, STATUT_STYLE as VEH_STATUT_STYLE } from "~/server/lib/vehicule-service";
 
 export default function GarageVehiculesPage() {
   const searchParams = useSearchParams();
@@ -55,9 +56,7 @@ useEffect(() => {
   const [statut, setStatut] = useState(() => lireFiltres(searchParams).statut);
   const [siteId, setSiteId] = useState(() => lireFiltres(searchParams).site);
   const [nonPositionnes, setNonPositionnes] = useState(() => lireFiltres(searchParams).nonPositionnes);
-  const nouveauDemande = searchParams.get("nouveau") === "1";
   const [mode, setMode] = useState<"revue" | "registre">("revue");
-  const [formOpen, setFormOpen] = useState(nouveauDemande);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [aSortir, setASortir] = useState<{ id: number; numRegistre: number } | null>(null);
   // Visionneuse ouverte depuis la liste : on charge le jeu complet de photos du
@@ -85,8 +84,7 @@ useEffect(() => {
   const filtresQs = useMemo(() => ecrireFiltres(filtres), [filtres]);
 
   useEffect(() => {
-    const qs = filtresQs ? `${filtresQs}${nouveauDemande ? "&nouveau=1" : ""}` : nouveauDemande ? "nouveau=1" : "";
-    router.replace(qs ? `/dashboard/garage/vehicules?${qs}` : "/dashboard/garage/vehicules", { scroll: false });
+    router.replace(filtresQs ? `/dashboard/garage/vehicules?${filtresQs}` : "/dashboard/garage/vehicules", { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtresQs]);
 
@@ -123,7 +121,7 @@ useEffect(() => {
 limit: 200,
   }, { placeholderData: keepPreviousData, refetchInterval: intervalleTempsReel });
 
-  const canCreer = hasPermission("parking.vehicule.creer");
+  const canReceptionner = hasPermission("or.modifier");
   const canModifier = hasPermission("parking.vehicule.modifier");
   const canExporter = true;
 
@@ -166,7 +164,7 @@ limit: 200,
         <div>
           <h2 className="text-lg font-bold text-foreground">Registre des véhicules</h2>
           <p className="text-sm text-muted-foreground">
-            {data?.total ?? 0} véhicule(s) affiché(s)
+            {data?.total ?? 0} véhicule(s) au registre
             {aFiltres ? ` · ${nbFiltres} filtre(s) actif(s)` : ""}
           </p>
         </div>
@@ -176,10 +174,10 @@ limit: 200,
               <FilterX size={15} className="mr-1.5" /> Réinitialiser les filtres
             </Button>
           )}
-          {canCreer && (
-            <Button onClick={() => setFormOpen(true)}>
-              <Plus size={16} className="mr-1.5" /> Enregistrer un véhicule
-            </Button>
+          {canReceptionner && (
+            <Link href="/dashboard/atelier/reception" className={buttonVariants({ className: "gap-1.5" })}>
+              <Plus size={16} /> Réception véhicule
+            </Link>
           )}
           {canExporter && vehicules.length > 0 && (
             <Button type="button" variant="outline" onClick={() => setExportOuvert(true)}>
@@ -254,12 +252,12 @@ limit: 200,
         <EmptyState
           icon={<Car size={40} />}
           title="Aucun véhicule"
-          description="Aucun véhicule ne correspond aux critères. Utilisez « Enregistrer un véhicule » pour entrer une nouvelle immatriculation."
+          description="Aucun véhicule ne correspond aux critères. Les nouvelles fiches se créent depuis la réception atelier."
           actionButton={
-            canCreer ? (
-              <Button onClick={() => setFormOpen(true)}>
-                <Plus size={16} className="mr-1.5" /> Enregistrer un véhicule
-              </Button>
+            canReceptionner ? (
+              <Link href="/dashboard/atelier/reception" className={buttonVariants({ className: "gap-1.5" })}>
+                <Plus size={16} /> Réception véhicule
+              </Link>
             ) : undefined
           }
         />
@@ -272,7 +270,7 @@ limit: 200,
             {mode === "revue" ? "Revue du parc" : "Registre des véhicules"}
           </h2>
           <p className="text-sm text-muted-foreground">
-            {data?.total ?? 0} véhicule(s) affiché(s)
+            {data?.total ?? 0} véhicule(s) au registre
             {aFiltres ? ` • ${nbFiltres} filtre(s) actif(s)` : ""}
           </p>
         </div>
@@ -357,7 +355,12 @@ limit: 200,
                     <td className="px-4 py-3 text-muted-foreground">
                       {v.clientNom ? (
                         <div>
-                          {v.clientNom}
+                          <span>{v.clientNom}</span>
+                          {v.clientStatut === "PROVISOIRE" && (
+                            <span className="ml-1 rounded-full bg-warning/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-warning-foreground" title="Fiche client à confirmer">
+                              Provisoire
+                            </span>
+                          )}
                           {v.clientTelephone && <div className="text-xs text-muted-foreground/70">{v.clientTelephone}</div>}
                         </div>
                       ) : (
@@ -365,9 +368,16 @@ limit: 200,
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUTS_VEHICULE_COLORS[v.statut] ?? "bg-muted text-muted-foreground"}`}>
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUTS_VEHICULE_COLORS[v.statut] ?? "bg-muted text-muted-foreground"}`} title="Statut parking">
                         {STATUTS_VEHICULE_LABELS[v.statut] ?? v.statut}
                       </span>
+                      {v.statutCanonique && (
+                        <div className="mt-1">
+                          <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${VEH_STATUT_STYLE[v.statutCanonique] ?? "bg-muted text-muted-foreground"}`} title="Statut atelier (fiche véhicule)">
+                            Atelier : {VEH_STATUT_LABELS[v.statutCanonique] ?? v.statutCanonique}
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {v.zoneId != null && v.centreX != null ? (
@@ -464,16 +474,9 @@ limit: 200,
           </div>
         </Card>
       )}
-      <VehiculeFormDialog
-        open={formOpen}
-        vehicule={null}
-        onClose={() => {
-          setFormOpen(false);
-          if (searchParams.get("nouveau") === "1") router.replace("/dashboard/garage/vehicules", { scroll: false });
-        }}
-      />
-
-      <VehiculeFormDialog open={editingId !== null} vehicule={editModel} onClose={() => setEditingId(null)} />
+      {editModel && (
+        <VehiculeFormDialog open={editingId !== null} vehicule={editModel} onClose={() => setEditingId(null)} />
+      )}
 
       <ConfirmationDialog
         isOpen={aSortir !== null}
