@@ -125,7 +125,13 @@ export const interventionsRouter = createTRPCRouter({
           )`,
         })
         .from(orInterventions)
-        .where(eq(orInterventions.ligneId, input.ligneId))
+        .innerJoin(ordresReparation, eq(ordresReparation.id, orInterventions.orId))
+        .where(
+          and(
+            eq(orInterventions.ligneId, input.ligneId),
+            eq(ordresReparation.agenceId, ctx.user.agenceId),
+          ),
+        )
         .orderBy(orInterventions.createdAt);
       // Du plus ancien au plus récent : on lit une HISTOIRE, pas un-tableau
       // trié par date décroissante où l'ordre ne veut rien dire.
@@ -151,7 +157,13 @@ export const interventionsRouter = createTRPCRouter({
         })
         .from(orInterventions)
         .innerJoin(lignesOrdreReparation, eq(lignesOrdreReparation.id, orInterventions.ligneId))
-        .where(eq(orInterventions.vehiculeId, input.vehiculeId))
+        .innerJoin(ordresReparation, eq(ordresReparation.id, orInterventions.orId))
+        .where(
+          and(
+            eq(orInterventions.vehiculeId, input.vehiculeId),
+            eq(ordresReparation.agenceId, ctx.user.agenceId),
+          ),
+        )
         .orderBy(desc(orInterventions.createdAt))
         .limit(input.limite ?? 20);
     }),
@@ -170,9 +182,11 @@ export const interventionsRouter = createTRPCRouter({
         })
         .from(orInterventions)
         .innerJoin(lignesOrdreReparation, eq(lignesOrdreReparation.id, orInterventions.ligneId))
+        .innerJoin(ordresReparation, eq(ordresReparation.id, orInterventions.orId))
         .where(
           and(
             eq(orInterventions.vehiculeId, input.vehiculeId),
+            eq(ordresReparation.agenceId, ctx.user.agenceId),
             sql`${orInterventions.constat} IS NOT NULL`,
           ),
         )
