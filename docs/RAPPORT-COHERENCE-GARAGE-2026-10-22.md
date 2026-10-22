@@ -3,8 +3,9 @@
 > **Date** : 2026-10-22
 > **Périmètre** : parcours de création d'un véhicule, liste atelier, registre parking,
 > fiche véhicule 360°, module Client, contrats.
-> **Statut** : corrections appliquées en local, **non commitées**, **aucune écriture
-> en production** pendant ce lot.
+> **Statut** : corrections commitées (`09f4014`) et poussées sur `main` le
+> 2026-10-22. Le hook pre-push a synchronisé la production : 0 migration,
+> 0 client/véhicule créé, schéma identique (21 écarts de données attendus).
 > **Documents liés** : `docs/PLAN-COHERENCE-GARAGE.md`,
 > `docs/HARMONISATION-VEHICULE.md`.
 
@@ -241,8 +242,10 @@ les fiches provisoires sont signalées dans le sélecteur. Sans cela, les contra
 | SQL `clients.get` / liste canonique | Requête LATERAL + `site_id` validée par PostgreSQL |
 | SQL recherche revue du parc | `EXISTS` + `LEFT JOIN clients` validé, y compris véhicules sans client |
 
-**Aucune migration**, aucun `db:sync`, aucun commit, aucun push, aucune écriture
-en production n'ont été effectués pendant ce lot.
+**Aucune migration** n'a été appliquée. Le `db:sync` du hook pre-push a créé
+0 client et 0 véhicule ; `drift:check` conclut « SCHEMA : identique », avec
+21 écarts de données d'exploitation attendus. Commit `09f4014`, push
+`b3cbae1..09f4014` sur `main`.
 
 ---
 
@@ -264,5 +267,7 @@ en production n'ont été effectués pendant ce lot.
 
 ## 8. État Git
 
-Les corrections sont dans le working tree, **non commitées**. `origin/main` est
-resté à `b3cbae1`. Aucun push n'a été effectué.
+Commit `09f4014` poussé sur `main` ; `origin/main` = `09f4014`.
+Le hook pre-push a exécuté `db:sync` (0 migration, 0 création) puis
+`drift:check` (schéma identique, 21 écarts de données attendus).
+Working tree propre après le push.
