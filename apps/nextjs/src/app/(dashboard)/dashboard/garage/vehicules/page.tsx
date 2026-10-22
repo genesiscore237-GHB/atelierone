@@ -123,11 +123,6 @@ useEffect(() => {
 limit: 200,
   }, { placeholderData: keepPreviousData, refetchInterval: intervalleTempsReel });
 
-  const { data: revue, isLoading: revueLoading } = api.revueParc.file.useQuery(
-    { q: debouncedSearch || undefined },
-    { enabled: mode === "revue" },
-  );
-
   const canCreer = hasPermission("parking.vehicule.creer");
   const canModifier = hasPermission("parking.vehicule.modifier");
   const canExporter = true;
@@ -292,7 +287,7 @@ limit: 200,
         </div>
       </div>
 
-      {mode === "revue" && <RevueVehicules />}
+      {mode === "revue" && <RevueVehicules q={debouncedSearch} />}
 
       {mode === "registre" && !isLoading && !isError && vehicules.length > 0 && (
         <Card hover={false} className="overflow-hidden">

@@ -72,12 +72,18 @@ export const ALERTE_NIVEAU_LABELS: Record<string, string> = {
   INFO: "Info",
   WARNING: "Attention",
   CRITIQUE: "Critique",
+  HAUTE: "Haute",
+  MOYENNE: "Moyenne",
+  BASSE: "Basse",
 };
 
 export const ALERTE_NIVEAU_COLORS: Record<string, string> = {
   INFO: "bg-muted text-muted-foreground",
   WARNING: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   CRITIQUE: "bg-red-500/10 text-red-600 dark:text-red-400",
+  HAUTE: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+  MOYENNE: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  BASSE: "bg-muted text-muted-foreground",
 };
 
 export const ALERTE_CODE_LABELS: Record<string, string> = {
