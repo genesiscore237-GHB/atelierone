@@ -1,9 +1,9 @@
-import { AideSaisiePage } from "~/components/catalogue/aide/AideSaisiePage";
+import { CatalogueAidePage } from "~/components/help/CatalogueAidePage";
 
 export const metadata = {
-  title: "Aide à la saisie — Catalogue",
+  title: "Guide interactif — Catalogue",
 };
 
 export default function Page() {
-  return <AideSaisiePage />;
+  return <CatalogueAidePage />;
 }

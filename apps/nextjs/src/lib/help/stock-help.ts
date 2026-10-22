@@ -421,4 +421,139 @@ export const STOCK_HELP_FICHES: HelpFiche[] = [
       { q: "Quelle différence entre transfert et mise en rayon ?", r: "Le transfert déplace entre deux emplacements ; la mise en rayon sort le stock du stock général vers un rayon." },
     ],
   },
+  {
+    id: "stock-recensement",
+    titre: "Recensement du garage",
+    courte: "Compter ce que j'ai en fin de journée, une ligne à la fois, avec le stock connu sous les yeux.",
+    priorite: "P1",
+    route: "/dashboard/stock/recensement",
+    prerequis: [
+      "Des articles du catalogue existent",
+      "Permission stock.modifier",
+    ],
+    fonctionnalites: [
+      "Saisie ligne par ligne : article, quantité vue, zone de rangement, puis Suivant",
+      "Stock déjà connu affiché avant la saisie (il sert de contrôle, pas de frein)",
+      "Scan de code-barres intégré",
+      "Zones de stockage (magasin, bureau, extérieur...) configurable",
+      "Écarts vue vs système visibles avant la validation finale",
+    ],
+    etapes: [
+      { titre: "Recenser", detail: "Recensement → filtrer l'article, saisir la quantité vue, choisir la zone → Suivant." },
+      { titre: "Valider", detail: "Vérifier les écarts puis valider l'ensemble (mode strict possible)." },
+    ],
+    regles: [
+      { titre: "Mode strict", detail: "En mode strict, le bouton Suivant est bloqué tant que la quantité n'est pas saisie." },
+      { titre: "Décision explicite", detail: "Le recensement ne modifie le stock qu'à la validation : les écarts deviennent des ajustements tracés." },
+    ],
+    faq: [
+      { q: "Je dois saisir toute la zone d'un coup ?", r: "Non : ligne par ligne ; vous pouvez fermer et reprendre plus tard." },
+    ],
+  },
+  {
+    id: "stock-contenants",
+    titre: "Contenants & DLC (fûts)",
+    courte: "Les fûts d'huile : lequel ouvrir, combien il en reste, jusqu'à quand.",
+    priorite: "P1",
+    route: "/dashboard/stock/contenants",
+    prerequis: [
+      "Articles marqués reconditionnables avec unités fût / bidon définies",
+    ],
+    fonctionnalites: [
+      "Liste des contenants : fermés (lesquels laisser), ouverts (combien reste-t-il)",
+      "Action Ouverture horodatée (jamais un champ à saisir)",
+      "DLC calculée depuis l'ouverture : les bidons sortis héritent de la bonne date",
+      "Ordre de consommation préconisé (d'abord le contenant ouvert le plus tôt)",
+      "Quantité calculée depuis les tables d'unités (jamais demandée à l'utilisateur)",
+    ],
+    etapes: [
+      { titre: "Ouvrir un fût", detail: "Contenants > chercher le fût > bouton Ouverture : l'heure est enregistrée." },
+      { titre: "Lire la DLC", detail: "La date limite de chaque prélèvement découle de l'heure d'ouverture." },
+    ],
+    regles: [
+      { titre: "Ouverture = action", detail: "L'ouverture est horodatée sur le contenant ; DLC, ordre de consommation et alerte en découlent toutes." },
+      { titre: "Facteur toujours calculé", detail: "Le nombre de bidons dans un fût se calcule depuis les tables d'unités ; ne jamais laisser saisir ce nombre." },
+    ],
+    faq: [
+      { q: "Pourquoi un bidon ouvert n'a pas la même DLC qu'un bidon fermé ?", r: "Un contenant ouvert s'oxyde : la DLC raccourcit à partir de la date d'ouverture." },
+    ],
+  },
+  {
+    id: "stock-deconditionnement",
+    titre: "Déconditionnement",
+    courte: "Extraire des unités d'un contenant ouvert (ex. 2 bidons de 5 L depuis un fût de 208 L).",
+    priorite: "P1",
+    route: "/dashboard/stock/deconditionnement",
+    prerequis: [
+      "Un contenant ouvert dans l'écran Contenants",
+    ],
+    fonctionnalites: [
+      "Choisir le contenant de départ + la quantité à extraire",
+      "Quantité gérée depuis les tables d'unités, avec contrôle de cohérence",
+      "DLC héritée du contenant d'origine",
+      "Sortie du contenant et entrée des unités liées",
+    ],
+    etapes: [
+      { titre: "Extraire", detail: "Déconditionnement > contenant ouvert > quantité à extraire > confirmer." },
+      { titre: "Tracer", detail: "Les mouvements apparaissent liés dans l'historique des mouvements." },
+    ],
+    regles: [
+      { titre: "Jamais plus que le contenant", detail: "Tirer plus que le contenu disponible est refusé avec un message clair." },
+    ],
+    faq: [
+      { q: "Si je me suis trompé de quantité ?", r: "Ajustez le stock par un Ajustement manuel avec motif ; l'écran ne propose pas d'inventaire de contenant." },
+    ],
+  },
+  {
+    id: "stock-chercher-avant-commander",
+    titre: "Chercher avant de commander (inter-agences)",
+    courte: "Pour un article bas : regarder si une autre agence en a avant de lancer l'achat.",
+    priorite: "P1",
+    route: "/dashboard/stock/chercher-avant-commander",
+    prerequis: [
+      "Plusieurs agences actives",
+      "Stock partagé visible entre sites",
+    ],
+    fonctionnalites: [
+      "Recherche article multi-agences avec la disponibilité de chaque site",
+      "Lancement du transfert inter-agences depuis cette page",
+      "Verrou d'achat : pas de commande fournisseur tant qu'un stock ailleurs n'a pas été épuisé",
+    ],
+    etapes: [
+      { titre: "Chercher", detail: "Chercher avant de commander > article > la disponibilité des autres agences s'affiche." },
+      { titre: "Transférer", detail: "Depuis la même page, lancer le transfert depuis l'agence qui en a." },
+    ],
+    regles: [
+      { titre: "Pas de commande précipitée", detail: "Une pièce disponible dans une autre agence de la société est déjà une pièce disponible — le transfert passe avant la commande." },
+    ],
+    faq: [
+      { q: "Une autre agence peut-elle refuser le transfert ?", r: "Le transfert est confirmé par l'agence d'envoi ; la page montre l'état de chaque transfert." },
+    ],
+  },
+  {
+    id: "stock-previsions",
+    titre: "Prévisions d'achat",
+    courte: "Les articles qui vont descendre, avec l'urgence et le coût estimé de commande.",
+    priorite: "P1",
+    route: "/dashboard/stock/previsions",
+    prerequis: [
+      "Des mouvements de sortie historiques (consommation réelle)",
+    ],
+    fonctionnalites: [
+      "Articles classés par urgence : Critique, Faible, Normal",
+      "Historique paramétrable (7 à 90 jours) et couverture souhaitée (jours)",
+      "Coût estimé de commande par article et total",
+      "Vitesse de consommation (consommation journalière moyenne)",
+    ],
+    etapes: [
+      { titre: "Ouvrir la liste", detail: "Prévisions > ajuster l'historique et la couverture puis lire la liste." },
+      { titre: "Commander", detail: "Les articles critiques d'abord : le montant affiché sert à préparer la commande fournisseur." },
+    ],
+    regles: [
+      { titre: "Basé sur le réel", detail: "Les prévisions viennent des sorties calendaires (OR + vente) : une pièce jamais sortie n'a pas de prévision." },
+    ],
+    faq: [
+      { q: "Pourquoi un article n'a pas de prévision ?", r: "Il n'a pas de sorties récentes ; regardez alors ses seuils et son alerte dans l'Aperçu." },
+    ],
+  },
 ];

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { RH_HELP_FICHES, searchHelpFiches, type HelpFiche } from "~/lib/help/rh-help";
 import { FicheDetail, HelpSearch } from "~/components/help/HelpButton";
+import GuideInteractif, { type EtapeGuide } from "~/components/help/GuideInteractif";
 
 const PRIORITE_ORDER = ["P0", "P1", "P2"] as const;
 const PRIORITE_BADGE: Record<string, string> = {
@@ -26,6 +27,7 @@ export interface HelpCenterProps {
   fiches: HelpFiche[];
   parcours: Array<{ label: string; route: string }>;
   guideDoc: string; // chemin du guide utilisateur documentaire
+  pasAapas?: EtapeGuide[];
 }
 
 /**
@@ -34,9 +36,14 @@ export interface HelpCenterProps {
  * détaillées avec prérequis/fonctionnalités/étapes/règles/FAQ et
  * parcours de prise en main guidé.
  */
-export default function HelpCenter({ titre, sousTitre, fiches, parcours, guideDoc }: HelpCenterProps) {
+export default function HelpCenter({ titre, sousTitre, fiches, parcours, guideDoc, pasAapas }: HelpCenterProps) {
   const [selected, setSelected] = useState<HelpFiche | null>(null);
   const [result, setResult] = useState<HelpFiche[]>(fiches);
+
+  const cleModule = titre.toLowerCase().replace(/\s+/g, "-");
+  const etapesGuide: EtapeGuide[] =
+    pasAapas ??
+    parcours.map((p) => ({ id: p.route, titre: p.label, route: p.route }));
 
   const grouped = PRIORITE_ORDER.map((p) => ({
     priorite: p,
@@ -53,6 +60,9 @@ export default function HelpCenter({ titre, sousTitre, fiches, parcours, guideDo
           {sousTitre}
         </p>
       </div>
+
+      {/* Pas-à-pas interactif (progression conservée sur le poste) */}
+      <GuideInteractif module={cleModule} etapes={etapesGuide} />
 
       {/* Parcours de prise en main (didacticiel) */}
       <div className="mt-5 rounded-xl border border-primary/20 bg-primary/5 p-4">

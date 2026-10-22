@@ -13,6 +13,7 @@ import {
 } from "@atelierone/ui";
 import { RH_HELP_FICHES, findHelpFicheByRoute, searchHelpFiches, type HelpFiche } from "~/lib/help/rh-help";
 import { STOCK_HELP_FICHES } from "~/lib/help/stock-help";
+import { CATALOGUE_HELP_FICHES } from "~/lib/help/catalogue-help";
 import { AideSaisieInline } from "~/components/catalogue/aide/AideSaisieInline";
 
 const PRIORITE_BADGE: Record<string, string> = {
@@ -25,7 +26,7 @@ const PRIORITE_BADGE: Record<string, string> = {
 const HELP_REGISTRES: Array<{ prefix: string; titre: string; centreHref: string; fiches: HelpFiche[]; intelligent?: boolean }> = [
   { prefix: "/dashboard/rh", titre: "Personnel (RH)", centreHref: "/dashboard/rh/aide", fiches: RH_HELP_FICHES },
   { prefix: "/dashboard/stock", titre: "Stock & Magasin", centreHref: "/dashboard/stock/aide", fiches: STOCK_HELP_FICHES },
-  { prefix: "/dashboard/catalog", titre: "Catalogue", centreHref: "/dashboard/catalog/aide", fiches: STOCK_HELP_FICHES, intelligent: true },
+  { prefix: "/dashboard/catalog", titre: "Catalogue", centreHref: "/dashboard/catalog/aide", fiches: CATALOGUE_HELP_FICHES, intelligent: true },
 ];
 
 /**

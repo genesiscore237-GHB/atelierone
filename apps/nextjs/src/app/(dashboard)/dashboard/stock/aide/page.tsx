@@ -1,5 +1,6 @@
 import HelpCenter from "~/components/help/HelpCenter";
 import { STOCK_HELP_FICHES } from "~/lib/help/stock-help";
+import { STOCK_PAS_A_PAS } from "~/lib/help/stock-pas-a-pas";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export default function AideStockPage() {
       titre="Stock & Magasin"
       sousTitre="Guide utilisateur complet du module : catalogue, mouvements, inventaire, reconditionnement, emplacements, alertes."
       fiches={STOCK_HELP_FICHES}
+      pasAapas={STOCK_PAS_A_PAS}
       parcours={PARCOURS_STOCK}
       guideDoc="DOC/GUIDE-UTILISATEUR-MODULE-STOCK.md"
     />
