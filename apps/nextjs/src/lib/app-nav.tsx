@@ -781,6 +781,14 @@ export const DOMAINS: AppDomain[] = [
         moduleId: "admin",
       },
       {
+        id: "pilotage-alertes",
+        label: "Centre d'alertes",
+        href: "/dashboard/alertes",
+        icon: BellRing,
+        desc: "Atelier, parking, stock, finance — triés par gravité et par responsable",
+        moduleId: "alertes",
+      },
+      {
         id: "pilotage-rapports",
         label: "Rapports",
         href: "/dashboard/rapports",

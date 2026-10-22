@@ -20,6 +20,12 @@ export const MODULE_PERMISSIONS: Record<string, string[]> = {
   returns: ["pos.vente.rembourser", "pos.vente.annuler", "pos.vente.lire"],
   transfers: ["stock.consulter", "stock.modifier"],
   alerts: ["stock.consulter", "caisse.consulter"],
+  // Centre d'alertes transverse (P2.2) — accessible dès qu'une source l'est.
+  // Les requêtes de la page restent, elles, filtrées par permission fine.
+  alertes: [
+    "or.consulter", "parking.consulter", "stock.consulter",
+    "comptabilite.rapport", "comptabilite.depense.lire", "creances.consulter",
+  ],
   loyalty: ["pos.vente.lire", "pos.vente.creer"],
   pricing: ["admin.parametres", "admin.roles.gerer", "admin.permissions.gerer", "admin.agence.gerer"],
   finance: ["comptabilite.rapport", "comptabilite.depense.lire", "comptabilite.depense.creer"],
