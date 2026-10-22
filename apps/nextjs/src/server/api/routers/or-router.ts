@@ -36,8 +36,9 @@ import {
   stocks,
   immatNormaleCondition,
   immatNormPreferenceSql,
-normaliserTelephone,
+  normaliserTelephone,
   clientStatutHistorique,
+  clientInteractions,
  } from "@atelierone/db";
 import { eq, and, desc, sql, gte, lte, asc, inArray, ilike, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -86,6 +87,7 @@ import {
 } from "~/server/lib/atelier-service";
 import { lignesNonReglees, messageTravauxNonTermines } from "~/server/lib/gardes-travaux";
 import { synchroniserStatutVehicule } from "~/server/lib/statut-vehicule";
+import { analyserSuiviRelation, CANAUX_REPONSE_SAISIE } from "~/lib/suivi-relation";
 import {
   lireCatalogue,
   ecrireCatalogue,
@@ -654,6 +656,7 @@ export const orRouter = createTRPCRouter({
         venteReference,
         lignes,
         historique,
+        suiviRelation: analyserSuiviRelation(or.dateOuverture, historique),
         photos,
         rapportDiagnostic: rapports?.[0] ?? null,
         joursImmobilisation: joursImmobilisation(dateEntree),
@@ -1432,6 +1435,12 @@ kilometrageEntree: input.reception.kilometrageEntree ?? null,
     .mutation(async ({ ctx, input }) => {
       const [v] = await db.select().from(orDevisVersions).where(eq(orDevisVersions.id, input.devisVersionId)).limit(1);
       if (!v) throw new TRPCError({ code: "NOT_FOUND", message: "Version introuvable." });
+      const [or] = await db
+        .select({ id: ordresReparation.id })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, v.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "Version introuvable." });
       if (v.statut === "ENVOYE") throw new TRPCError({ code: "BAD_REQUEST", message: "Cette version est déjà envoyée." });
       await db.update(orDevisVersions).set({ statut: "ENVOYE", envoyeLe: new Date(), envoyePar: Number(ctx.user.id) } as any).where(eq(orDevisVersions.id, input.devisVersionId));
       await db.update(ordresReparation).set({ statut: "EN_ATTENTE_VALIDATION", devisAccepte: false, updatedAt: new Date() } as any).where(eq(ordresReparation.id, v.orId));
@@ -1442,6 +1451,24 @@ kilometrageEntree: input.reception.kilometrageEntree ?? null,
         commentaire: `Devis v${v.version} envoyé au client`,
         changePar: Number(ctx.user.id),
       } as any);
+      // P3.2 — envoyer un devis EST la première réponse au client dans le cas
+      // le plus courant. On ne demande donc pas à l'atelier de cliquer sur un
+      // second bouton pour tracer un fait déjà connu du système. Une réponse
+      // manuelle (appel, SMS, visite) reste possible si elle précède le devis.
+      const [dejaRepondu] = await db
+        .select({ id: orHistorique.id })
+        .from(orHistorique)
+        .where(and(eq(orHistorique.orId, v.orId), eq(orHistorique.type, "REPONSE_CLIENT")))
+        .limit(1);
+      if (!dejaRepondu) {
+        await db.insert(orHistorique).values({
+          orId: v.orId,
+          type: "REPONSE_CLIENT",
+          nouvelleValeur: "DEVIS",
+          commentaire: `Devis v${v.version} envoyé au client`,
+          changePar: Number(ctx.user.id),
+        } as any);
+      }
       return { success: true };
     }),
 
@@ -2202,6 +2229,161 @@ if (or.statut !== "PRET_A_LIVRER") {
     .input(z.object({ id: z.number().int() }))
     .query(async ({ ctx, input }) => {
       return db.select().from(orHistorique).where(eq(orHistorique.orId, input.id)).orderBy(asc(orHistorique.changeLe));
+    }),
+
+  // ─── Relation client (P3.2) ───
+  // La première réponse est un événement unique : elle mesure le délai entre
+  // l'entrée du véhicule et le moment où le client a eu une réponse. Un devis
+  // envoyé la trace automatiquement ; ces endpoints servent aux appels, SMS,
+  // WhatsApp et visites, qui ne laissent sinon aucune trace.
+  enregistrerReponseClient: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      canal: z.enum(CANAUX_REPONSE_SAISIE),
+      commentaire: z.string().trim().max(2000).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({ id: ordresReparation.id })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+
+      const [deja] = await db
+        .select({ id: orHistorique.id })
+        .from(orHistorique)
+        .where(and(eq(orHistorique.orId, input.orId), eq(orHistorique.type, "REPONSE_CLIENT")))
+        .limit(1);
+      if (deja) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "La première réponse est déjà tracée : le délai de réponse ne se réécrit pas.",
+        });
+      }
+
+      await db.insert(orHistorique).values({
+        orId: input.orId,
+        type: "REPONSE_CLIENT",
+        nouvelleValeur: input.canal,
+        commentaire: input.commentaire?.trim() || null,
+        changePar: Number(ctx.user.id),
+      } as any);
+      return { success: true };
+    }),
+
+  ouvrirReclamation: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      motif: z.string().trim().min(5, "Décrivez la réclamation en quelques mots.").max(2000),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({
+          id: ordresReparation.id,
+          numero: ordresReparation.numero,
+          clientId: ordresReparation.clientId,
+          dateOuverture: ordresReparation.dateOuverture,
+        })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+
+      const historique = await db
+        .select({
+          type: orHistorique.type,
+          nouvelleValeur: orHistorique.nouvelleValeur,
+          commentaire: orHistorique.commentaire,
+          changeLe: orHistorique.changeLe,
+        })
+        .from(orHistorique)
+        .where(eq(orHistorique.orId, input.orId))
+        .orderBy(asc(orHistorique.changeLe));
+      const suivi = analyserSuiviRelation(or.dateOuverture, historique);
+      if (suivi.reclamation && suivi.reclamation.statut !== "RESOLUE") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Une réclamation est déjà ouverte sur ce dossier. Résolvez-la avant d'en ouvrir une autre.",
+        });
+      }
+
+      await db.transaction(async (tx) => {
+        await tx.insert(orHistorique).values({
+          orId: input.orId,
+          type: "RECLAMATION",
+          nouvelleValeur: "OUVERTE",
+          commentaire: input.motif,
+          changePar: Number(ctx.user.id),
+        } as any);
+        // Le dossier OR n'est pas le seul endroit où le client existe : la fiche
+        // client 360 doit voir la réclamation sans que personne ait à la recopier.
+        if (or.clientId) {
+          await tx.insert(clientInteractions).values({
+            clientId: or.clientId,
+            type: "RECLAMATION",
+            sujet: `Réclamation OR ${or.numero}`,
+            contenu: input.motif,
+            createdBy: Number(ctx.user.id),
+          } as any);
+        }
+      });
+      return { success: true };
+    }),
+
+  resoudreReclamation: requirePermissionProcedure("or.modifier")
+    .input(z.object({
+      orId: z.number().int(),
+      resolution: z.string().trim().min(3, "Indiquez ce qui a été fait pour le client.").max(2000),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [or] = await db
+        .select({
+          id: ordresReparation.id,
+          numero: ordresReparation.numero,
+          clientId: ordresReparation.clientId,
+          dateOuverture: ordresReparation.dateOuverture,
+        })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, input.orId), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!or) throw new TRPCError({ code: "NOT_FOUND", message: "OR introuvable." });
+
+      const historique = await db
+        .select({
+          type: orHistorique.type,
+          nouvelleValeur: orHistorique.nouvelleValeur,
+          commentaire: orHistorique.commentaire,
+          changeLe: orHistorique.changeLe,
+        })
+        .from(orHistorique)
+        .where(eq(orHistorique.orId, input.orId))
+        .orderBy(asc(orHistorique.changeLe));
+      const suivi = analyserSuiviRelation(or.dateOuverture, historique);
+      if (!suivi.reclamation || suivi.reclamation.statut === "RESOLUE") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Aucune réclamation ouverte à résoudre sur ce dossier." });
+      }
+
+      await db.transaction(async (tx) => {
+        await tx.insert(orHistorique).values({
+          orId: input.orId,
+          type: "RECLAMATION",
+          ancienneValeur: suivi.reclamation.statut,
+          nouvelleValeur: "RESOLUE",
+          commentaire: input.resolution,
+          changePar: Number(ctx.user.id),
+        } as any);
+        if (or.clientId) {
+          await tx.insert(clientInteractions).values({
+            clientId: or.clientId,
+            type: "RECLAMATION",
+            sujet: `Réclamation OR ${or.numero} — résolution`,
+            contenu: input.resolution,
+            createdBy: Number(ctx.user.id),
+          } as any);
+        }
+      });
+      return { success: true };
     }),
 
   update: requirePermissionProcedure("or.modifier")

@@ -16,6 +16,7 @@ import {
   type OrStepId,
 } from "../../_lib/or-status-machine";
 import { OrHeader } from "./OrHeader";
+import { RelationClient } from "./RelationClient";
 import { OrStepper } from "./OrStepper";
 import { Timeline } from "./shared/Timeline";
 import { ReceptionTab } from "./tabs/ReceptionTab";
@@ -69,6 +70,7 @@ export function OrDetailLayout({ id }: { id: number }) {
         </Link>
       </div>
       <OrHeader or={or} employes={employes} />
+      <RelationClient or={or} />
       <OrStepper id={id} current={resolvedTab} states={stepper.stepsState} nextAction={stepper.nextAction} visibleTabs={visibleTabs} />
       {resolvedTab === "reception" && <ReceptionTab or={or} />}
       {resolvedTab === "diagnostic" && <DiagnosticTab or={or} />}
