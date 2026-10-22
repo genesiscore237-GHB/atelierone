@@ -43,9 +43,11 @@ export interface OrKpiRecord {
   responsableTechnicienId?: number | null;
   /** dérivés (router) : */
   dateDiagSoumis?: string | Date | null;
+  dateDevisEnvoye?: string | Date | null;
   dateDevisAccepte?: string | Date | null;
   retouche?: boolean;          // passage CONTRÔLE QUALITÉ → EN_COURS observé
   ecartPerimetre?: number;     // lignes ajoutées après acceptation du devis
+  nbLignesApresDevis?: number | null;
 }
 
 const jour = (v: string | Date): Date => (typeof v === "string" ? new Date(`${v.slice(0, 10)}T00:00:00`) : new Date(v));
@@ -146,11 +148,340 @@ export function ecartPerimetreMoyen(ors: OrKpiRecord[]): number | null {
   return round1(withData.reduce((s, o) => s + (o.nbLignesApresDevis ?? 0), 0) / withData.length);
 }
 
+export interface TransformationDevisResult {
+  taux: number | null;
+  envoyes: number;
+  acceptes: number;
+}
+
+export function tauxTransformationDevis(ors: OrKpiRecord[]): TransformationDevisResult {
+  const envoyes = ors.filter((o) => o.dateDevisEnvoye != null);
+  const acceptes = envoyes.filter((o) => {
+    if (o.dateDevisAccepte == null) return false;
+    return new Date(o.dateDevisAccepte).getTime() >= new Date(o.dateDevisEnvoye!).getTime();
+  });
+  return { taux: pct(acceptes.length, envoyes.length), envoyes: envoyes.length, acceptes: acceptes.length };
+}
+
+export interface TechnicienHoraire {
+  id: number;
+  nom: string;
+  prenom?: string | null;
+  workCycleId: number;
+  dateEmbauche?: string | null;
+  dateFinContrat?: string | null;
+  dateSortie?: string | null;
+}
+
+export interface HoraireCycle {
+  cycleId: number;
+  dayOfWeek: number;
+  expectedHours: string | number | null;
+  isWorkingDay?: boolean | null;
+}
+
+export interface DisponibiliteTechnicien {
+  technicienId: number;
+  nom: string;
+  heuresDisponibles: number;
+}
+
+export function heuresDisponiblesParTechnicien(
+  techniciens: TechnicienHoraire[],
+  horaires: HoraireCycle[],
+  debut: string,
+  fin: string,
+): DisponibiliteTechnicien[] {
+  const debutDate = jour(debut);
+  const finDate = jour(fin);
+  if (finDate < debutDate) return [];
+
+  const parCycleJour = new Map<string, number>();
+  for (const h of horaires) {
+    if (h.isWorkingDay === false) continue;
+    const heures = Number(h.expectedHours);
+    if (!Number.isFinite(heures) || heures <= 0) continue;
+    const cle = `${h.cycleId}:${h.dayOfWeek}`;
+    parCycleJour.set(cle, (parCycleJour.get(cle) ?? 0) + heures);
+  }
+
+  return techniciens.map((t) => {
+    let total = 0;
+    const embauche = t.dateEmbauche ? jour(t.dateEmbauche) : null;
+    const finContrat = t.dateFinContrat ? jour(t.dateFinContrat) : t.dateSortie ? jour(t.dateSortie) : null;
+    for (const d = new Date(debutDate); d <= finDate; d.setDate(d.getDate() + 1)) {
+      if (embauche && d < embauche) continue;
+      if (finContrat && d > finContrat) continue;
+      total += parCycleJour.get(`${t.workCycleId}:${d.getDay()}`) ?? 0;
+    }
+    return {
+      technicienId: t.id,
+      nom: `${t.prenom ?? ""} ${t.nom}`.trim(),
+      heuresDisponibles: round1(total),
+    };
+  });
+}
+
+export interface ProductiviteLigne {
+  technicienId: number;
+  nom: string;
+  heuresVendues: number;
+  heuresDisponibles: number;
+}
+
+export interface ProductiviteTechnicien {
+  technicienId: number;
+  nom: string;
+  heuresVendues: number;
+  heuresDisponibles: number;
+  taux: number | null;
+}
+
+export interface ProductiviteResult {
+  taux: number | null;
+  totalVendues: number;
+  totalDisponibles: number;
+  parTechnicien: ProductiviteTechnicien[];
+}
+
+export function productiviteTechnicien(lignes: ProductiviteLigne[]): ProductiviteResult {
+  const parTechnicien = lignes
+    .filter((l) => l.heuresDisponibles > 0)
+    .map((l) => {
+      const heuresVendues = round1(Math.max(0, l.heuresVendues));
+      const heuresDisponibles = round1(l.heuresDisponibles);
+      return {
+        technicienId: l.technicienId,
+        nom: l.nom,
+        heuresVendues,
+        heuresDisponibles,
+        taux: pct(heuresVendues, heuresDisponibles),
+      };
+    })
+    .sort((a, b) => (b.taux ?? 0) - (a.taux ?? 0) || a.nom.localeCompare(b.nom));
+  const totalVendues = round1(parTechnicien.reduce((s, l) => s + l.heuresVendues, 0));
+  const totalDisponibles = round1(parTechnicien.reduce((s, l) => s + l.heuresDisponibles, 0));
+  return { taux: pct(totalVendues, totalDisponibles), totalVendues, totalDisponibles, parTechnicien };
+}
+
 /** Fiabilité approvisionnement : % de demandes servies directement (non manquantes). */
 export function fiabiliteAppro(demandes: Array<{ statut: string | null }>): number | null {
   if (demandes.length === 0) return null;
   const serviesDirect = demandes.filter((d) => d.statut === "SERVIE").length;
   return pct(serviesDirect, demandes.length);
+}
+
+export interface DemandePieceKpi {
+  statut: string | null;
+  createdAt: Date | string | null;
+  traiteLe: Date | string | null;
+}
+
+/**
+ * Délai moyen de livraison des pièces : demande créée → demande traitée.
+ *
+ * Seules les demandes réellement servies comptent (`SERVIE` ou `PARTIELLE`).
+ * Une demande `MANQUANTE` a bien un `traite_le`, mais elle n'a pas livré de
+ * pièce : la compter comme « livrée en 2 jours » serait un chiffre faux.
+ * Les demandes sans date de traitement restent ouvertes et sont exclues.
+ */
+export function delaiLivraisonPieces(demandes: DemandePieceKpi[]): number | null {
+  const livrees = demandes.filter(
+    (d) =>
+      (d.statut === "SERVIE" || d.statut === "PARTIELLE") &&
+      d.createdAt != null &&
+      d.traiteLe != null,
+  );
+  if (livrees.length === 0) return null;
+  const total = livrees.reduce(
+    (s, d) => s + Math.max(0, joursEntre(d.createdAt!, d.traiteLe!)),
+    0,
+  );
+  return round1(total / livrees.length);
+}
+
+export interface OrOccupationRecord {
+  statut?: string | null;
+  dateOuverture: Date | string | null;
+  dateCloture?: Date | string | null;
+}
+
+export interface OccupationSemaine {
+  debut: string;
+  fin: string;
+  /** Moyenne de dossiers ouverts par jour sur la semaine complète. */
+  moyenne: number;
+}
+
+const isoJourLocal = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/**
+ * Série d'occupation de l'atelier, en semaines complètes.
+ *
+ * Un dossier occupe l'atelier de `dateOuverture` à `dateCloture` incluses ;
+ * sans clôture, il occupe encore. On exclut les dossiers `ANNULE` : un dossier
+ * annulé n'a jamais immobilisé un pont. La semaine en cours est volontairement
+ * absente : une moyenne calculée sur trois jours serait lue comme une chute
+ * d'activité alors que la semaine n'est pas finie.
+ */
+export function occupationParSemaine(
+  ors: OrOccupationRecord[],
+  semaines = 12,
+  maintenant: Date = new Date(),
+): OccupationSemaine[] {
+  if (semaines <= 0) return [];
+
+  const lundiCourant = new Date(maintenant);
+  lundiCourant.setHours(0, 0, 0, 0);
+  lundiCourant.setDate(lundiCourant.getDate() - ((lundiCourant.getDay() + 6) % 7));
+
+  const intervalles = ors
+    // Un LIVRE sans date de clôture est une donnée incomplète, pas un véhicule
+    // encore sur le pont : le compter indéfiniment gonflerait l'occupation.
+    .filter((o) => o.statut !== "ANNULE" && !(o.statut === "LIVRE" && o.dateCloture == null) && o.dateOuverture != null)
+    .map((o) => ({
+      debut: jour(o.dateOuverture!),
+      fin: o.dateCloture != null ? jour(o.dateCloture) : null,
+    }));
+
+  const points: OccupationSemaine[] = [];
+  for (let i = semaines - 1; i >= 0; i--) {
+    const debut = new Date(lundiCourant);
+    debut.setDate(debut.getDate() - 7 * (i + 1));
+    const fin = new Date(debut);
+    fin.setDate(fin.getDate() + 6);
+
+    let total = 0;
+    for (let d = 0; d < 7; d++) {
+      const jourCourant = new Date(debut);
+      jourCourant.setDate(jourCourant.getDate() + d);
+      total += intervalles.filter(
+        (iv) => iv.debut <= jourCourant && (iv.fin == null || iv.fin >= jourCourant),
+      ).length;
+    }
+
+    points.push({
+      debut: isoJourLocal(debut),
+      fin: isoJourLocal(fin),
+      moyenne: round1(total / 7),
+    });
+  }
+  return points;
+}
+
+export interface OrRetentionRecord {
+  clientId: number | null;
+  statut?: string | null;
+  dateCloture: Date | string | null;
+  savOrigineOrId?: number | null;
+  clientDisplay?: string | null;
+  clientTelephone?: string | null;
+}
+
+export interface ClientDormant {
+  clientId: number;
+  nom: string;
+  telephone: string | null;
+  derniereVisite: string;
+  joursDepuis: number;
+}
+
+export interface RetentionResult {
+  taux: number | null;
+  clientsActifs: number;
+  clientsRevenus: number;
+  dormants: ClientDormant[];
+}
+
+/**
+ * Rétention client — deux dossiers clos séparés d'au moins 30 jours.
+ *
+ * Un retour 10 jours après la livraison n'est pas un réachat : c'est souvent
+ * une reprise SAV, et la compter comme de la fidélité récompenserait un défaut
+ * qualité. Les dossiers SAV sont donc exclus des deux côtés du calcul. La
+ * fenêtre est de 24 mois glissants, indépendante de la période du tableau de
+ * bord : un taux de rétention calculé sur un mois ne mesure que du bruit.
+ *
+ * `dormants` liste les clients dont la dernière visite date de 12 à 24 mois :
+ * assez ancienne pour être oubliée, assez récente pour qu'un rappel soit utile.
+ */
+export function analyserRetention(
+  ors: OrRetentionRecord[],
+  options: { maintenant?: Date; moisFenetre?: number; moisDormant?: number; limite?: number } = {},
+): RetentionResult {
+  const maintenant = options.maintenant ?? new Date();
+  const moisFenetre = options.moisFenetre ?? 24;
+  const moisDormant = options.moisDormant ?? 12;
+  const limite = options.limite ?? 6;
+
+  const debutFenetre = new Date(maintenant);
+  debutFenetre.setMonth(debutFenetre.getMonth() - moisFenetre);
+  debutFenetre.setHours(0, 0, 0, 0);
+  const seuilDormant = new Date(maintenant);
+  seuilDormant.setMonth(seuilDormant.getMonth() - moisDormant);
+  seuilDormant.setHours(0, 0, 0, 0);
+
+  // Un client dont un véhicule est encore à l'atelier n'est pas dormant, même
+  // si son dernier dossier clos date de treize mois : l'appeler pour le faire
+  // revenir alors qu'il est déjà là serait le pire des rappels.
+  const clientsAvecDossierOuvert = new Set<number>();
+  for (const o of ors) {
+    if (o.clientId != null && o.statut !== "ANNULE" && o.statut !== "LIVRE" && o.dateCloture == null) {
+      clientsAvecDossierOuvert.add(o.clientId);
+    }
+  }
+
+  const parClient = new Map<number, {
+    dates: Date[];
+    nom: string;
+    telephone: string | null;
+  }>();
+
+  for (const o of ors) {
+    if (o.clientId == null || o.statut !== "LIVRE" || o.dateCloture == null || o.savOrigineOrId != null) continue;
+    const date = jour(o.dateCloture);
+    if (date < debutFenetre) continue;
+    const entree = parClient.get(o.clientId) ?? {
+      dates: [],
+      nom: o.clientDisplay?.trim() || `Client #${o.clientId}`,
+      telephone: o.clientTelephone ?? null,
+    };
+    entree.dates.push(date);
+    entree.telephone = entree.telephone ?? o.clientTelephone ?? null;
+    parClient.set(o.clientId, entree);
+  }
+
+  let clientsRevenus = 0;
+  const dormants: ClientDormant[] = [];
+  for (const [clientId, entree] of parClient) {
+    const dates = [...new Set(entree.dates.map((d) => d.getTime()))]
+      .sort((a, b) => a - b)
+      .map((t) => new Date(t));
+    if (dates.length >= 2 && joursEntre(dates[0]!, dates[dates.length - 1]!) >= 30) {
+      clientsRevenus += 1;
+    }
+    const derniere = dates[dates.length - 1]!;
+    if (derniere <= seuilDormant && !clientsAvecDossierOuvert.has(clientId)) {
+      dormants.push({
+        clientId,
+        nom: entree.nom,
+        telephone: entree.telephone,
+        derniereVisite: isoJourLocal(derniere),
+        joursDepuis: Math.max(0, joursEntre(derniere, maintenant)),
+      });
+    }
+  }
+
+  dormants.sort((a, b) => a.joursDepuis - b.joursDepuis);
+  const clientsActifs = parClient.size;
+
+  return {
+    taux: clientsActifs > 0 ? round1((clientsRevenus / clientsActifs) * 100) : null,
+    clientsActifs,
+    clientsRevenus,
+    dormants: dormants.slice(0, limite),
+  };
 }
 
 /** Satisfaction client moyenne (/5). */

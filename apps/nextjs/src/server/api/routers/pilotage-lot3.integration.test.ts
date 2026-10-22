@@ -86,6 +86,7 @@ async function retirer(): Promise<void> {
     sql`DELETE FROM vehicules WHERE upper(regexp_replace(btrim(immatriculation), '[[:space:]]+', '', 'g')) IN (${IN([I_VEH1, I_VEH2])})`,
   );
   await db.execute(sql`DELETE FROM employes WHERE nom = 'LOT3' AND prenom = 'Tech'`);
+  await db.execute(sql`DELETE FROM hr_work_cycles WHERE name = 'LOT3 Cycle'`);
   await db.execute(
     sql`DELETE FROM audit_logs WHERE user_id IN (SELECT id FROM utilisateurs WHERE email = ${USER_EMAIL})`,
   );
@@ -169,7 +170,50 @@ beforeAll(async () => {
   await db.execute(
     sql`INSERT INTO or_historique (or_id, type, ancienne_valeur, nouvelle_valeur, change_le)
         VALUES (${orId}, 'STATUT', 'EN_ATTENTE_DIAGNOSTIC', 'EN_COURS', ${il2j}),
-               (${orId}, 'STATUT', 'EN_COURS', 'EN_ATTENTE_PIECES', ${il1j})`,
+               (${orId}, 'STATUT', 'EN_COURS', 'EN_ATTENTE_PIECES', ${il1j}),
+               (${orId}, 'VALIDATION_DEVIS', 'EN_ATTENTE_DIAGNOSTIC', 'EN_ATTENTE_VALIDATION', ${il2j}),
+               (${orId}, 'VALIDATION_DEVIS', 'EN_ATTENTE_VALIDATION', 'EN_COURS', ${il1j})`,
+  );
+
+  // P3.3.3 — cycle de travail réel : sans horaires, le dénominateur serait
+  // zéro et le SQL des heures vendues ne serait jamais exécuté.
+  const [cycle] = (await db.execute(
+    sql`INSERT INTO hr_work_cycles (name, description, is_default, active, agence_id)
+        VALUES ('LOT3 Cycle', 'Fixture productivité', false, true, 1)
+        RETURNING id`,
+  )) as unknown as Row[];
+  await db.execute(
+    sql`INSERT INTO hr_work_schedules (cycle_id, day_of_week, start_time, end_time, expected_hours, is_working_day)
+        SELECT ${Number(cycle.id)}, d, '08:00', '16:00',
+               CASE WHEN d BETWEEN 1 AND 5 THEN 7 ELSE 0 END,
+               d BETWEEN 1 AND 5
+        FROM generate_series(0, 6) AS d`,
+  );
+  await db.execute(
+    sql`UPDATE employes SET work_cycle_id = ${Number(cycle.id)}, date_embauche = '2020-01-01' WHERE id = ${employeId}`,
+  );
+
+  // OR livré la veille avec une heure de main-d'œuvre vendue pour ce technicien.
+  const [orLivre] = (await db.execute(
+    sql`INSERT INTO ordres_reparation (agence_id, numero, vehicule_id, statut, priorite, date_ouverture, date_cloture, responsable_technicien_id)
+        VALUES (1, 'LOT3-OR-002', ${canonId}, 'LIVRE', 'P3', ${il2j}, ${il1j}, ${employeId})
+        RETURNING id`,
+  )) as unknown as Row[];
+  await db.execute(
+    sql`INSERT INTO lignes_ordre_reparation (ordre_id, type, libelle, duree_heures, technicien_id, statut, statut_autorisation)
+        VALUES (${Number(orLivre.id)}, 'SERVICE', 'Main-d''œuvre fixture', 7, ${employeId}, 'valide', 'AUTORISE')`,
+  );
+
+  // Un OR annulé porte lui aussi une date_cloture : ses heures ne sont pas
+  // vendues et ne doivent pas gonfler la productivité.
+  const [orAnnule] = (await db.execute(
+    sql`INSERT INTO ordres_reparation (agence_id, numero, vehicule_id, statut, priorite, date_ouverture, date_cloture, responsable_technicien_id)
+        VALUES (1, 'LOT3-OR-003', ${canonId}, 'ANNULE', 'P3', ${il2j}, ${il1j}, ${employeId})
+        RETURNING id`,
+  )) as unknown as Row[];
+  await db.execute(
+    sql`INSERT INTO lignes_ordre_reparation (ordre_id, type, libelle, duree_heures, technicien_id, statut, statut_autorisation)
+        VALUES (${Number(orAnnule.id)}, 'SERVICE', 'Heures annulées', 5, ${employeId}, 'valide', 'AUTORISE')`,
   );
 });
 
@@ -247,13 +291,17 @@ describe("Lot 3 — pilotage (dashboard direction)", () => {
     // nomme le coupable — et un KPI retiré se voit aussi.
     expect(r.kpis.map((k: any) => k.code).sort()).toEqual(
       [
+        "DELAI_PIECES_JOURS",
         "FIABILITE_APPRO",
         "FTQ",
         "PONCTUALITE",
+        "PRODUCTIVITE_TECHNICIEN",
         "RAPIDITE_DIAG_JOURS",
         "SATISFACTION_CLIENT",
+        "TAUX_REACHAT",
         "TAUX_REPRISE",
         "TAUX_RETOUR_SAV",
+        "TAUX_TRANSFORMATION_DEVIS",
       ].sort(),
     );
     // Et chacun annonce son dénominateur : une valeur sans « sur combien »
@@ -261,6 +309,23 @@ describe("Lot 3 — pilotage (dashboard direction)", () => {
     for (const k of r.kpis as any[]) {
       expect(typeof k.n, `${k.code} sans dénominateur`).toBe("number");
     }
+    // P3.3.7 : la série d'occupation est datée et complète, pas un instantané.
+    expect(r.occupation).toHaveLength(12);
+    expect(typeof r.occupation[0]!.moyenne).toBe("number");
+    expect(r.occupation[0]!.debut < r.occupation[11]!.debut).toBe(true);
+    // P3.3.4 : la rétention expose aussi sa liste d'action.
+    expect(Array.isArray(r.clientsDormants)).toBe(true);
+    // P3.3.6 : l'historique VALIDATION_DEVIS alimente le taux de transformation.
+    const conversion = r.kpis.find((k: any) => k.code === "TAUX_TRANSFORMATION_DEVIS") as any;
+    expect(conversion.n).toBeGreaterThanOrEqual(1);
+    expect(typeof conversion.valeur).toBe("number");
+    // P3.3.3 : cycle + ligne vendue réels, pas seulement les helpers purs.
+    const productivite = r.kpis.find((k: any) => k.code === "PRODUCTIVITE_TECHNICIEN") as any;
+    expect(productivite.n).toBeGreaterThanOrEqual(1);
+    expect(typeof productivite.valeur).toBe("number");
+    const detail = r.productivite.parTechnicien.find((p: any) => p.technicienId === employeId);
+    expect(detail?.heuresVendues).toBe(7);
+    expect(detail?.heuresDisponibles).toBeGreaterThan(0);
   });
 
   it("6. chaque KPI a SA cible — sans elle, il reste voué au SANS_DATA", async () => {
@@ -278,6 +343,8 @@ describe("Lot 3 — pilotage (dashboard direction)", () => {
       "FIABILITE_APPRO",
       "SATISFACTION_CLIENT",
       "TAUX_REPRISE",
+      "TAUX_TRANSFORMATION_DEVIS",
+      "PRODUCTIVITE_TECHNICIEN",
     ]) {
       expect(codes.has(code), `la cible ${code} manque : le KPI resterait SANS_DATA`).toBe(true);
     }

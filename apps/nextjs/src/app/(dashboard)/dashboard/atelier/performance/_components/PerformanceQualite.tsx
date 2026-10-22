@@ -1,11 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { api } from "~/trpc/react";
-import { Activity, AlertTriangle, ArrowRight, Car, CheckCircle, Clock, Gauge, Receipt, Users } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, Car, ChartBar, CheckCircle, Clock, Gauge, MessageCircle, Receipt, Target, Users } from "lucide-react";
 import Link from "next/link";
+import { toast } from "sonner";
 import { PRIORITE_META, STATUT_BADGE, STATUT_LABELS } from "~/server/lib/atelier-service";
+import { usePermissions } from "~/hooks/usePermissions";
+import { KPI_DEFAUTS } from "~/lib/kpi-defaults";
+import { formatDelaiHeures, type SyntheseRelationClient } from "~/lib/suivi-relation";
 
 const PERIODES = [
   { id: "jour", label: "Jour" },
@@ -279,24 +283,329 @@ function BandeauKpi({ label, value, className }: { label: string; value: string 
   );
 }
 
+const KPI_LABELS: Record<string, string> = {
+  PONCTUALITE: "Ponctualité",
+  FTQ: "Qualité 1ᵉʳ passage",
+  TAUX_RETOUR_SAV: "Taux retour SAV",
+  RAPIDITE_DIAG_JOURS: "Rapidité diagnostic",
+  FIABILITE_APPRO: "Fiabilité approvisionnement",
+  DELAI_PIECES_JOURS: "Délai livraison pièces",
+  SATISFACTION_CLIENT: "Satisfaction client",
+  // ÉTAPE 6 — le taux de reprises : combien de dossiers ont dû être repris
+  // après contrôle qualité. C'est un indicateur de coût double — une reprise,
+  // c'est une seconde immobilisation que le client a payée deux fois.
+  TAUX_REPRISE: "Taux de reprises",
+  TAUX_REACHAT: "Taux de réachat",
+  TAUX_TRANSFORMATION_DEVIS: "Taux de transformation devis",
+  PRODUCTIVITE_TECHNICIEN: "Productivité technicien",
+};
+
+/**
+ * P2.4 — `atelierKpi.updateCible` existait sans appelant : les cibles étaient
+ * donc figées au seed, et « cible : 85 » s'affichait sans qu'aucun responsable
+ * ne puisse la définir. Cette section rend la promesse modifiable, avec les
+ * deux seuils qui décident de l'orange et du rouge dans `getSanteGarage`.
+ */
+function CiblesKpi({ codes }: { codes: string[] }) {
+  const utils = api.useUtils();
+  const { hasPermission } = usePermissions();
+  const peutModifier = hasPermission("or.modifier");
+  const { data, isLoading, error } = api.atelierKpi.getCibles.useQuery();
+  const [brouillon, setBrouillon] = useState<Record<string, { cible: string; orange: string; rouge: string }>>({});
+
+  useEffect(() => {
+    if (!data) return;
+    const suivant: Record<string, { cible: string; orange: string; rouge: string }> = {};
+    for (const c of data) {
+      suivant[c.code] = {
+        cible: c.cible == null ? "" : String(c.cible),
+        orange: c.seuilOrange == null ? "" : String(c.seuilOrange),
+        rouge: c.seuilRouge == null ? "" : String(c.seuilRouge),
+      };
+    }
+    setBrouillon(suivant);
+  }, [data]);
+
+  const mutation = api.atelierKpi.updateCible.useMutation({
+    onSuccess: async () => {
+      toast.success("Cible enregistrée");
+      await Promise.all([
+        utils.atelierKpi.getCibles.invalidate(),
+        utils.atelierKpi.getSanteGarage.invalidate(),
+      ]);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const ligne = (code: string) => brouillon[code] ?? { cible: "", orange: "", rouge: "" };
+  const modifier = (code: string, champ: "cible" | "orange" | "rouge", valeur: string) => {
+    setBrouillon((prev) => ({
+      ...prev,
+      [code]: { ...(prev[code] ?? { cible: "", orange: "", rouge: "" }), [champ]: valeur },
+    }));
+  };
+
+  const enregistrer = (code: string) => {
+    const v = ligne(code);
+    const cible = Number(v.cible);
+    if (v.cible.trim() === "" || Number.isNaN(cible)) {
+      toast.error("La cible doit être un nombre");
+      return;
+    }
+    const orange = v.orange.trim() === "" ? null : Number(v.orange);
+    const rouge = v.rouge.trim() === "" ? null : Number(v.rouge);
+    if ((orange !== null && Number.isNaN(orange)) || (rouge !== null && Number.isNaN(rouge))) {
+      toast.error("Les seuils doivent être des nombres");
+      return;
+    }
+    const existante = data?.find((c) => c.code === code);
+    const defaut = KPI_DEFAUTS[code];
+    const sensExistant = existante?.sens === "HAUT" || existante?.sens === "BAS" ? existante.sens : undefined;
+    mutation.mutate({
+      code,
+      cible,
+      seuilOrange: orange,
+      seuilRouge: rouge,
+      unite: existante?.unite ?? defaut?.unite,
+      sens: sensExistant ?? defaut?.sens,
+    });
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+        <Target size={14} /> Cibles & seuils
+      </h3>
+      <p className="mt-1 text-xs text-muted-foreground">
+        La cible est la valeur visée ; les seuils orange et rouge déclenchent le changement de statut.
+        {!peutModifier && " Lecture seule : la permission « or.modifier » est requise pour modifier."}
+      </p>
+
+      {isLoading ? (
+        <div className="mt-3 h-16 animate-pulse rounded-lg bg-muted" />
+      ) : error ? (
+        <p className="mt-3 text-xs text-destructive">Impossible de charger les cibles : {error.message}</p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full">
+            <thead className="text-left text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1.5">Indicateur</th>
+                <th className="px-2 py-1.5">Cible</th>
+                <th className="px-2 py-1.5">Seuil orange</th>
+                <th className="px-2 py-1.5">Seuil rouge</th>
+                <th className="px-2 py-1.5 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/60">
+              {codes.map((code) => {
+                const v = ligne(code);
+                const variables = mutation.variables as { code?: string } | undefined;
+                const enCours = mutation.isPending && variables?.code === code;
+                return (
+                  <tr key={code} className="text-sm">
+                    <td className="px-2 py-1.5 font-medium">{KPI_LABELS[code] ?? code}</td>
+                    <td className="px-2 py-1.5">
+                      <input
+                        type="number"
+                        step="any"
+                        value={v.cible}
+                        onChange={(e) => modifier(code, "cible", e.target.value)}
+                        disabled={!peutModifier}
+                        className="w-20 rounded border border-border bg-background px-2 py-1 text-xs disabled:opacity-50"
+                        aria-label={`Cible ${KPI_LABELS[code] ?? code}`}
+                      />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input
+                        type="number"
+                        step="any"
+                        value={v.orange}
+                        onChange={(e) => modifier(code, "orange", e.target.value)}
+                        disabled={!peutModifier}
+                        placeholder="—"
+                        className="w-20 rounded border border-border bg-background px-2 py-1 text-xs disabled:opacity-50"
+                        aria-label={`Seuil orange ${KPI_LABELS[code] ?? code}`}
+                      />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input
+                        type="number"
+                        step="any"
+                        value={v.rouge}
+                        onChange={(e) => modifier(code, "rouge", e.target.value)}
+                        disabled={!peutModifier}
+                        placeholder="—"
+                        className="w-20 rounded border border-border bg-background px-2 py-1 text-xs disabled:opacity-50"
+                        aria-label={`Seuil rouge ${KPI_LABELS[code] ?? code}`}
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => enregistrer(code)}
+                        disabled={!peutModifier || mutation.isPending}
+                        className="rounded bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground disabled:opacity-50"
+                      >
+                        {enCours ? "…" : "Enregistrer"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {data?.length === 0 && (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Aucune cible personnalisée : les valeurs par défaut s'appliquent.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Vue Santé ───
+type OccupationPoint = { debut: string; fin: string; moyenne: number };
+type ClientDormant = { clientId: number; nom: string; telephone: string | null; derniereVisite: string; joursDepuis: number };
+
+function jjmm(iso: string): string {
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+}
+
+function dateFr(iso: string): string {
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+}
+
+/**
+ * P3.3.4 — un taux de rétention sans liste d'action ne sert à rien. Ces
+ * clients ont une dernière visite vieille de 12 à 24 mois : assez ancienne
+ * pour être oubliée, assez récente pour qu'un appel ait une chance d'aboutir.
+ * Les SAV sont exclus en amont : rappeler un client mécontent n'est pas une
+ * campagne de fidélisation.
+ */
+function ClientsAReactiver({ clients }: { clients: ClientDormant[] }) {
+  if (clients.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+          <Users size={13} /> Clients à réactiver
+        </h3>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">12 à 24 mois sans visite</span>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Dernière visite connue, hors SAV. Un appel ou un SMS suffit souvent à faire revenir un client dont le véhicule arrive en entretien.
+      </p>
+      <div className="mt-3 divide-y divide-border/60">
+        {clients.map((c) => (
+          <div key={c.clientId} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+            <div className="min-w-0">
+              <p className="truncate font-medium">{c.nom}</p>
+              <p className="text-[10px] text-muted-foreground">
+                dernière visite le {dateFr(c.derniereVisite)} · il y a {Math.round(c.joursDepuis / 30)} mois
+              </p>
+            </div>
+            {c.telephone ? (
+              <a href={`tel:${c.telephone.replace(/[^\d+]/g, "")}`} className="shrink-0 rounded bg-primary/10 px-2 py-1 text-xs font-semibold text-primary hover:bg-primary/20">
+                {c.telephone}
+              </a>
+            ) : (
+              <span className="shrink-0 text-[10px] text-muted-foreground">téléphone absent</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * P3.3.7 — la santé du garage ne montrait que l'occupation du jour. Une barre
+ * par semaine complète : un plateau se distingue d'un pic, et une semaine
+ * chargée ne se confond plus avec une tendance.
+ */
+function OccupationAtelier({ points }: { points: OccupationPoint[] }) {
+  const max = Math.max(1, ...points.map((p) => p.moyenne));
+  const vide = points.length === 0 || points.every((p) => p.moyenne === 0);
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+          <ChartBar size={13} /> Occupation atelier
+        </h3>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">dossiers ouverts / jour</span>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Moyenne quotidienne sur 12 semaines complètes. La semaine en cours est exclue tant qu’elle n’est pas terminée.
+      </p>
+
+      {vide ? (
+        <p className="mt-3 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Aucun dossier ouvert sur cette période.
+        </p>
+      ) : (
+        <>
+          <div className="mt-3 flex h-24 items-end gap-1">
+            {points.map((p) => (
+              <div
+                key={p.debut}
+                className="flex h-full flex-1 items-end"
+                title={`${jjmm(p.debut)} → ${jjmm(p.fin)} : ${p.moyenne} dossier${p.moyenne > 1 ? "s" : ""}/jour`}
+              >
+                <div
+                  className="w-full rounded-t bg-primary/70 transition-colors hover:bg-primary"
+                  style={{ height: `${(p.moyenne / max) * 100}%`, minHeight: p.moyenne > 0 ? 2 : 0 }}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+            <span>{points.length > 0 ? jjmm(points[0].debut) : ""}</span>
+            <span>{points.length > 0 ? jjmm(points[points.length - 1].fin) : ""}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function RelationClientSante({ relation }: { relation: SyntheseRelationClient | undefined }) {
+  const reponses = relation?.reponses ?? 0;
+  const ouvertes = relation?.reclamationsOuvertes ?? 0;
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <h3 className="mb-2 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+        <MessageCircle size={13} className="text-primary" /> Relation client
+      </h3>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="rounded-lg bg-muted/40 p-2.5">
+          <p className="text-xs uppercase tracking-wider text-muted-foreground">Délai de première réponse</p>
+          <p className="text-lg font-black text-foreground">{formatDelaiHeures(relation?.delaiReponseMoyenHeures ?? null)}</p>
+          <p className="text-[10px] text-muted-foreground">
+            {reponses > 0 ? `sur ${reponses} dossier${reponses > 1 ? "s" : ""} ouvert${reponses > 1 ? "s" : ""} dans la période` : "aucune réponse tracée sur la période"}
+          </p>
+        </div>
+        <div className={`rounded-lg p-2.5 ${ouvertes > 0 ? "bg-destructive/5" : "bg-muted/40"}`}>
+          <p className="text-xs uppercase tracking-wider text-muted-foreground">Réclamations ouvertes</p>
+          <p className={`text-lg font-black ${ouvertes > 0 ? "text-destructive" : "text-foreground"}`}>{ouvertes}</p>
+          <p className="text-[10px] text-muted-foreground">
+            {ouvertes > 0 ? "à traiter, même sur un dossier déjà livré" : "aucune réclamation en attente"}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function VueSante({ periode }: { periode: PeriodeId }) {
   const { data, isLoading } = api.atelierKpi.getSanteGarage.useQuery({ periode });
   if (isLoading || !data) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
 
   const statutColor = (s: string) => s === "VERT" ? "bg-success/15 text-success-foreground" : s === "ORANGE" ? "bg-warning/15 text-warning-foreground" : s === "ROUGE" ? "bg-destructive/15 text-destructive" : "bg-muted text-muted-foreground";
-  const kpiLabels: Record<string, string> = {
-    PONCTUALITE: "Ponctualité",
-    FTQ: "Qualité 1ᵉʳ passage",
-    TAUX_RETOUR_SAV: "Taux retour SAV",
-    RAPIDITE_DIAG_JOURS: "Rapidité diagnostic",
-    FIABILITE_APPRO: "Fiabilité approvisionnement",
-    SATISFACTION_CLIENT: "Satisfaction client",
-  // ÉTAPE 6 — le taux de reprises : combien de dossiers ont dû être repris
-  // après contrôle qualité. C'est un indicateur de coût double — une reprise,
-  // c'est une seconde immobilisation que le client a payée deux fois.
-  TAUX_REPRISE: "Taux de reprises",
-  };
 
   return (
     <div className="space-y-4">
@@ -304,8 +613,8 @@ function VueSante({ periode }: { periode: PeriodeId }) {
         {data.kpis.map((k: any) => (
 <div key={k.code} className="rounded-xl border border-border bg-card p-3">
             <span className={`mb-1 inline-block rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${statutColor(k.statut)}`}>{k.statut}</span>
-            <p className="truncate text-xs uppercase tracking-wider text-muted-foreground">{kpiLabels[k.code] ?? k.code}</p>
-            <p className="text-lg font-black">{k.valeur != null ? `${k.valeur}${k.unite === "%" ? " %" : ""}` : "-"}</p>
+            <p className="truncate text-xs uppercase tracking-wider text-muted-foreground">{KPI_LABELS[k.code] ?? k.code}</p>
+            <p className="text-lg font-black">{k.valeur != null ? `${k.valeur}${k.unite === "%" ? " %" : k.unite ? ` ${k.unite}` : ""}` : "-"}</p>
             {/* ÉTAPE 6 — LE DÉNOMINATEUR, sous la valeur.
                 Une moyenne sans « sur combien » est une impression.
                 « Satisfaction 4,5 / 5 » se lit comme une vérité établie ;
@@ -320,14 +629,22 @@ function VueSante({ periode }: { periode: PeriodeId }) {
               <p className="text-[10px] font-semibold text-muted-foreground">aucune mesure</p>
             ) : (
               <p className={`text-[10px] ${k.significatif ? "text-muted-foreground" : "text-warning-foreground"}`}>
-                sur {k.n} dossier{k.n > 1 ? "s" : ""}
+                sur {k.n} {k.nLabel ?? "dossier"}{k.n > 1 ? "s" : ""}
                 {!k.significatif && " — trop peu pour conclure"}
               </p>
             )}
-            {k.cible != null && <p className="text-[10px] text-muted-foreground">cible : {k.cible}{k.unite === "%" ? " %" : ""}</p>}
+            {k.cible != null && <p className="text-[10px] text-muted-foreground">cible : {k.cible}{k.unite === "%" ? " %" : k.unite ? ` ${k.unite}` : ""}</p>}
           </div>
         ))}
       </div>
+
+      <CiblesKpi codes={data.kpis.map((k: any) => String(k.code))} />
+
+      <RelationClientSante relation={data.relationClient as SyntheseRelationClient | undefined} />
+
+      <OccupationAtelier points={(data.occupation ?? []) as OccupationPoint[]} />
+
+      <ClientsAReactiver clients={(data.clientsDormants ?? []) as ClientDormant[]} />
 
       {(data.topAnciens ?? []).length > 0 && (
         <div className="rounded-xl border border-border bg-card p-4">
@@ -463,6 +780,8 @@ function VueCompetences({ periode }: { periode: PeriodeId }) {
               <Stat label="Retouche" value={f.retoucheTaux != null ? `${f.retoucheTaux} %` : "—"} />
               <Stat label="Comebacks imputés" value={f.comebacksImputes} danger={f.comebacksImputes >= 2} />
               <Stat label="1ᵉʳ passage" value={f.premierPassageTaux != null ? `${f.premierPassageTaux} %` : "—"} />
+              <Stat label="Productivité" value={f.productivite != null ? `${f.productivite} %` : "—"} />
+              <Stat label="Heures vendues" value={f.heuresVendues != null ? `${f.heuresVendues} / ${f.heuresDisponibles} h` : "—"} />
             </div>
           </div>
         ))

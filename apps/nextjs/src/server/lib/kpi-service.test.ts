@@ -9,11 +9,17 @@ import {
   analyseComebacks,
   firstTimeQuality,
   fiabiliteAppro,
+  delaiLivraisonPieces,
+  occupationParSemaine,
+  analyserRetention,
   performanceVsStandard,
   statutKPI,
   scoreSante,
   scoreTechnicien,
   satisfactionMoyenne,
+  tauxTransformationDevis,
+  heuresDisponiblesParTechnicien,
+  productiviteTechnicien,
   type OrKpiRecord,
 } from "./kpi-service";
 
@@ -108,6 +114,101 @@ describe("Performance - appro, satisfaction, standards", () => {
     expect(fiabiliteAppro([{ statut: "SERVIE" }, { statut: "MANQUANTE" }, { statut: "SERVIE" }])).toBe(66.7);
     expect(fiabiliteAppro([])).toBeNull();
   });
+  it("délai pièces : moyenne des demandes réellement servies, manquantes exclues", () => {
+    expect(delaiLivraisonPieces([
+      { statut: "SERVIE", createdAt: "2026-08-01", traiteLe: "2026-08-03" },
+      { statut: "PARTIELLE", createdAt: "2026-08-01", traiteLe: "2026-08-02" },
+      // Une MANQUANTE a bien un traite_le, mais n'a livré aucune pièce.
+      { statut: "MANQUANTE", createdAt: "2026-08-01", traiteLe: "2026-08-20" },
+      // Une demande encore ouverte n'a pas de délai de livraison.
+      { statut: "SERVIE", createdAt: "2026-08-01", traiteLe: null },
+      { statut: "ANNULEE", createdAt: "2026-08-01", traiteLe: "2026-08-20" },
+    ])).toBe(1.5);
+  });
+  it("délai pièces : aucune demande servie => aucune mesure", () => {
+    expect(delaiLivraisonPieces([])).toBeNull();
+    expect(delaiLivraisonPieces([
+      { statut: "MANQUANTE", createdAt: "2026-08-01", traiteLe: "2026-08-02" },
+    ])).toBeNull();
+  });
+  it("occupation : 12 semaines complètes, la semaine en cours est exclue", () => {
+    const points = occupationParSemaine([], 12, new Date("2026-10-21T12:00:00"));
+    expect(points).toHaveLength(12);
+    expect(points[0]).toMatchObject({ debut: "2026-07-27", fin: "2026-08-02", moyenne: 0 });
+    expect(points[11]).toMatchObject({ debut: "2026-10-12", fin: "2026-10-18", moyenne: 0 });
+  });
+  it("occupation : un dossier ouvert toute la semaine pèse 1 dossier/jour", () => {
+    const points = occupationParSemaine([
+      { statut: "EN_COURS", dateOuverture: "2026-10-12", dateCloture: null },
+    ], 1, new Date("2026-10-21T12:00:00"));
+    expect(points[0].moyenne).toBe(1);
+  });
+  it("occupation : une fermeture en milieu de semaine ne compte que les jours ouverts", () => {
+    const points = occupationParSemaine([
+      { statut: "LIVRE", dateOuverture: "2026-10-14", dateCloture: "2026-10-16" },
+    ], 1, new Date("2026-10-21T12:00:00"));
+    expect(points[0].moyenne).toBe(0.4);
+  });
+  it("occupation : annulés, livrés sans clôture et dossiers clos avant la fenêtre exclus", () => {
+    const points = occupationParSemaine([
+      { statut: "ANNULE", dateOuverture: "2026-10-12", dateCloture: null },
+      { statut: "LIVRE", dateOuverture: "2026-10-12", dateCloture: null },
+      { statut: "LIVRE", dateOuverture: "2026-08-01", dateCloture: "2026-08-05" },
+    ], 1, new Date("2026-10-21T12:00:00"));
+    expect(points[0].moyenne).toBe(0);
+  });
+  it("rétention : un retour à 30 jours compte, un retour à 14 jours non", () => {
+    const r = analyserRetention([
+      { clientId: 1, statut: "LIVRE", dateCloture: "2025-10-01" },
+      { clientId: 1, statut: "LIVRE", dateCloture: "2026-02-01" },
+      { clientId: 2, statut: "LIVRE", dateCloture: "2026-09-01" },
+      { clientId: 2, statut: "LIVRE", dateCloture: "2026-09-15" },
+      { clientId: 3, statut: "LIVRE", dateCloture: "2026-08-01" },
+    ], { maintenant: new Date("2026-10-21T12:00:00") });
+    expect(r.clientsActifs).toBe(3);
+    expect(r.clientsRevenus).toBe(1);
+    expect(r.taux).toBe(33.3);
+  });
+  it("rétention : SAV, hors fenêtre 24 mois et dossiers non livrés exclus", () => {
+    const r = analyserRetention([
+      { clientId: 4, statut: "LIVRE", dateCloture: "2026-09-01", savOrigineOrId: 99 },
+      { clientId: 5, statut: "LIVRE", dateCloture: "2024-01-01" },
+      { clientId: 6, statut: "EN_COURS", dateCloture: null },
+      { clientId: 7, statut: "LIVRE", dateCloture: "2025-08-01", clientDisplay: "Client dormant", clientTelephone: "677000000" },
+    ], { maintenant: new Date("2026-10-21T12:00:00") });
+    expect(r.clientsActifs).toBe(1);
+    expect(r.taux).toBe(0);
+    expect(r.dormants).toEqual([{
+      clientId: 7,
+      nom: "Client dormant",
+      telephone: "677000000",
+      derniereVisite: "2025-08-01",
+      joursDepuis: 446,
+    }]);
+  });
+  it("rétention : un client dont un dossier est encore ouvert n'est pas relancé", () => {
+    const r = analyserRetention([
+      { clientId: 9, statut: "LIVRE", dateCloture: "2025-08-01" },
+      { clientId: 9, statut: "EN_COURS", dateCloture: null },
+    ], { maintenant: new Date("2026-10-21T12:00:00") });
+    expect(r.clientsActifs).toBe(1);
+    expect(r.dormants).toEqual([]);
+  });
+  it("rétention : deux dossiers le même jour ne font pas un réachat", () => {
+    const r = analyserRetention([
+      { clientId: 8, statut: "LIVRE", dateCloture: "2026-09-01" },
+      { clientId: 8, statut: "LIVRE", dateCloture: "2026-09-01" },
+    ], { maintenant: new Date("2026-10-21T12:00:00") });
+    expect(r.clientsActifs).toBe(1);
+    expect(r.clientsRevenus).toBe(0);
+    expect(r.taux).toBe(0);
+    expect(analyserRetention([], { maintenant: new Date("2026-10-21T12:00:00") })).toEqual({
+      taux: null,
+      clientsActifs: 0,
+      clientsRevenus: 0,
+      dormants: [],
+    });
+  });
   it("satisfaction moyenne /5", () => {
     const ors = [{ satisfactionNote: 5 }, { satisfactionNote: 4 }] as any;
     const r = satisfactionMoyenne(ors);
@@ -190,5 +291,62 @@ describe("Performance - fiche technicien (imputation objective)", () => {
     const s = scoreTechnicien(agence, 7, sav);
     expect(s.recommandation).toBe("FORMATION_REQUISE");
     expect(s.comebacksImputes).toBe(3);
+  });
+});
+
+describe("Performance - transformation des devis", () => {
+  it("compte une transformation seulement si l'acceptation suit l'envoi", () => {
+    const r = tauxTransformationDevis([
+      or({ id: 1, dateDevisEnvoye: "2026-10-01T09:00:00", dateDevisAccepte: "2026-10-02T10:00:00" }),
+      or({ id: 2, dateDevisEnvoye: "2026-10-01T09:00:00", dateDevisAccepte: "2026-09-30T10:00:00" }),
+      or({ id: 3, dateDevisEnvoye: "2026-10-01T09:00:00", dateDevisAccepte: null }),
+      or({ id: 4, dateDevisEnvoye: null, dateDevisAccepte: "2026-10-02T10:00:00" }),
+    ]);
+    expect(r.envoyes).toBe(3);
+    expect(r.acceptes).toBe(1);
+    expect(r.taux).toBe(33.3);
+  });
+
+  it("sans devis envoyé, aucun taux ne peut être affirmé", () => {
+    expect(tauxTransformationDevis([])).toEqual({ taux: null, envoyes: 0, acceptes: 0 });
+  });
+});
+
+describe("Performance - disponibilité et productivité technicien", () => {
+  const horaires = [1, 2, 3, 4, 5].flatMap((dayOfWeek) => [
+    { cycleId: 1, dayOfWeek, expectedHours: "7", isWorkingDay: true },
+    { cycleId: 1, dayOfWeek: 6, expectedHours: "8", isWorkingDay: false },
+  ]);
+
+  it("somme les heures attendues des jours travaillés sur la période", () => {
+    const r = heuresDisponiblesParTechnicien(
+      [
+        { id: 1, nom: "Plein", prenom: "Temps", workCycleId: 1 },
+        { id: 2, nom: "Tardif", prenom: "Arrivé", workCycleId: 1, dateEmbauche: "2026-10-07" },
+        { id: 3, nom: "Parti", prenom: "Avant", workCycleId: 1, dateFinContrat: "2026-10-08" },
+        { id: 4, nom: "Sans", prenom: "Cycle", workCycleId: 2 },
+      ],
+      horaires,
+      "2026-10-05",
+      "2026-10-11",
+    );
+    expect(r).toEqual([
+      { technicienId: 1, nom: "Temps Plein", heuresDisponibles: 35 },
+      { technicienId: 2, nom: "Arrivé Tardif", heuresDisponibles: 21 },
+      { technicienId: 3, nom: "Avant Parti", heuresDisponibles: 28 },
+      { technicienId: 4, nom: "Cycle Sans", heuresDisponibles: 0 },
+    ]);
+  });
+
+  it("rapporte les heures vendues aux heures disponibles, sans exclure un technicien sans vente", () => {
+    const r = productiviteTechnicien([
+      { technicienId: 1, nom: "A", heuresVendues: 35, heuresDisponibles: 35 },
+      { technicienId: 2, nom: "B", heuresVendues: 14, heuresDisponibles: 28 },
+      { technicienId: 3, nom: "C", heuresVendues: 9, heuresDisponibles: 0 },
+    ]);
+    expect(r.totalVendues).toBe(49);
+    expect(r.totalDisponibles).toBe(63);
+    expect(r.taux).toBe(77.8);
+    expect(r.parTechnicien.map((t) => [t.technicienId, t.taux])).toEqual([[1, 100], [2, 50]]);
   });
 });

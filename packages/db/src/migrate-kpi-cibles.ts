@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { requireLocalOrForced } from "./env-guard";
+import { requireLocalOrForced, sslPourUrl } from "./env-guard";
 import postgres from "postgres";
 
 requireLocalOrForced("cibles KPI atelier par défaut (migrate-kpi-cibles.ts)");
@@ -9,7 +9,7 @@ requireLocalOrForced("cibles KPI atelier par défaut (migrate-kpi-cibles.ts)");
  *
  * Sans cibles, tous les KPI de `atelierKpi.getSanteGarage` affichent
  * SANS_DATA (feu tricolore inutilisable). Ce script insère, pour chaque
- * agence, les 6 codes de cibles manquantes avec des valeurs de démarrage
+ * agence, les codes de cibles manquants avec des valeurs de démarrage
  * raisonnables — modifiables ensuite par la Direction (`atelierKpi.updateCible`).
  *
  * Idempotent : ne touche jamais à une cible déjà existante.
@@ -24,6 +24,10 @@ const DEFAUTS: Array<{ code: string; cible: string; seuilOrange: string | null; 
   { code: "TAUX_RETOUR_SAV", cible: "5", seuilOrange: "10", seuilRouge: "15", unite: "%", sens: "BAS" },
   { code: "RAPIDITE_DIAG_JOURS", cible: "1", seuilOrange: "2", seuilRouge: "3", unite: "j", sens: "BAS" },
   { code: "FIABILITE_APPRO", cible: "90", seuilOrange: "75", seuilRouge: "60", unite: "%", sens: "HAUT" },
+  // P3.3.5 — délai demande de pièce → traitement. Trois jours est une cible
+  // d'atelier réaliste ; au-delà de dix, le véhicule immobilisé coûte plus
+  // cher que la pièce.
+  { code: "DELAI_PIECES_JOURS", cible: "3", seuilOrange: "5", seuilRouge: "10", unite: "j", sens: "BAS" },
   { code: "SATISFACTION_CLIENT", cible: "4", seuilOrange: "3", seuilRouge: "2", unite: "/5", sens: "HAUT" },
   // ÉTAPE 6 — TAUX_REPRISE. Le calcul (`tauxRetouche`) existait dans
   // `kpi-service.ts` depuis le début, et `chargerRecords` fournissait déjà le
@@ -35,10 +39,21 @@ const DEFAUTS: Array<{ code: string; cible: string; seuilOrange: string | null; 
   // qui revend du travail fini — une reprise, c'est une seconde immobilisation
   // que le client a payée deux fois.
   { code: "TAUX_REPRISE", cible: "10", seuilOrange: "15", seuilRouge: "25", unite: "%", sens: "BAS" },
+  // P3.3.4 — réachat à 24 mois, hors SAV et hors retours à moins de 30 jours.
+  // 40 % est une cible de garage indépendant ; sous 25 %, la moitié des
+  // clients actifs ne revient pas, et le coût d'acquisition devient le
+  // premier poste commercial.
+  { code: "TAUX_REACHAT", cible: "40", seuilOrange: "25", seuilRouge: "15", unite: "%", sens: "HAUT" },
+  { code: "TAUX_TRANSFORMATION_DEVIS", cible: "60", seuilOrange: "40", seuilRouge: "25", unite: "%", sens: "HAUT" },
+  { code: "PRODUCTIVITE_TECHNICIEN", cible: "70", seuilOrange: "55", seuilRouge: "40", unite: "%", sens: "HAUT" },
 ];
 
 (async () => {
-  const db = postgres(process.env.DATABASE_URL!, { ssl: false, prepare: false, max: 1 });
+  const db = postgres(process.env.DATABASE_URL!, {
+    ssl: sslPourUrl(process.env.DATABASE_URL!),
+    prepare: false,
+    max: 1,
+  });
   console.log("=== LOT 3 — cibles KPI par défaut ===");
   try {
     const agences = await db<{ id: number }[]>`SELECT id FROM agences ORDER BY id`;

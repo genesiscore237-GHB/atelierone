@@ -154,18 +154,95 @@ Loi d'or : **tant que le statut d'un véhicule ment, aucune phase suivante n'est
 | `nbAlertes` plafonné au `.limit(50)` | `dashboard.ts:175` |
 | isolation tenant : `COUNT(*) FROM produits` sans `agenceId` | `dashboard.ts:69` |
 
-**P3.2 · Satisfaction client** — rendre la note saisissable (à la restitution), 여행 délai de réponse, réclamation tracée. Sans cela le KPI reste `SANS_DATA` indéfiniment.
+**P3.2 · Satisfaction client** — ✅ note et commentaire à la restitution, délai de première réponse (devis ou réponse manuelle), réclamation ouverte/résolue tracée sur l'OR et dans la fiche client 360.
 
 **P3.3 · KPI manquants, par ordre de valeur**
-1. Marge par dossier (pas seulement globale / par produit)
-2. Taux de reprise (rework) — `tauxRetouche` existe, jamais appelé
-3. Productivité technicien : heures vendues / disponibles, `tempsStandardHeures` existe et n'est pas exploité
-4. Rétention client / réachat
-5. Délai moyen de livraison des pièces
-6. Taux de transformation devis
-7. Série historique d'occupation atelier (aujourd'hui : un instantané)
+1. Marge par dossier (pas seulement globale / par produit) — **bloquée** par l'absence de taux horaire main-d'œuvre (voir ci-dessous)
+2. ~~Taux de reprise (rework)~~ ✅ livré (`TAUX_REPRISE`, branché sur `tauxRetouche`)
+3. ~~Productivité technicien : heures vendues / disponibles~~ ✅ livré (`PRODUCTIVITE_TECHNICIEN` — voir détails ci-dessous)
+4. ~~Rétention client / réachat~~ ✅ livré (`TAUX_REACHAT`, 24 mois hors SAV, liste des dormants)
+5. ~~Délai moyen de livraison des pièces~~ ✅ livré (`DELAI_PIECES_JOURS`, fenêtré sur la période)
+6. ~~Taux de transformation devis~~ ✅ livré (`TAUX_TRANSFORMATION_DEVIS` — voir détails ci-dessous)
+7. ~~Série historique d'occupation atelier~~ ✅ livré (`occupationParSemaine`, 12 semaines complètes)
 
-**Refus explicite** : aucun nouveau KPI n'est ajouté tant que P3.1 n'est pas terminé et testé.
+**Reste : 1 KPI** (marge par dossier), bloqué par une décision métier. La règle
+« aucun nouveau KPI avant P3.1 terminé et testé » est satisfaite depuis le
+2026-10-20.
+
+#### P3.3.6 · Taux de transformation devis (formule actée 2026-10-22)
+
+**Avertissement initial du plan périmé.** La ligne originale disait « bloquée :
+`orDevisVersions` / `orAutorisations` sont du schéma mort sans UI ». C'est faux
+depuis un moment : `DevisTab` crée, envoie et enregistre les autorisations de
+versions de devis (`creerVersionDevis`, `envoyerVersionDevis`,
+`autoriserLignes`). Le schéma n'était pas mort — c'était la ligne du plan qui
+n'avait pas suivi le code.
+
+**Formule.** La vérité horodatée est `or_historique`, pas `orDevisVersions` :
+le journal est append-only, alimenté à la fois par le chemin versions (`envoyerVersionDevis`
+écrit `VALIDATION_DEVIS → EN_ATTENTE_VALIDATION`) et par le chemin legacy
+(`soumettreDevis`, même trace). Une version acceptée partiellement (une ligne
+autorisée suffit via `autoriserLignes`) écrit aussi `VALIDATION_DEVIS → EN_COURS`,
+donc compte comme transformée — un client qui autorise la moitié d'un devis a
+bien donné du travail.
+
+- **Dénominateur** : OR dont la **dernière** trace `VALIDATION_DEVIS →
+  EN_ATTENTE_VALIDATION` tombe dans la période (`envoyeLe`).
+- **Numérateur** : parmi ceux-ci, OR dont l'**ultima** trace `VALIDATION_DEVIS →
+  EN_COURS` (`dateDevisAccepte`) est **postérieure ou égale** au dernier envoi.
+  Une acceptation antérieure au dernier envoi est un devis précédent : elle ne
+  transforme pas le devis courant.
+- **Périmètre** : fenêtre `periode` du tableau de bord, comme les autres KPI.
+- **Code / cible** : `TAUX_TRANSFORMATION_DEVIS`, cible 60 %, seuils 40/25,
+  sens `HAUT`, `nLabel = dossier`.
+
+#### P3.3.3 · Productivité technicien (formule actée 2026-10-22)
+
+**Avertissement initial du plan périmé** (même raison). La ligne originale
+disait « bloquée : `interventionsTechniciens` n'est alimenté par aucune UI ».
+`TravauxTab` pointe désormais les interventions. Mais le motif « heures vendues
+/ disponibles » reste la formule, et le pointage n'y sert pas — voir limites.
+
+**Formule.**
+- **Numérateur (« heures vendues »)** : somme `lignes_ordre_reparation.duree_heures`
+  des lignes `type = SERVICE` assignées (`technicien_id`) à un technicien, non
+  déclinées (`statutAutorisation ≠ DECLINE` / `NULL` accepté), sur des OR
+  **livrés (`statut = LIVRE`) et clos (`dateCloture`) dans la période**. Une
+  heure vendue sur un dossier encore ouvert n'est pas encore produite. Le
+  statut `LIVRE` est requis en plus de `dateCloture` : `ANNULE` et
+  `PRET_A_LIVRER` écrivent aussi une date de clôture, et compteraient des
+  heures qui n'ont pas été vendues.
+- **Dénominateur (« heures disponibles »)** : somme `hr_work_schedules.expected_hours`
+  du cycle de travail de chaque employé actif (`work_cycle_id`), par jour de la
+  période, bornée par `date_embauche` / `date_fin_contrat` (sinon `date_sortie`).
+  Un jour de cycle `isWorkingDay = false` ou sans `expected_hours` valable ne
+  compte pas.
+- **Périmètre des employés** : `statut = 'actif'` **ET** `fonction` ressemblant à
+  technicien (ILIKE technicien / mécanicien (et sa variante non accentuée) /
+  carrossier / électricien (et sa variante non accentuée)). Un réceptionniste
+  équipé d'un cycle de travail ne dilue pas la moyenne.
+- **Global** : `Σ heures vendues / Σ heures disponibles` sur les techniciens
+  mesurables (`Σ disponible > 0`). Le détail par technicien est retourné et
+  affiché dans l'onglet Compétences ; `getCompetences` expose
+  `productivite`, `heuresVendues`, `heuresDisponibles` par fiche.
+- **Code / cible** : `PRODUCTIVITE_TECHNICIEN`, cible 70 %, seuils 55/40, sens
+  `HAUT`, `nLabel = technicien`.
+
+**Limites actées (pas des bugs).** Seuil `expected_hours` non renseigné → jour à
+zéro (inchangé). Absences approuvées et jours fériés (`absences`,
+`hr_public_holidays`) **ne déduisent pas** des heures disponibles — le
+dénominateur en sera surestimé et le taux sous-estimé. Les heures pointées
+(`interventionsTechniciens`) ne sont pas utilisées : la demande du plan est
+« heures vendues / disponibles », et rapprocher pointage vs barème serait un
+indicateur d'efficacité, distinct. Si un jour ces exclusions deviennent
+insupportables, ce sera une nouvelle décision, pas un correctif silencieux.
+
+**Périmètre des employés sans cycle.** Un employé actif sans `work_cycle_id` ou
+avec un cycle sans horaires sort du dénominateur (`heuresDisponibles = 0` →
+exclu) plutôt que d'inventer une capacité hebdomadaire : la disponibilité se lit
+dans le paramétrage RH, pas dans le code. Sur une base où personne n'a de cycle
+configuré, le KPI est SANS_DATA (badge « aucune mesure ») — c'est l'état honnête,
+pas un défaut d'affichage.
 
 ---
 
@@ -175,7 +252,7 @@ Constat : **zéro cache serveur**, KPI recalculés à chaque appel, `/dashboard/
 
 - Pré-agrégation quotidienne (les tables `faits_*` existent déjà : `dashboard.getReadModels` n'est appelé nulle part — code mort à brancher ou à supprimer)
 - Cache sur les KPI coûteux, invalidé par invalidation de requête tRPC existante
-- Corriger les scans sans période (`FIABILITE_APPRO` porte sur tout l'historique, les 5 autres sont fenêtrés)
+- ~~Corriger les scans sans période~~ ✅ `FIABILITE_APPRO` est désormais fenêtré comme les autres (2026-10-20)
 
 ---
 
@@ -283,15 +360,15 @@ Ordre de suppression obtenu par **fermeture transitive du graphe FK** (57 tables
 
 ---
 
-## 5ter. Où en est le plan — 2026-10-17
+## 5ter. Où en est le plan — 2026-10-20
 
 | Phase | Avancement | Reste |
 |---|---|---|
 | **P0** Intégrité | ✅ **7/7** | — |
 | **P1** Liste véhicules | ✅ **3/3** | — (`P1.2` caduc) |
-| **P2** Alertes/relances | 🟡 **1/4** | Vue centrale d'alertes, module Relances, 2 endpoints orphelins |
-| **P3** Statistiques | 🟡 **1/9** | `P3.2` satisfaction, 7 KPI de `P3.3` |
-| **P4** Performance | ❌ **0** | Pré-agrégation, cache, scans sans période |
+| **P2** Alertes/relances | ✅ **4/4** | — (P2.2 centre d'alertes, P2.3 relances, P2.4 cibles KPI livrés) |
+| **P3** Statistiques | 🟡 **8/9** | `P3.2` ✅ (note, première réponse, réclamation tracée) ; 1 KPI restant (`P3.3.1` marge dossier), bloqué par une décision métier |
+| **P4** Performance | 🟡 **partiel** | Scans KPI fenêtrés ✅ ; pré-agrégation et cache serveur restent à faire |
 | **P5** Hygiène | ✅ **3/3** | — (liste `KEEP` de `reset-db.ts`) |
 
 ### Cycle véhicule — état des étapes
@@ -302,13 +379,14 @@ Ordre de suppression obtenu par **fermeture transitive du graphe FK** (57 tables
 | 2 | Harmonisation — 360 partagée, listes canoniques | ✅ |
 | 3 | Anatomie du cycle — les deux vocabulaires de statut | ✅ |
 | 4 | Restitutions — trace obligatoire, panneau partagé | ✅ |
-| 5 | Relances | ✅ **3/3** — table, vocabulaire, routeur, panneau, 1089 tests |
-| 6 | Statistiques et KPI fouillables | 🟡 **4/9** — **bloquée par l'absence de données, pas par le code** : la production compte 1 dossier, 0 ligne, 0 vente, 0 achat. Voir § 5bis |
+| 5 | Relances | ✅ **3/3** — table, vocabulaire, routeur, panneau, 1209 tests verts |
+| 6 | Statistiques et KPI fouillables | 🟡 **8/9** — **bloquée par l'absence de données, pas par le code** : la production compte 1 dossier, 0 ligne, 0 vente, 0 achat. Voir § 5bis |
 | 7 | Qualité — tests de rendu React, purge des 229 erreurs TS | 🟡 **partiel** — invariant d'onglets en place ; **rendu React réel toujours absent** (`jsdom` non installé) |
 
-**P0, P1 et P5 sont closes.** Elles n'apportent plus de valeur : ce qui bloque
-maintenant n'est plus l'intégrité ni la liste, c'est l'absence de relance et de
-statistiques.
+**P0, P1, P2 et P5 sont closes.** Ce qui bloque maintenant n'est plus
+l'intégrité, la liste ni les alertes : c'est le 1 KPI restant de `P3.3` (marge
+dossier, décision métier), la pré-agrégation/cache de P4, puis le rendu React
+réel de l'étape 7.
 
 ### 5ter bis. L'étape 6 est bloquée par les données, pas par le code — 2026-10-17
 
@@ -330,10 +408,10 @@ Les 31 clients et les 55 véhicules viennent de `migrate-parking-clients` et
 `migrate-parking-vehicules` : ce sont des **fiches créées depuis le registre**,
 pas de l'exploitation. Il n'y a pas eu un seul cycle d'atelier terminé.
 
-Conséquence : **les six KPI restants s'afficheraient « aucune mesure ».**
-Le travail du dénominateur les rend au moins honnêtes — mais vides. Écrire six
-cartes de plus produirait six écrans vides, ce qui est pire que cinq : on
-peut alors croire que le tableau de bord fonctionne.
+Conséquence : **les KPI restants s'affichent « aucune mesure ».**
+Le travail du dénominateur les rend au moins honnêtes — mais vides. Ajouter des
+cartes ne change rien à cette vacuité : on pourrait croire que le tableau de
+bord fonctionne alors qu'il n'a rien à mesurer.
 
 Le moteur, lui, **est prouvé** : `kpi-etape6-denominateur.integration.test.ts`
 fait passer une note à 5, vérifie `valeur = 5`, `n = 1`, `significatif = false`,
@@ -356,7 +434,7 @@ calculable aujourd'hui, et pas pour une raison de code :
 
 Une marge calculée avec un taux horaire inventé serait **fiable en apparence et
 fausse en réalité** — exactement le défaut que ce chantier traque depuis le
-départ. La marge sur les pièces seule est calculable et命名为 « marge pièces »,
+départ. La marge sur les pièces seule est calculable et nommée « marge pièces »,
 mais ce n'est pas la marge que le plan demande.
 
 > **Décision attendue :** quel est le coût d'une heure d'atelier ? Cette réponse
@@ -383,6 +461,7 @@ mais ce n'est pas la marge que le plan demande.
 ## 6. Journal
 
 | Date | Lot | Contenu |
+| 2026-10-22 | **P3.3.6 + P3.3.3 — le taux de transformation devis et la productivité technicien sortent de « bloqué »** | Les deux lignes du plan étaient périmées : `DevisTab` crée, envoie et enregistre les versions de devis depuis longtemps, et `TravauxTab` pointe les interventions. Les deux blocages étaient des lignes de plan qui n'avaient pas suivi le code, pas des données absentes. **Décision de formule pour les deux.** (1) `TAUX_TRANSFORMATION_DEVIS` : la vérité horodatée est `or_historique`, pas `orDevisVersions` — le journal est append-only et porte à la fois le chemin versions (`envoyerVersionDevis`) et le chemin legacy (`soumettreDevis`), ce qui épargne un scan de JSON. Au dénominateur, OR dont la **dernière** trace `VALIDATION_DEVIS → EN_ATTENTE_VALIDATION` tombe dans la période ; au numérateur, ceux dont la **dernière** trace `VALIDATION_DEVIS → EN_COURS` n'anticipe pas le dernier envoi — une acceptation antérieure à un re-envoi comptait comme une transformation du nouveau devis, une ré-approbation gratuite. Cible 60/40/25. (2) `PRODUCTIVITE_TECHNICIEN` : le numérateur est le plan (« heures vendues ») — `duree_heures` des lignes SERVICE non déclinées sur des OR **livrés** de la période, pas les heures pointées. Le dénominateur sort du paramétrage RH, pas du code : `expected_hours` du cycle de chaque employé actif dont la `fonction` ressemble à technicien, borné par embauche et fin de contrat. Sans cycle configuré, l'employé sort du dénominateur plutôt que d'inventer une capacité hebdomadaire ; là où personne n'a de cycle, le KPI affiche SANS_DATA — l'état honnête. Limites actées, pas cachées : absences approuvées et jours fériés ne déduisent pas des heures disponibles (dénominateur surestimé, taux sous-estimé) ; le détail par technicien est exposé (`getCompetences` : `productivite`, `heuresVendues`, `heuresDisponibles`) et affiché dans l'onglet Compétences. Cible 70/55/40. Au passage, deux erreurs TS baseline de `kpi-service.ts` (`nbLignesApresDevis` absent de l'interface `OrKpiRecord`) sont sorties du lot en déclarant le champ. Et `migrate-kpi-cibles.ts` forçait encore `ssl: false` : il n'aurait jamais pu atteindre Neon, donc les nouvelles cibles n'auraient jamais pu être seedées en production. Il passe désormais par `sslPourUrl()`, comme les autres scripts. **Vérifs** : 4 tests unitaires nouveaux (acceptation postérieure au dernier envoi, absence d'envoi => aucune mesure, somme des heures attendues sur les seuls jours travaillés, ratio heures vendues / disponibles sans exclure un technicien sans vente), et l'intégration `pilotage-lot3` exerce désormais les deux KPI sur des fixtures réelles : historique `VALIDATION_DEVIS` pour la conversion, cycle de travail à 7 h/jour ouvré et ligne SERVICE de 7 h sur un OR livré pour la productivité (`heuresVendues = 7`, `heuresDisponibles > 0`), plus un OR annulé portant 5 h pour prouver que `dateCloture` seule ne suffit pas. Suite complète **1241 verts / 3 ignorés (1244, 104 fichiers dont 1 skipped)**, `next build` OK, `tsc` sans erreur dans les fichiers P3.3 (303 erreurs baseline parallèles restantes, les 2 de `nbLignesApresDevis` éliminées), `db:check` : **schéma identique**, 21 divergences de données tolérées (dont `kpi_cibles` 22 local vs 12 production : les nouvelles cibles ne sont pas seedées en production). Reste à faire, avec l'URL Neon et un consentement explicite : `FORCE=1 pnpm -F @atelierone/db migrate:kpi-cibles` pour créer les 10 cibles manquantes — sans elles, les deux nouveaux KPI restent `SANS_DATA` en production. |
 | 2026-10-16 | **P1.1 (2/2) — les écrans branchés sur la liste canonique** | Une source de vérité qui n'alimente aucun écran n'a servi à rien. Deux raccordements. **(1) La liste atelier** `/dashboard/vehicules` : elle interroge toujours `vehicules.list` — plafond 100 en dur, `total` calculé puis **ignoré**, `limit`传的 sans pagination, table de statuts recopiée en dur. Elle passe à `listeCanonique` et gagne : pagination réelle avec boutons Précédent/Suivant, **le total affiché porte le filtre courant** (« 54 véhicules pour cette recherche » et non « 100 »), sélecteur de statut **servi par le serveur** avec le compte de chaque statut, colonne **Position** (site · zone · place), badge du **dossier en cours**, recherche par châssis / n° de registre / téléphone, et un état d'erreur affiché au lieu d'un tableau vide muet. Changer de filtre ramène en première page : rester sur la page 7 d'un nouveau filtre affiche un tableau vide, qui se lit comme « aucun véhicule » alors qu'il y en a. Cas des **12 véhicules sans plaque** : ils affichent « Sans plaque relevée » et non une cellule vide, qui ferait croire à une fiche corrompue. Au passage, `useDebounce` sortait de son fichier pour devenir un hook partagé — l'inventaire en avait trouvé **trois** copies, dont une sans anti-rebond, qui émet dix requêtes sur dix caractères tapés, chacune avec son `count(*)` et ses compteurs. **(2) La colonne « Emplacement » du registre garage** : le mensonge le plus visible, et le plus discret. L'écran lit `v.site` / `v.zone` / `v.spot` depuis son introduction ; `garage.vehicles` ne renvoyait que les **identifiants entiers**. La colonne affichait donc « Non défini » **sur toutes les lignes, en permanence**, y compris pour un véhicule posé sur une place connue — et rien ne le signalait : pas d'erreur, pas de test rouge, pas de trace. Le nom lisible n'existe pas sur `parking_vehicles`, il faut joindre sites / zones / spots. `garage.exportVehicules` le faisait déjà — **l'export affichait la place, l'écran non**. Test vérifié : `expected undefined to be 'p1pos-Site'` sur l'ancien code. **1020/1020, build vert.** |
 | 2026-10-16 | **P1.1 (1/2) — la liste canonique, et les mensonges qu'elle remplace** | Inventaire avant d'écrire : **onze** procédures renvoient des véhicules, avec onze jeux de filtres, **quatre** implémentations de barre de recherche, **quatre** copies de la liste des statuts, et **aucun test**. Le relevé n'était pas une curiosity — il a mesuré quatre mensonges déjà en production. (1) `garage.vehicles` renvoie `total = rows.length` : le compteur « N véhicule(s) affiché(s) » **ment dès que le parc dépasse la taille de page**. (2) La colonne « Emplacement » du registre lit `v.site`/`v.zone`/`v.spot`, **absents de la réponse** — elle affiche « Non défini » en permanence, depuis toujours. (3) `vehicules.list` propose un `offset` qu'**aucun écran n'utilise**, et plafonne à 100 en dur ; la pagination n'existe nulle part. (4) Les compteurs par statut du garage sont calculés **en JS sur la page courante** — faux au-delà de 200 lignes. `or.listVehicules` est mort : ni `LIMIT`, ni `ORDER BY`, ni filtre `is_active`, recherche faite en JS après coup. Nouvelle procédure `vehicules.listeCanonique` : **une ligne = un véhicule**, `parking_vehicles` réduit à sa ligne la plus récente par `LEFT JOIN LATERAL … LIMIT 1` (sans quoi un véhicule entré trois fois apparaît trois fois — 54 véhicules, 160 lignes), position résolue en **noms lisibles** par jointure site/zone/place, `total` par `count(*)` sur le **même `WHERE`** que les lignes, pagination réelle, compteurs par statut sur le périmètre filtré, sélecteur de statut **servi par le serveur**. Recherche à six critères : immat, VIN, marque, modèle, version, nom/raison sociale client, n° de registre, **téléphone**. Le téléphone a demandé une correction : stocké « 677 00 11 22 », il ne répondait pas à « 677001122 ». C'est le cas le plus fréquent au comptoir — l'agent lit un numéro sur un carton et le recopie avec ou sans espaces ; comparer la colonne telle quelle échoue dans les deux sens et l'agent conclut que le véhicule est introuvable alors qu'il est là. Les deux côtés sont désormais comparés chiffres seuls. Requêtes **paramétrées** (`execute(sql\`…\`)`), pas de concaténation : une apostrophe dans la recherche ne peut plus casser la requête. 10 tests d'intégration, chacun sur un mensonge déjà constaté. **1018/1018, build vert.** Reste : le raccordement des écrans (1/2). |
 | 2026-10-16 | **Les résidus de la base de test produisaient de faux échecs — preuve à l'appui** | Un test a échoué sans raison, puis la suite complète est repassée verte sans qu'aucune ligne soit changée. Ce n'était pas un oubli de ma part : c'était exactement la dette signalée deux lots plus tôt (« ~129 véhicules de résidus, deux suites vertes ne sont pas une garantie »). Elle venait de mordre. Deux corrections. (1) `purge:test` **refusait** de purger les véhicules sans client — « origine ambigue : fixture oubliée, ou import du registre GPJ ? ». Refuser de décider à la place de l'utilisateur est la bonne règle… **sur la base locale réelle**, où cette question a un sens. Sur une base `*_test`, elle n'en a pas : la base est créée vide et n reçoit que des fixtures. La distinction porte sur le **nom** de la base, pas sur une option — impossible à activer par inadvertance sur la base réelle. Vérifié dans les deux sens. (2) Mais une purge incrémentale **n'est pas déterministe** : après exécution, les 143 véhicules étaient toujours là et les utilisateurs avaient disparu — les suppressions se chevauchent et l'ordre compte. La vraie réponse n'était pas de mieux purger, c'était de **reconstruire** : `db:test-setup` reconstruit 226 tables depuis le schéma, sans intermédiaire. **Verdict : trois exécutions consécutives de 1008 tests, sans purge ni rechargement entre elles.** Une suite qui ne tient qu'à un `purge` manuel n'est pas une suite, c'est une habitude. |
@@ -397,6 +476,12 @@ mais ce n'est pas la marge que le plan demande.
 | 2026-10-17 | **Étape 4 — Restitutions : un refus qui ne dit pas où aller n'est pas une garde** | « Livré » signifie « le véhicule est **parti** », et un changement de statut ne peut pas l'affirmer. La machine d'états le refusait déjà — mais par « Transition refusée », sans indiquer le chemin. Un agent privé de direction **contourne** : l'interface, puis la base. C'est exactement le trajet qu'on voulait éviter. Le refus nomme désormais la restitution et ce qu'elle enregistre. Deux autres constats. (1) **L'invariant « `LIVRE` implique une restitution » n'était garanti par rien** : ni contrainte, ni déclencheur, ni garde applicative hors d'un handler. L'audit donnait trois « conformes » — local, test, production — **tous vides**. On n'avait pas la preuve que la règle tenait, mais la preuve qu'elle n'avait jamais été mise à l'épreuve. Une règle jamais testée n'est pas une règle, c'est une intention. Le test audite désormais **toute la table**, pas le dossier qu'il vient de créer : il tiendra quand un nouveau chemin écrira `LIVRE`. (2) En cherchant pourquoi le nettoyage de test échouait : **187 tables référencent `utilisateurs`, aucune en cascade** — sa suppression est de fait impossible, ce qui explique `deleted_at`. Et PostgreSQL nomme la table *cible*, pas celle qui bloque : « la relation « utilisateurs » viole la contrainte » désigne à tort la table innocente. **Reste à faire : la 360 ne restitue pas** — l'onglet « Facture » y est en lecture seule, la restitution n'existe que dans l'onglet de la page OR. Le garage n'a pas le chemin. |
 | 2026-10-17 | **Étape 4 (suite) — La restitution sort de l'onglet** | Le panneau est extrait dans `~/components/or/RestituerVehicule.tsx` et appelé par la page OR **et** par la 360 : une implémentation, deux entrées. **Copier le formulaire aurait été plus rapide — c'est exactement ce qu'il ne fallait pas faire.** Deux formulaires de restitution qui divergent donnent deux réponses à « le véhicule est-il parti avec le plein ? », et l'une des deux aura tort sans qu'on le sache. La réception a déjà divergé entre ses deux écrans. Deux conséquences que seule l'exécution a révélées. (1) **Le contrôle du kilométrage était inerte sur la 360** : `orCourant` ne portait pas `kilometrageEntree`, donc le champ de sortie acceptait une valeur inférieure à l'entrée, et c'était le serveur qui refusait — après que l'agent eut rempli tout le formulaire. Même famille que la colonne « Non défini » du parking : un contrôle qui a l'air d'exister et qui ne s'exerce pas. (2) **La 360 est affichée au garage**, dont les profils n'ont pas forcément `or.consulter` : sans `enabled` sur les deux requêtes, la page aurait empoisonné des Forbidden pour afficher un panneau inutilisable. Le permission reste au serveur — ici on évite seulement de poser une question dont on connaît la réponse. |
 | 2026-10-17 | **Étape 5 — Relances : une table qui n'avait jamais servi** | `relances` porte quatorze colonnes soigneusement pensées. Le module Relances du cahier des charges est écrit — **dans la table**. Aucun code n'y écrivait : zéro ligne, local comme production. Un dossier en `EN_ATTENTE_VALIDATION` n'a aucun souvenir d'une relance ; personne ne sait si l'appel a eu lieu, qui l'a fait, ni ce qui a été dit. Ce n'est pas un manque de fonctionnalité, c'est **un état d'attente sans observateur**. Trois trous, deux structurels : `cree_par` sans clé étrangère (l'auteur n'était pas garanti) ; ni `or_id` ni `vehicule_id` (impossible d'écrire « ce véhicule a été relancé », la seule relance utile au garage) ; `type`/`canal`/`statut` en `varchar` libres (un `'SMS '` avec une espace en fin se glisse partout, et un tableau croisant ces colonnes voit ses lignes disparaître du filtre **silencieusement**). Migration `0014` + vocabulaire en un seul endroit + `relancesAttendues()` (fonction **pure**, testable sans fixture) + routeur sous `creances.relancer`. Un refus nomme les valeurs acceptées : la base dit « valeur invalide » sans dire lesquelles, et un appelant bloqué ne peut pas se corriger tout seul. **Trois décisions dans la règle métier** : le PAIEMENT passe avant le DEVIS (une créance de 150 000 F pose une question concrète, un devis sans réponse est une indisponibilité qui peut attendre) ; un véhicule `sorti` n'est **jamais** « non restitué » — l'inverse de l'erreur afficherait une alerte sur un véhicule chez le client ; le seuil est explicite parce qu'un agent qui voit « relance » au bout de deux jours apprend à ne plus regarder l'écran. 1079 tests. |
+| 2026-10-20 | **Revue du parc — la file du matin, réparée et rendue utilisable** | Le backend de la revue était livré (file `revueParc.file`, journal `or_interventions`, sous-traitance) mais **aucun écran ne pouvait l'afficher** : `RevueVehicules.tsx` interrogeait des champs inexistants et ses types ne compilaient pas ; la 360 rendait une ligne de tableau supplémentaire dans un `map` sans `Fragment`, ce qui cassait le DOM ; et le journal d'intervention n'était saisissable nulle part. **Réparations** : (1) `RevueVehicules` aligné sur le contrat réel (`blocages`, `bloquePar`, `dernierConstat`, `priorite`, `jours`, `retardJours`, `diagnosticStatut`) avec colonnes « ce qui bloque », « dernier constat » et bascule **« Ça traîne »** ; la recherche du registre est désormais passée à la revue (`q`), sinon le champ visible ne filtrait qu'en mode registre. (2) `FicheVehicule360` : `Fragment` par ligne + `ConstatLigne` en ajout seul (`interventions.ecrire`, permissions `or.consulter` / `or.intervenir`), historique chargé à l'ouverture seulement, invalidation de `revueParc.file` pour que la revue reflète le constat sans rechargement. (3) **Fuite inter-agences refermée** : `interventions.parLigne`, `parVehicule` et `dernierConstat` filtraient par identifiant sans vérifier l'agence du dossier ; les trois joignent maintenant `ordres_reparation` et comparent `agenceId` à la session. **Vérifs** : `tsc` sans erreur sur les fichiers touchés, `next build` OK (frontière client/serveur comprise), suite complète **1203 tests verts / 3 ignorés**, dont `revue-parc-service` (10), `relances-etape5` (7, qui exerce `parVehicule`) et le nouveau test d'isolation `interventions-isolation` (4 : lecture propriétaire agence 2, puis vide en agence 1 sur les trois endpoints). Le fixture vit en agence 2 pour ne pas fausser les KPI de l'agence 1 — le test KPI compte les dossiers de **son** agence. |
+| 2026-10-20 | **P2.2 + P2.4 — une seule file d'alertes, et les cibles KPI enfin modifiables** | Le plan décrivait « 5 déplacements pour la liste complète » : atelier, parking, stock, finance et système avaient chacun leur écran, avec des codes de gravité incomparables (`RETARD`, `IMMOBILISATION_LONGUE`, `rupture`, `OVERDUE`, `HIGH`). (1) **P2.2** ajoute `/dashboard/alertes` : agrégation en lecture des procédures existantes (`or.getAlertes`, `garage.alertes`, `stock.getAlertes`, `outillage.pretsEnCours`, `stock.dlcAlertes`, `stock.getAlertesAntiVol`, `finance.getDebts`, `alert.getActiveAlerts`), dédoublonnage des OR présents dans plusieurs listes, échelle unique `CRITIQUE/HAUTE/MOYENNE/BASSE`, propriétaire de l'action, recherche et filtres par gravité/source. Les requêtes sont activées par permission pour ne pas fabriquer de Forbidden ; `finance` est en plus filtré sur le rôle car `financeProcedure` est role-based. Menu « Centre d'alertes » sous Pilotage, module `alertes` mappé sur l'union des permissions de sources. Au passage, les libellés parking `HAUTE/MOYENNE/BASSE` manquaient : l'écran affichait le code brut, corrigé dans `statuts.ts`. (2) **P2.4** : `kpi_cibles.updateCible` n'avait aucun appelant, donc « cible : 85 » ne pouvait pas être changé. `CiblesKpi` dans l'onglet Santé du garage édite cible + seuils orange/rouge, avec `or.modifier` en écriture, toast et invalidation de `getCibles`/`getSanteGarage`. `seuilOrange`/`seuilRouge` acceptent désormais `null` : vider un seuil l'efface réellement, au lieu de laisser l'ancienne règle active derrière un champ vide. `noterSatisfaction` reste branché sur la restitution (P3.2 partielle : note + commentaire, sans délai de réponse ni réclamation tracée). **Vérifs** : 6 tests unitaires sur le tri/gravité, suite complète **1209 verts / 3 ignorés (1212)**, `tsc` sans erreur sur les fichiers touchés, `next build` OK avec la route `/dashboard/alertes`. |
+| 2026-10-20 | **P3.3.5 + P4 — le délai pièces, et le seul KPI qui lisait tout l'historique** | `DELAI_PIECES_JOURS` manquait, et `FIABILITE_APPRO` était le seul KPI à charger **toutes** les demandes de pièces depuis l'origine : une demande de 2024 pesait encore sur le taux de 2026. Les deux partagent le même périmètre, donc une seule requête fenêtrée les alimente. (1) `delaiLivraisonPieces` est pur : `createdAt` → `traiteLe`, uniquement `SERVIE`/`PARTIELLE`. Une `MANQUANTE` a bien un `traite_le` mais n'a rien livré : la compter comme « livrée en 2 jours » aurait produit un délai flatteur et faux. Les demandes ouvertes sont exclues. (2) KPI `DELAI_PIECES_JOURS`, cible 3 j, seuils 5/10, sens `BAS` ; l'UI affiche désormais `j` et `/5` au lieu de ne connaître que `%`. `CiblesKpi` transmet `unite`/`sens` à la création, sinon la table aurait appliqué `%`/`HAUT` à un délai. (3) Test d'intégration `pilotage-lot3` mis à jour sur la liste exacte des codes. **Vérifs** : 1217 verts / 3 ignorés (1220, 101 fichiers dont 1 skipped), `next build` OK, `db:check` schéma identique (21 divergences d'exploitation tolérées), `tsc` sans nouvelle erreur. |
+| 2026-10-20 | **P3.3.7 — l'occupation de l'atelier cesse d'être un instantané** | `getSanteGarage` ne renvoyait que `totalActifs` : impossible de distinguer un plateau de trois semaines d'un pic d'une journée. `occupationParSemaine` reconstruit une série de **12 semaines complètes** à partir de `dateOuverture`/`dateCloture` : un dossier occupe du premier au dernier jour inclus, une clôture en milieu de semaine ne compte que les jours réellement occupés. Trois exclusions explicites : `ANNULE` (n'a jamais immobilisé un pont), `LIVRE` sans `dateCloture` (donnée incomplète, pas un véhicule encore présent) et les dossiers clos avant la fenêtre. La semaine en cours est exclue : une moyenne sur trois jours se lirait comme une chute d'activité. L'écran Santé du garage affiche 12 barres avec la moyenne quotidienne et les bornes de période ; état vide explicite si aucun dossier. **Vérifs** : 4 tests unitaires sur la série (fenêtre, semaine entière, fermeture partielle, exclusions), assertion d'intégration sur les 12 points, suite complète **1224 verts / 3 ignorés (1227, 102 fichiers dont 1 skipped)**, `next build` OK, `db:check` schéma identique (21 divergences d'exploitation tolérées), `tsc` sans nouvelle erreur. |
+| 2026-10-20 | **P3.2 — la relation client cesse d'être une note** | La satisfaction était saisissable à la restitution, mais le délai de réponse et la réclamation n'existaient nulle part : un client rappelé trois jours plus tard et un client jamais rappelé produisaient le même historique. Sans nouvelle table, `or_historique` devient le journal append-only de la relation : `REPONSE_CLIENT` trace la **première** réponse avec son canal (`APPEL`, `SMS`, `WHATSAPP`, `EMAIL`, `EN_PERSONNE`, `DEVIS`) et interdit la réécriture ; l'envoi d'un devis crée automatiquement cette réponse en canal `DEVIS` s'il n'en existe aucune — c'est le premier contact réel, il ne doit pas dépendre d'une saisie. `RECLAMATION` reconstruit des cycles `OUVERTE` → `RESOLUE` (un nouveau cycle reste possible après résolution), chaque ouverture/résolution créant aussi une ligne `clientInteractions` pour que la fiche client 360 ne perde pas l'événement. `analyserSuiviRelation` est pur et calcule le délai depuis `dateOuverture` ; le bandeau de l'OR permet de répondre, ouvrir et résoudre avec `or.modifier`, toast et invalidation, et la carte Santé agrège réponses, délai moyen et réclamations ouvertes sur la période. **Vérifs** : 5 tests unitaires (délai, cycles, format), 4 tests d'intégration (état initial, devis auto, réponse manuelle refusée en double, réclamation suivie jusqu'à la fiche client), suite complète **1237 verts / 3 ignorés (1240, 104 fichiers dont 1 skipped)**, `next build` OK, `db:check` schéma identique (21 divergences d'exploitation tolérées), `tsc` sans nouvelle erreur (305 erreurs baseline de modifications parallèles, aucune dans les fichiers P3.2). |
+| 2026-10-20 | **P3.3.4 — la rétention devient un taux, puis une liste d'appels** | Un taux de rétention calculé sur la période du tableau de bord ne mesure que du bruit ; un retour 10 jours après la livraison n'est pas un réachat mais souvent une reprise SAV. `analyserRetention` pose donc une règle métier explicite : **24 mois glissants**, deux dossiers `LIVRE` séparés d'au moins **30 jours**, **SAV exclus**, et deux dossiers le même jour ne comptent pas. Le KPI `TAUX_REACHAT` expose son vrai dénominateur (`nLabel = client`, pas « dossier ») et une cible 40 % / seuils 25-15. Surtout, le chiffre s'accompagne de `clientsDormants` : clients dont la dernière visite (hors SAV) date de **12 à 24 mois**, avec nom, téléphone et lien `tel:` — un taux sans action ne fait pas revenir un client. Un client dont un dossier est encore ouvert est exclu de la liste : on ne relance pas quelqu'un déjà à l'atelier. `chargerRecords` remonte le téléphone, la carte Santé affiche la liste, et les données restent absentes en production (1 dossier) : l'écran dira « aucune mesure » et « aucun client à réactiver » sans inventer. **Vérifs** : 4 tests unitaires (retour à 30 j, SAV/hors fenêtre, même jour, dossier encore ouvert), assertion d'intégration sur la liste, suite complète **1228 verts / 3 ignorés (1231)**, `next build` OK, `db:check` schéma identique (21 divergences tolérées), `tsc` sans nouvelle erreur. |
 |---|---|---|
 | 2026-10-15 | **P0.6 — `immat_norm` maintenue par la base, et fiches clients créées depuis le parking** | Deux défauts de fond, tous deux **silencieux**. (1) `vehicules.immat_norm` n'était renseignée par **personne** : ni défaut, ni colonne générée, ni déclencheur — seul le backfill manuel la remplissait. Un véhicule inséré par un chemin quelconque restait donc hors couverture de l'index unique (deux fiches pour la même plaque) **et invisible des recherches normalisées**. C'est ce qui rendait le rapprochement parking ↔ atelier aléatoire : `migrate-parking-vehicules.ts` apparie sur `immat_norm` et ne trouvait donc rien. Migration `0010` : un invariant dérivé doit être maintenu par la base, pas par la discipline de chaque appelant — on ne peut pas avoir oublié un `INSERT`. Déclencheur aligné sur `immat-utils.ts`. (2) **Aucun script ne pouvait tourner sur Neon** : tous hadient `ssl: false` en dur → `connection is insecure`. `sslPourUrl()` centralise le calcul, aligné sur `client.ts`. Puis `migrate-parking-clients.ts` : les 31 fiches clients créées depuis `parking_vehicles.client_nom`, **sans rien inventer** (nom seul ; aucun téléphone ni adresse deviné) et en `PROSPECT` — valeur déjà présente dans `STATUTS_CLIENT`, là où « PROVISOIRE » aurait été un mot neuf que le code refuserait ensuite. Les quasi-doublons (`PRC` vs `Mr Ngoh Ngoh / PRC`) ne sont **pas** fusionnés : aucun automate ne peut le faire sans risque. Vérifié local (idempotent, 2ᵉ passage à 0) puis production : **31 clients, 42 véhicules canoniques, 42/54 lignes parking liées**. |
 | 2026-10-15 | **P0.7 — La plaque devient nullable : les 12 véhicules sans plaque entrent en fiche** | 12 véhicules sont réellement au garage **sans plaque relevée**. Tant que `vehicules.immatriculation` était `NOT NULL`, ils n'existaient que comme lignes de registre : l'Atelier ne pouvait ni les lister ni les recevoir. **Le défaut était dans la table, pas dans le métier** — `parking_vehicles.immatriculation` était nullable depuis le début, et `0004` documente que « plusieurs lignes parking sans plaque coexistent par conception ». Migration `0011` : `DROP NOT NULL`. Aucune donnée inventée : `immat_norm` reste `NULL`, l'index unique reste **partiel** sur `immat_norm IS NOT NULL`, donc plusieurs véhicules sans plaque coexistent sans conflit et une plaque qui arrivera plus tard sera toujours contrôlée. La migration change ce qui est **permis**, pas ce qui existe. Étape 4 ajoutée à `migrate-parking-vehicules.ts` : la plaque ne servant plus de clé, le lien passe par un marqueur `parking_id=<id>` gravé dans les notes. **Test T1.3 réécrit** : l'absence d'invention ne se prouve plus par « aucune fiche » mais par « une fiche dont la plaque n'est pas remplie » (`immatriculation` **et** `immat_norm` `NULL`) — c'est la garantie qui compte réellement. |

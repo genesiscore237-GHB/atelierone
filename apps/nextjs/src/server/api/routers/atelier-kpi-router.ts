@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { createTRPCRouter, requirePermissionProcedure } from "~/server/api/trpc";
+import { KPI_DEFAUTS } from "~/lib/kpi-defaults";
 import { db } from "~/server/db";
 import {
   ordresReparation,
+  lignesOrdreReparation,
   orHistorique,
   orRapportsDiagnostic,
   orDemandesPieces,
@@ -11,13 +13,14 @@ import {
   atelierNotifications,
   atelierParametres,
   employes,
+  hrWorkSchedules,
   vehicules,
   clients,
   ventes,
   ventesLignes,
   produits,
 } from "@atelierone/db";
-import { eq, and, desc, sql, gte } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lte, inArray, isNotNull, isNull, ne, or, ilike } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import {
   respectPromesse,
@@ -29,11 +32,18 @@ import {
   analyseComebacks,
   firstTimeQuality,
   fiabiliteAppro,
+  delaiLivraisonPieces,
+  occupationParSemaine,
+  analyserRetention,
   performanceVsStandard,
   statutKPI,
   scoreSante,
   scoreTechnicien,
+  tauxTransformationDevis,
+  heuresDisponiblesParTechnicien,
+  productiviteTechnicien,
 } from "~/server/lib/kpi-service";
+import { analyserSuiviRelation, type SyntheseRelationClient } from "~/lib/suivi-relation";
 
 const PERIODE_JOURS: Record<string, number> = { jour: 1, semaine: 7, mois: 30, trimestre: 90 };
 
@@ -53,6 +63,7 @@ const jourStr = (v: string | Date | null | undefined): string => {
  */
 async function calculerSanteGarage(agenceId: number, periode: string) {
   const debut = fenetreDepuis(periode);
+  const fin = new Date().toISOString().slice(0, 10);
 
   const cibles = await db.select().from(kpiCibles).where(eq(kpiCibles.agenceId, agenceId));
   const cibleMap = new Map(cibles.map((c) => [c.code, c]));
@@ -61,7 +72,22 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
   const actifs = records.filter((o) => o.statut !== "ANNULE" && jourStr(o.dateOuverture) >= debut);
   const livresPeriode = records.filter((o) => o.statut === "LIVRE" && o.dateCloture && jourStr(o.dateCloture) >= debut);
   const savPeriode = records.filter((o) => o.savOrigineOrId && jourStr(o.createdAt) >= debut);
-  const demandes = await db.select({ statut: orDemandesPieces.statut }).from(orDemandesPieces).innerJoin(ordresReparation, eq(orDemandesPieces.orId, ordresReparation.id)).where(eq(ordresReparation.agenceId, agenceId));
+  // P4 — le seul KPI qui scannait tout l'historique. `FIABILITE_APPRO` doit
+  // porter sur la période comme les autres ; sans ce filtre, une demande de
+  // 2024 pesait encore sur le taux de 2026. La même requête fournit le délai
+  // de livraison des pièces, qui partage exactement ce périmètre.
+  const demandes = await db
+    .select({
+      statut: orDemandesPieces.statut,
+      createdAt: orDemandesPieces.createdAt,
+      traiteLe: orDemandesPieces.traiteLe,
+    })
+    .from(orDemandesPieces)
+    .innerJoin(ordresReparation, eq(orDemandesPieces.orId, ordresReparation.id))
+    .where(and(
+      eq(ordresReparation.agenceId, agenceId),
+      gte(orDemandesPieces.createdAt, new Date(`${debut}T00:00:00`)),
+    ));
 
   const ponctualité = respectPromesse(livresPeriode);
   const lead = leadTimeMoyenJours(livresPeriode);
@@ -70,8 +96,20 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
   const ftq = firstTimeQuality(livresPeriode);
   const comebacks = analyseComebacks(savPeriode, records.filter((o) => !o.savOrigineOrId));
   const appro = fiabiliteAppro(demandes);
+  const delaiPieces = delaiLivraisonPieces(demandes);
+  const piecesLivrees = demandes.filter(
+    (d) => (d.statut === "SERVIE" || d.statut === "PARTIELLE") && d.traiteLe != null && d.createdAt != null,
+  ).length;
   const notes = livresPeriode.filter((o) => o.satisfactionNote != null).map((o) => Number(o.satisfactionNote));
   const satisf = notes.length ? Math.round((notes.reduce((s, n) => s + n, 0) / notes.length) * 100) / 100 : null;
+  // P3.3.4 — la rétention se mesure sur 24 mois, pas sur la période affichée :
+  // un taux calculé sur un mois ne mesure que du bruit. Les dossiers SAV sont
+  // exclus du calcul (un retour n'est pas un réachat) et la liste des dormants
+  // transforme le chiffre en action de rappel.
+  const retention = analyserRetention(records);
+  const devisEnvoyes = records.filter((o) => o.dateDevisEnvoye && jourStr(o.dateDevisEnvoye) >= debut);
+  const transformation = tauxTransformationDevis(devisEnvoyes);
+  const productivite = await chargerProductivite(agenceId, debut, fin);
 
   const c = (code: string): any => cibleMap.get(code);
   // ÉTAPE 6 — TAUX_REPRISE. Le calcul existait (`tauxRetouche`) et le champ
@@ -88,8 +126,12 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
     : code === "TAUX_RETOUR_SAV" ? comebacks.tauxSurLivres
     : code === "RAPIDITE_DIAG_JOURS" ? diag
     : code === "FIABILITE_APPRO" ? appro
+    : code === "DELAI_PIECES_JOURS" ? delaiPieces
     : code === "SATISFACTION_CLIENT" ? satisf
     : code === "TAUX_REPRISE" ? reprises
+    : code === "TAUX_REACHAT" ? retention.taux
+    : code === "TAUX_TRANSFORMATION_DEVIS" ? transformation.taux
+    : code === "PRODUCTIVITE_TECHNICIEN" ? productivite.taux
     : null;
 
   // ÉTAPE 6 — LE DÉNOMINATEUR.
@@ -113,30 +155,43 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
     : code === "TAUX_RETOUR_SAV" ? comebacks.total
     : code === "RAPIDITE_DIAG_JOURS" ? dossiersDiag.length
     : code === "FIABILITE_APPRO" ? demandes.length
+    : code === "DELAI_PIECES_JOURS" ? piecesLivrees
     : code === "SATISFACTION_CLIENT" ? notes.length
     : code === "TAUX_REPRISE" ? livresPeriode.length
+    : code === "TAUX_REACHAT" ? retention.clientsActifs
+    : code === "TAUX_TRANSFORMATION_DEVIS" ? transformation.envoyes
+    : code === "PRODUCTIVITE_TECHNICIEN" ? productivite.parTechnicien.length
     : 0;
 
-  const kpis = ["PONCTUALITE", "FTQ", "TAUX_RETOUR_SAV", "RAPIDITE_DIAG_JOURS", "FIABILITE_APPRO", "SATISFACTION_CLIENT", "TAUX_REPRISE"].map((code) => {
+  const kpis = ["PONCTUALITE", "FTQ", "TAUX_RETOUR_SAV", "RAPIDITE_DIAG_JOURS", "FIABILITE_APPRO", "DELAI_PIECES_JOURS", "SATISFACTION_CLIENT", "TAUX_REPRISE", "TAUX_REACHAT", "TAUX_TRANSFORMATION_DEVIS", "PRODUCTIVITE_TECHNICIEN"].map((code) => {
     const cb = c(code);
     const valeur = val(code);
     const echantillon = n(code);
+    const defaut = KPI_DEFAUTS[code];
+    // Un délai en jours est meilleur quand il est bas. Sans ce défaut partagé,
+    // il s'affichait « 3 % » et se jugeait « plus haut = mieux » : feu vert sur
+    // un mauvais résultat dès qu'une cible était saisie.
+    const unite = cb?.unite ?? defaut?.unite ?? "%";
+    const sens = (cb?.sens as "HAUT" | "BAS" | null) ?? defaut?.sens ?? "HAUT";
     // Zéro mesure ne peut pas être « evaluated ». Sans ce garde, un KPI sans
     // cible recevait quand même un statut calculé sur `null`, et le badge
     // s'affichait — donc l'écran montrait une alerte sur une absence de
     // donnée. C'est l'inverse de ce qu'il faut prévenir.
     const statut = !cb || echantillon === 0
       ? "SANS_DATA"
-      : statutKPI(valeur, Number(cb.cible), cb.seuilOrange != null ? Number(cb.seuilOrange) : null, cb.seuilRouge != null ? Number(cb.seuilRouge) : null, (cb.sens as "HAUT" | "BAS") ?? "HAUT");
+      : statutKPI(valeur, Number(cb.cible), cb.seuilOrange != null ? Number(cb.seuilOrange) : null, cb.seuilRouge != null ? Number(cb.seuilRouge) : null, sens);
     return {
       code,
       valeur,
       // VRAI ou non : sous 3 mesures, la moyenne est une anecdote.
       n: echantillon,
+      // Un dénominateur n'est pas toujours un dossier : la rétention compte
+      // des clients. Afficher « sur 40 dossiers » pour 40 clients serait faux.
+      nLabel: code === "TAUX_REACHAT" ? "client" : code === "PRODUCTIVITE_TECHNICIEN" ? "technicien" : "dossier",
       significatif: echantillon >= 3,
       cible: cb ? Number(cb.cible) : null,
-      unite: cb?.unite ?? "%",
-      sens: cb?.sens ?? "HAUT",
+      unite,
+      sens,
       statut,
     };
   });
@@ -167,7 +222,48 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
     joursImmobilisation: Math.max(0, Math.floor((Date.now() - new Date(o.dateOuverture).getTime()) / 86400000)),
   })).sort((a, b) => b.joursImmobilisation - a.joursImmobilisation).slice(0, 5);
 
-  return { periode, kpis, score: sante, regles, repPriorite, repStatut, topAnciens, totalActifs: actifs.length, totalLivrePeriode: livresPeriode.length };
+  // P3.3.7 — l'écran ne montrait que `totalActifs`, un instantané. La série
+  // distingue une activité stable d'un pic : 8 dossiers ouverts aujourd'hui
+  // peuvent être le plateau de trois semaines ou un rattrapage d'un jour.
+  // Semaines complètes uniquement, pour ne pas lire une semaine en cours
+  // partielle comme une baisse d'activité.
+  const occupation = occupationParSemaine(records);
+
+  // P3.2 — le délai de première réponse se mesure sur les dossiers OUVERTS dans
+  // la période (une réponse appartient au dossier qu'elle a servi). Les
+  // réclamations ouvertes, elles, ne sont pas fenêtrées : une réclamation
+  // oubliée depuis trois mois reste une réclamation à traiter aujourd'hui.
+  const relationClient: SyntheseRelationClient = (() => {
+    const ouvertsPeriode = records.filter((o) => jourStr(o.dateOuverture) >= debut);
+    const delais = ouvertsPeriode
+      .map((o) => o.suiviRelation?.reponse?.delaiHeures)
+      .filter((d): d is number => typeof d === "number" && Number.isFinite(d));
+    return {
+      reponses: delais.length,
+      delaiReponseMoyenHeures: delais.length
+        ? Math.round((delais.reduce((s, d) => s + d, 0) / delais.length) * 10) / 10
+        : null,
+      reclamationsOuvertes: records.filter(
+        (o) => o.statut !== "ANNULE" && o.suiviRelation?.reclamation && o.suiviRelation.reclamation.statut !== "RESOLUE",
+      ).length,
+    };
+  })();
+
+  return {
+    periode,
+    kpis,
+    score: sante,
+    regles,
+    repPriorite,
+    repStatut,
+    topAnciens,
+    occupation,
+    relationClient,
+    clientsDormants: retention.dormants,
+    productivite,
+    totalActifs: actifs.length,
+    totalLivrePeriode: livresPeriode.length,
+  };
 }
 
 /** Charge les OR de l'agence enrichis des horodatages dérivés de l'historique. */
@@ -186,6 +282,7 @@ async function chargerRecords(agenceId: number) {
       clientNom: clients.nom,
       clientPrenom: clients.prenom,
       clientRaisonSociale: clients.raisonSociale,
+      clientTelephone: clients.telephone,
       dateOuverture: ordresReparation.dateOuverture,
       datePromesse: ordresReparation.datePromesse,
       dateCloture: ordresReparation.dateCloture,
@@ -221,18 +318,98 @@ async function chargerRecords(agenceId: number) {
   return rows.map((r) => {
     const h = histRows.filter((x) => x.orId === r.id);
     const soumis = h.find((x) => x.type === "VALIDATION_DIAGNOSTIC" && x.nouvelleValeur === "EN_ATTENTE_VALIDATION_DIAGNOSTIC");
+    const envoye = [...h].reverse().find((x) => x.type === "VALIDATION_DEVIS" && x.nouvelleValeur === "EN_ATTENTE_VALIDATION");
     const accepte = [...h].reverse().find((x) => x.type === "VALIDATION_DEVIS" && x.nouvelleValeur === "EN_COURS");
     const retouche = h.some((x) => x.type === "STATUT" && x.ancienneValeur === "CONTROLE_QUALITE" && x.nouvelleValeur === "EN_COURS");
     const renvoye = h.some((x) => x.type === "VALIDATION_DIAGNOSTIC" && /renvoy/i.test(x.commentaire ?? ""));
     return {
       ...r,
       dateDiagSoumis: soumis?.changeLe ?? null,
+      dateDevisEnvoye: envoye?.changeLe ?? null,
       dateDevisAccepte: accepte?.changeLe ?? null,
       retouche,
       renvoye,
+      suiviRelation: analyserSuiviRelation(r.dateOuverture, h),
       clientDisplay: r.clientRaisonSociale ?? `${r.clientPrenom ?? ""} ${r.clientNom ?? ""}`.trim(),
     };
   });
+}
+
+async function chargerProductivite(agenceId: number, debut: string, fin: string) {
+  const techniciens = await db
+    .select({
+      id: employes.id,
+      nom: employes.nom,
+      prenom: employes.prenom,
+      workCycleId: employes.workCycleId,
+      dateEmbauche: employes.dateEmbauche,
+      dateFinContrat: employes.dateFinContrat,
+      dateSortie: employes.dateSortie,
+    })
+    .from(employes)
+    .where(and(
+      eq(employes.agenceId, agenceId),
+      eq(employes.statut, "actif"),
+      isNotNull(employes.workCycleId),
+      or(
+        ilike(employes.fonction, "%technicien%"),
+        ilike(employes.fonction, "%mecanicien%"),
+        ilike(employes.fonction, "%mécanicien%"),
+        ilike(employes.fonction, "%carrossier%"),
+        ilike(employes.fonction, "%electricien%"),
+        ilike(employes.fonction, "%électricien%"),
+      ),
+    ));
+
+  if (techniciens.length === 0) return productiviteTechnicien([]);
+
+  const cycleIds = [...new Set(techniciens.map((t) => t.workCycleId!))];
+  const horaires = await db
+    .select({
+      cycleId: hrWorkSchedules.cycleId,
+      dayOfWeek: hrWorkSchedules.dayOfWeek,
+      expectedHours: hrWorkSchedules.expectedHours,
+      isWorkingDay: hrWorkSchedules.isWorkingDay,
+    })
+    .from(hrWorkSchedules)
+    .where(inArray(hrWorkSchedules.cycleId, cycleIds));
+
+  const disponibilites = heuresDisponiblesParTechnicien(
+    techniciens.map((t) => ({ ...t, workCycleId: t.workCycleId! })),
+    horaires,
+    debut,
+    fin,
+  );
+  const mesures = disponibilites.filter((d) => d.heuresDisponibles > 0);
+  if (mesures.length === 0) return productiviteTechnicien([]);
+
+  const ids = mesures.map((d) => d.technicienId);
+  const vendues = await db
+    .select({
+      technicienId: lignesOrdreReparation.technicienId,
+      heures: sql<string>`coalesce(sum(${lignesOrdreReparation.dureeHeures}), 0)`,
+    })
+    .from(lignesOrdreReparation)
+    .innerJoin(ordresReparation, eq(lignesOrdreReparation.ordreId, ordresReparation.id))
+    .where(and(
+      eq(ordresReparation.agenceId, agenceId),
+      // `date_cloture` est aussi écrite pour ANNULE et PRET_A_LIVRER : sans ce
+      // filtre, une ligne SERVICE d'un dossier annulé compterait comme vendue.
+      eq(ordresReparation.statut, "LIVRE"),
+      eq(lignesOrdreReparation.type, "SERVICE"),
+      inArray(lignesOrdreReparation.technicienId, ids),
+      isNotNull(lignesOrdreReparation.dureeHeures),
+      gte(ordresReparation.dateCloture, new Date(`${debut}T00:00:00`)),
+      lte(ordresReparation.dateCloture, new Date(`${fin}T23:59:59`)),
+      or(isNull(lignesOrdreReparation.statutAutorisation), ne(lignesOrdreReparation.statutAutorisation, "DECLINE")),
+    ))
+    .groupBy(lignesOrdreReparation.technicienId);
+
+  const venduesParTech = new Map(vendues.map((v) => [v.technicienId, Number(v.heures)]));
+  return productiviteTechnicien(mesures.map((d) => ({
+    ...d,
+    heuresVendues: venduesParTech.get(d.technicienId) ?? 0,
+  })));
 }
 
 /** MODULE PERFORMANCE & QUALITÉ — indicateurs décisionnels du garage. */
@@ -349,11 +526,22 @@ export const atelierKpiRouter = createTRPCRouter({
         .where(and(eq(employes.agenceId, ctx.user.agenceId), eq(employes.statut, "actif")));
       const orsAgence = (await chargerRecords(ctx.user.agenceId)) as any[];
       const savOrs = orsAgence.filter((o) => o.savOrigineOrId);
+      const debut = fenetreDepuis(input?.periode ?? "trimestre");
+      const fin = new Date().toISOString().slice(0, 10);
+      const productiviteTech = await chargerProductivite(ctx.user.agenceId, debut, fin);
+      const productiviteParTech = new Map(productiviteTech.parTechnicien.map((p) => [p.technicienId, p]));
       const fiches = techs.map((t) => {
         const score = scoreTechnicien(orsAgence, t.id, savOrs);
-        const debut = fenetreDepuis(input?.periode ?? "trimestre");
         const orsPeriode = orsAgence.filter((o) => o.responsableTechnicienId === t.id && jourStr(o.dateOuverture) >= debut).length;
-        return { technicien: t, ...score, orsPeriode };
+        const p = productiviteParTech.get(t.id);
+        return {
+          technicien: t,
+          ...score,
+          orsPeriode,
+          productivite: p?.taux ?? null,
+          heuresVendues: p?.heuresVendues ?? null,
+          heuresDisponibles: p?.heuresDisponibles ?? null,
+        };
       }).sort((a, b) => b.livres - a.livres);
       const fiche = input?.technicienId ? fiches.find((f) => f.technicien.id === input.technicienId) ?? null : null;
       return { fiches, fiche };
@@ -428,15 +616,18 @@ export const atelierKpiRouter = createTRPCRouter({
     .input(z.object({
       code: z.string().min(1),
       cible: z.number(),
-      seuilOrange: z.number().optional(),
-      seuilRouge: z.number().optional(),
+      // `null` = effacer un seuil. Sans cette distinction, vider le champ
+      // laissait l'ancien seuil en base et l'écran affichait « — » sur une
+      // règle toujours active.
+      seuilOrange: z.number().nullable().optional(),
+      seuilRouge: z.number().nullable().optional(),
       unite: z.string().optional(),
       sens: z.enum(["HAUT", "BAS"]).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const values: Record<string, unknown> = { cible: String(input.cible), updatedAt: new Date() };
-      if (input.seuilOrange !== undefined) values.seuilOrange = String(input.seuilOrange);
-      if (input.seuilRouge !== undefined) values.seuilRouge = String(input.seuilRouge);
+      if (input.seuilOrange !== undefined) values.seuilOrange = input.seuilOrange === null ? null : String(input.seuilOrange);
+      if (input.seuilRouge !== undefined) values.seuilRouge = input.seuilRouge === null ? null : String(input.seuilRouge);
       if (input.unite !== undefined) values.unite = input.unite;
       if (input.sens !== undefined) values.sens = input.sens;
       const [existing] = await db
