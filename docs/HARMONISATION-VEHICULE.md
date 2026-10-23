@@ -207,3 +207,18 @@ Périmètre (D1) : workflow de transfert **intra-agence** entre les 2 sites GPJ-
 | e2e Playwright UI atelier/garage | ✅ **2026-10-14** | Config racine réparée + `e2e/lot4-atelier-garage.spec.ts` **4/4** (pilotage/atelier/garage/fiche 360°) sur serveur éphémère :3001 (D5 respectée). Hors CI (pas d'étape e2e) ; happy-path cycle OR couvert en intégration tRPC (Lot 4) |
 | Side-effect notification dans un GET (`atelierKpi.getSanteGarage`) | ✅ **2026-10-14** | GET purifié : helper `calculerSanteGarage()` (lecture seule) + mutation dédiée `evaluerReglesQualite` (perm `or.modifier`, anti-spam E1) appelée au montage du dashboard pilotage |
 | Seed `seed-garage` purge les `vehicules` de démo | ℹ️ | Comportement connu du setup de test — vérifier avant tout run sur base réelle |
+## 7. Cycle véhicule — exécution 2026-10-23
+
+| Sujet | Résultat |
+|---|---|
+| Réception | `or.receptionner` crée le passage parking (`parking_vehicles.or_id`) dans sa transaction ; `garage.create` refuse un second passage actif. |
+| Projection | Seul le passage actif est mis à jour ; les anciens `SORTI` restent intacts ; `sortirVehiculeParking` choisit le passage actif. |
+| Réception éditable | `or.update` refuse un OR clos et un diagnostic figé (sauf emplacement) ; km synchronisé vers la fiche ; `pannesDeclarees` synchronisé vers `plainte` ; km non obligatoire. |
+| Comptes rendus | `or_interventions` visible dans l'onglet Travaux de l'OR et dans `/dashboard/atelier/interventions` (recherche + rafraîchissement). |
+| Photos | `visite` portée par la photo ; galeries `ENTREE`/`TRAVAUX` séparées ; doublon de l'onglet Historique supprimé. |
+| Dashboard | « Véhicules en parc » = véhicules distincts ; « OR ouverts » = dossiers ; `ferme_definitif` exclu ; dernier compte rendu affiché. |
+| Cession | `vehicules.ceder` avec motif obligatoire, audit et synchronisation du passage actif. |
+| Base | Migrations `0031`/`0032` appliquées local, test et Neon ; `db:check` schéma identique (29 divergences de données tolérées). |
+| Vérifications | `vitest` 1257 passés / 3 ignorés ; `next build` vert ; `tsc` aucune nouvelle erreur dans les fichiers du lot (305 baseline). |
+
+Détail : `docs/PLAN-EXECUTION-CYCLE-VEHICULE.md`.

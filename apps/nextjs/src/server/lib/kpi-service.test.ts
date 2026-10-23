@@ -1,4 +1,4 @@
-﻿import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   respectPromesse,
   leadTimeMoyenJours,
@@ -20,6 +20,7 @@ import {
   tauxTransformationDevis,
   heuresDisponiblesParTechnicien,
   productiviteTechnicien,
+  calculerMargesDossiers,
   type OrKpiRecord,
 } from "./kpi-service";
 
@@ -348,5 +349,73 @@ describe("Performance - disponibilité et productivité technicien", () => {
     expect(r.totalDisponibles).toBe(63);
     expect(r.taux).toBe(77.8);
     expect(r.parTechnicien.map((t) => [t.technicienId, t.taux])).toEqual([[1, 100], [2, 50]]);
+  });
+});
+
+describe("P3.3.1 — marge par dossier", () => {
+  const dossier = (over: Partial<Parameters<typeof calculerMargesDossiers>[0][number]> = {}) => ({
+    id: 1,
+    numero: "OR-MARGE-1",
+    chiffreAffaires: 100_000,
+    coutPieces: 40_000,
+    heuresMainOeuvre: 3,
+    ...over,
+  });
+
+  it("refuse d'inventer une marge quand le taux horaire n'est pas renseigné", () => {
+    const r = calculerMargesDossiers([dossier()], null);
+    expect(r.disponible).toBe(false);
+    expect(r.dossiers[0].margePieces).toBe(60_000);
+    expect(r.dossiers[0].margeNette).toBeNull();
+    expect(r.dossiers[0].manques).toContain("taux horaire atelier non renseigné");
+    expect(r.totalMargeNette).toBeNull();
+    expect(r.margeMoyenneDossier).toBeNull();
+    expect(r.dossiersComplets).toBe(0);
+    expect(r.dossiersIncomplets).toBe(1);
+  });
+
+  it("déduit les pièces ET la main-d'œuvre, puis exclut les dossiers incomplets", () => {
+    const r = calculerMargesDossiers(
+      [
+        dossier(),
+        dossier({ id: 2, numero: "OR-MARGE-2", coutPieces: null, heuresMainOeuvre: 1 }),
+        dossier({ id: 3, numero: "OR-MARGE-3", chiffreAffaires: null, heuresMainOeuvre: 0 }),
+      ],
+      15_000,
+    );
+    expect(r.tauxHoraireAtelier).toBe(15_000);
+    expect(r.dossiers[0].coutMainOeuvre).toBe(45_000);
+    expect(r.dossiers[0].margeNette).toBe(15_000);
+    expect(r.dossiersComplets).toBe(1);
+    expect(r.dossiersIncomplets).toBe(2);
+    // La marge pièces reste publiée, même quand la marge nette est incomplète.
+    expect(r.totalMargePieces).toBe(60_000);
+    expect(r.dossiersPiecesComplets).toBe(1);
+    expect(r.totalMargeNette).toBe(15_000);
+    expect(r.margeMoyenneDossier).toBe(15_000);
+  });
+
+  it("arrondit les montants au centime et accepte un taux nul", () => {
+    const r = calculerMargesDossiers(
+      [dossier({ chiffreAffaires: 100.005, coutPieces: 40.004, heuresMainOeuvre: 1.234 })],
+      0,
+    );
+    expect(r.disponible).toBe(true);
+    expect(r.dossiers[0].coutMainOeuvre).toBe(0);
+    expect(r.dossiers[0].margeNette).toBe(60);
+    expect(r.totalMargeNette).toBe(60);
+  });
+
+  it("exclut un dossier dont une ligne SERVICE n'a pas de durée", () => {
+    const r = calculerMargesDossiers(
+      [dossier({ heuresMainOeuvre: 0, heuresCompletes: false })],
+      15_000,
+    );
+    expect(r.dossiers[0].complet).toBe(false);
+    expect(r.dossiers[0].coutMainOeuvre).toBeNull();
+    expect(r.dossiers[0].margeNette).toBeNull();
+    expect(r.dossiers[0].manques).toContain("durée main-d'œuvre inconnue");
+    expect(r.dossiersComplets).toBe(0);
+    expect(r.margeMoyenneDossier).toBeNull();
   });
 });

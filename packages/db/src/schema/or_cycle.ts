@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, varchar, text, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, varchar, text, timestamp, boolean, numeric } from "drizzle-orm/pg-core";
 import { ordresReparation } from "./ordres_reparation";
 import { utilisateurs } from "./utilisateurs";
 import { agences } from "./agences";
@@ -86,5 +86,14 @@ export const atelierParametres = pgTable("atelier_parametres", {
    */
   outillageCatalogue: text("outillage_catalogue"),
   texteAccuseReception: text("texte_accuse_reception").default("Nous accusons réception de votre véhicule {IMMATRICULATION} sous l'ordre {OR}. Restitution promise : {PROMESSE}."),
+  /**
+   * P3.3.1 — Taux horaire de la main-d'œuvre atelier, en FCFA/heure.
+   *
+   * NULLABLE par décision produit : aucune valeur ne peut être inventée. Tant
+   * qu'il est vide, la marge par dossier reste `SANS_DATA` ; le jour où la
+   * Direction le renseigne dans Paramètres atelier, le KPI s'active sans
+   * redéploiement. Le taux est une donnée d'agence, pas une constante globale.
+   */
+  tauxHoraireAtelier: numeric("taux_horaire_atelier", { precision: 12, scale: 2 }),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

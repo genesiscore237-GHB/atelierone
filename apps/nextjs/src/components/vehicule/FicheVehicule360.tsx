@@ -16,6 +16,7 @@ import { transitionStatutVehiculeValide, STATUT_LABELS, STATUT_STYLE, STATUTS_IM
 import { STATUTS_LIGNE, STATUTS_LIGNE_LIBELLES } from "~/server/lib/atelier-service";
 import { STATUT_LABELS as OR_STATUT_LABELS, STATUT_BADGE as OR_STATUT_BADGE, PRIORITE_META, MOTIF_ENTREE_LABELS } from "~/server/lib/atelier-service";
 import { usePermissions } from "~/hooks/usePermissions";
+import { useTempsReel } from "~/hooks/useTempsReel";
 import { PhotoLightbox } from "~/components/photos/PhotoLightbox";
 import { PiecesCompatibles } from "~/components/vehicule/PiecesCompatibles";
 import { photosValides, libellePhotoCategorie } from "~/lib/photos";
@@ -62,7 +63,11 @@ export function FicheVehicule360({
   const { hasPermission } = usePermissions();
   const utils = api.useUtils();
   const router = useRouter();
-  const { data, isLoading, isError } = api.vehicules.get.useQuery({ id: Number(id) });
+  const intervalleTempsReel = useTempsReel(30_000);
+  const { data, isLoading, isError } = api.vehicules.get.useQuery(
+    { id: Number(id) },
+    { refetchInterval: intervalleTempsReel },
+  );
   // Toutes les fiches client, y compris PROVISOIRE : en production, les 31
   // fiches issues du parking sont provisoires. Filtrer sur ACTIF vidait le
   // sélecteur de propriétaire et empêchait de rattacher un véhicule à son
@@ -100,6 +105,7 @@ export function FicheVehicule360({
   );
   const journal = journalData?.entrees ?? [];
   const [clientId, setClientId] = useState(0);
+  const [motifCession, setMotifCession] = useState("");
   const [contratId, setContratId] = useState(0);
   const [statutMotif, setStatutMotif] = useState("");
   const [chauffeurNom, setChauffeurNom] = useState("");
@@ -118,6 +124,17 @@ export function FicheVehicule360({
   });
   const update = api.vehicules.update.useMutation({
     onSuccess: () => { toast.success("Véhicule mis à jour"); utils.vehicules.get.invalidate(); utils.vehicules.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const ceder = api.vehicules.ceder.useMutation({
+    onSuccess: () => {
+      toast.success("Propriétaire transféré");
+      setClientId(0);
+      setMotifCession("");
+      utils.vehicules.get.invalidate();
+      utils.vehicules.list.invalidate();
+      utils.vehicules.journal.invalidate();
+    },
     onError: (e) => toast.error(e.message),
   });
   const lierContrat = api.vehicules.lierContrat.useMutation({
@@ -549,17 +566,36 @@ export function FicheVehicule360({
               </div>
 
               {canModifier && (
-                <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-border/60 pt-4">
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Transférer à un autre client</label>
-                    <select value={clientId} onChange={(e) => setClientId(Number(e.target.value))} className="mt-1 h-9 rounded-lg border border-border bg-background px-3 text-sm">
-                      <option value={0}>Choisir un client…</option>
-                      {clientsList.map((cl: any) => <option key={cl.id} value={cl.id}>{cl.raisonSociale ?? `${cl.prenom ?? ""} ${cl.nom}`}</option>)}
-                    </select>
+                <div className="mt-4 space-y-2 border-t border-border/60 pt-4">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Transférer à un autre client</p>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="min-w-56 flex-1">
+                      <select value={clientId} onChange={(e) => setClientId(Number(e.target.value))} className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm">
+                        <option value={0}>Choisir un client…</option>
+                        {clientsList.map((cl: any) => <option key={cl.id} value={cl.id}>{cl.raisonSociale ?? `${cl.prenom ?? ""} ${cl.nom}`}</option>)}
+                      </select>
+                    </div>
+                    <div className="min-w-56 flex-1">
+                      <input
+                        value={motifCession}
+                        onChange={(e) => setMotifCession(e.target.value)}
+                        placeholder="Motif de la cession (obligatoire)"
+                        className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary/50"
+                      />
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!clientId || motifCession.trim().length < 3 || ceder.isPending}
+                      onClick={() => ceder.mutate({ id: v.id, clientId, motif: motifCession.trim() })}
+                    >
+                      {ceder.isPending ? <Loader2 size={13} className="mr-1 animate-spin" /> : null}
+                      Transférer
+                    </Button>
                   </div>
-                  <Button size="sm" variant="outline" disabled={!clientId} onClick={() => update.mutate({ id: v.id, clientId })}>
-                    Transférer
-                  </Button>
+                  <p className="text-[10px] text-muted-foreground">
+                    La cession est tracée avec l'ancien client, le nouveau et le motif.
+                  </p>
                 </div>
               )}
             </div>
@@ -726,7 +762,12 @@ export function FicheVehicule360({
                     </div>
                     {or.plainte && <p className="mt-1 truncate text-xs text-muted-foreground" title={or.plainte}>{or.plainte}</p>}
                     {or.raisonBlocage && <p className="mt-0.5 text-xs text-warning">Bloqué : {or.raisonBlocage}</p>}
-                    <p className="text-[10px] text-muted-foreground">Entrée {fmtDate(or.dateOuverture)}{or.dateCloture ? ` · Sortie ${fmtDate(or.dateCloture)}` : ""}</p>
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[10px] text-muted-foreground">Entrée {fmtDate(or.dateOuverture)}{or.dateCloture ? ` · Sortie ${fmtDate(or.dateCloture)}` : ""}</p>
+                      <Link href={`/dashboard/ordres-reparation/${or.id}`} className="inline-flex items-center gap-1 text-[10px] font-semibold text-primary hover:underline">
+                        Ouvrir l'OR <ArrowRight size={10} />
+                      </Link>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1000,25 +1041,24 @@ export function FicheVehicule360({
 
             <div className="rounded-xl border border-border bg-card p-5">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
-                <MapPin size={14} className="text-primary" /> Emplacement & photos
+                <MapPin size={14} className="text-primary" /> Emplacement
               </h3>
               <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
                 <Field label="Statut garage" value={STATUT_LABELS[v.statutImmobilisation] ?? v.statutImmobilisation} />
                 <Field label="Emplacement" value={v.emplacementId ? `Emplacement #${v.emplacementId}` : "—"} />
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
-                {photos.length === 0 && <p className="col-span-full text-sm text-muted-foreground">Aucune photo enregistrée.</p>}
-                {photos.map((p: any) => (
-                  <a key={p.id} href={p.url} target="_blank" rel="noopener noreferrer" className="overflow-hidden rounded-lg border border-border">
-                    {p.type === "PHOTO" ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={p.url} alt="" className="aspect-square w-full object-cover" />
-                    ) : (
-                      <div className="flex aspect-square items-center justify-center bg-muted text-lg">🎬</div>
-                    )}
-                  </a>
-                ))}
-              </div>
+              {/* Les photos de l'OR sont déjà dans « Vue d'ensemble ». Les
+                  répéter ici créait deux galeries identiques et faisait croire
+                  à un doublon de données. On renvoie vers l'OR pour la galerie
+                  complète, avec ses phases entrée / travaux. */}
+              <p className="mt-3 text-xs text-muted-foreground">
+                Les photos d'état des lieux et de travaux sont dans la fiche de l'OR.
+              </p>
+              {orCourant && (
+                <Link href={`/dashboard/ordres-reparation/${orCourant.id}`} className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
+                  Ouvrir les photos de l'OR <ArrowRight size={11} />
+                </Link>
+              )}
             </div>
           </div>
         )}

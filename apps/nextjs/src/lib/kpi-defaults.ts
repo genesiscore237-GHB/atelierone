@@ -17,4 +17,7 @@ export const KPI_DEFAUTS: Record<string, { unite: string; sens: "HAUT" | "BAS" }
   TAUX_REACHAT: { unite: "%", sens: "HAUT" },
   TAUX_TRANSFORMATION_DEVIS: { unite: "%", sens: "HAUT" },
   PRODUCTIVITE_TECHNICIEN: { unite: "%", sens: "HAUT" },
+  // P3.3.1 — marge moyenne par dossier livré, en FCFA. Un coût qui baisse est
+  // une bonne nouvelle : le sens est donc « plus haut = mieux ».
+  MARGE_DOSSIER: { unite: "FCFA", sens: "HAUT" },
 };

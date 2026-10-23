@@ -230,7 +230,7 @@ export async function synchroniserStatutVehicule(
       AND agence_id = ${agenceId}
       AND coalesce(statut_immobilisation, '') <> ${statut}`);
 
-  await projeterParkingDepuisStatut(exec, vehiculeId, statut);
+  await projeterParkingDepuisStatut(exec, vehiculeId, statut, agenceId);
   return statut;
 }
 
@@ -246,14 +246,29 @@ export async function projeterParkingDepuisStatut(
   exec: Exec,
   vehiculeId: number | null | undefined,
   statut: string | null,
+  agenceId?: number,
 ): Promise<void> {
   if (!vehiculeId || !statut) return;
   const cible = PARKING_POUR_IMMOBILISATION[statut];
   if (!cible) return;
+  // Un véhicule peut avoir plusieurs passages. La projection ne concerne que
+  // le passage ACTIF : écrire sur toutes les lignes ressuscitait les anciens
+  // `SORTI` et transformait l'historique en doublons du présent.
   await exec.execute(sql`
     UPDATE parking_vehicles
     SET statut = ${cible}, date_derniere_action = now()
-    WHERE vehicule_id = ${vehiculeId} AND statut <> ${cible}`);
+    WHERE vehicule_id = ${vehiculeId}
+      ${agenceId != null ? sql`AND agence_id = ${agenceId}` : sql``}
+      AND statut <> 'SORTI'
+      AND id = (
+        SELECT id FROM parking_vehicles
+        WHERE vehicule_id = ${vehiculeId}
+          ${agenceId != null ? sql`AND agence_id = ${agenceId}` : sql``}
+          AND statut <> 'SORTI'
+        ORDER BY id DESC
+        LIMIT 1
+      )
+      AND statut <> ${cible}`);
 }
 
 /**

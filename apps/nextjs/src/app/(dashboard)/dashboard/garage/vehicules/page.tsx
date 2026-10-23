@@ -57,6 +57,8 @@ useEffect(() => {
   const [siteId, setSiteId] = useState(() => lireFiltres(searchParams).site);
   const [nonPositionnes, setNonPositionnes] = useState(() => lireFiltres(searchParams).nonPositionnes);
   const [mode, setMode] = useState<"revue" | "registre">("revue");
+  const [offset, setOffset] = useState(0);
+  const PAGE_SIZE = 100;
   const [editingId, setEditingId] = useState<number | null>(null);
   const [aSortir, setASortir] = useState<{ id: number; numRegistre: number } | null>(null);
   // Visionneuse ouverte depuis la liste : on charge le jeu complet de photos du
@@ -85,6 +87,9 @@ useEffect(() => {
 
   useEffect(() => {
     router.replace(filtresQs ? `/dashboard/garage/vehicules?${filtresQs}` : "/dashboard/garage/vehicules", { scroll: false });
+    // Un changement de filtre peut réduire le total : rester sur la page 3
+    // afficherait alors une tranche vide. On revient à la première page.
+    setOffset(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtresQs]);
 
@@ -118,7 +123,8 @@ useEffect(() => {
     statut: statut || undefined,
     siteId: siteId ? Number(siteId) : undefined,
     nonPositionnes: nonPositionnes ? true : undefined,
-limit: 200,
+    limit: PAGE_SIZE,
+    offset,
   }, { placeholderData: keepPreviousData, refetchInterval: intervalleTempsReel });
 
   const canReceptionner = hasPermission("or.modifier");
@@ -139,13 +145,13 @@ limit: 200,
 
   const vehicules = useMemo(() => (data?.vehicules ?? []).concat(), [data]);
 
-  const statutCounts = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const v of data?.vehicules ?? []) {
-      totals.set(v.statut, (totals.get(v.statut) ?? 0) + 1);
-    }
-    return totals;
-  }, [data]);
+  // Compteurs calculés en base sur tout le périmètre filtré : une page ne
+  // contient qu'une tranche, donc compter ses lignes donnerait des chiffres
+  // faux dès que le registre dépasse `PAGE_SIZE`.
+  const statutCounts = useMemo(
+    () => new Map<string, number>(Object.entries(data?.parStatut ?? {})),
+    [data],
+  );
 
   const nbFiltres = compterFiltres(filtres);
   const aFiltres = nbFiltres > 0;
@@ -474,6 +480,29 @@ limit: 200,
           </div>
         </Card>
       )}
+
+      {(data?.total ?? 0) > PAGE_SIZE && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card px-4 py-2 text-xs text-muted-foreground">
+          <span>
+            {offset + 1}–{Math.min(offset + PAGE_SIZE, data?.total ?? 0)} sur {data?.total ?? 0}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
+              Précédent
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={offset + PAGE_SIZE >= (data?.total ?? 0)}
+              onClick={() => setOffset(offset + PAGE_SIZE)}
+            >
+              Suivant
+            </Button>
+          </div>
+        </div>
+      )}
+
       {editModel && (
         <VehiculeFormDialog open={editingId !== null} vehicule={editModel} onClose={() => setEditingId(null)} />
       )}

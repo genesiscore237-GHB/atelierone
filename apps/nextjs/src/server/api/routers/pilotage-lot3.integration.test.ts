@@ -73,6 +73,10 @@ function ctxSuperadmin() {
 }
 
 async function retirer(): Promise<void> {
+  // Une restitution porte une FK vers l'OR : elle doit partir AVANT lui.
+  // Sinon le nettoyage échoue et un `LIVRE` de fixture survit d'une exécution
+  // à l'autre, faisant échouer l'invariant global selon l'ordre des fichiers.
+  await db.execute(sql`DELETE FROM or_restitutions WHERE or_id IN (SELECT id FROM ordres_reparation WHERE numero LIKE 'LOT3-%')`);
   await db.execute(sql`DELETE FROM or_historique WHERE or_id IN (SELECT id FROM ordres_reparation WHERE numero LIKE 'LOT3-%')`);
   await db.execute(sql`DELETE FROM ordres_reparation WHERE numero LIKE 'LOT3-%'`);
   await db.execute(
@@ -199,6 +203,11 @@ beforeAll(async () => {
         VALUES (1, 'LOT3-OR-002', ${canonId}, 'LIVRE', 'P3', ${il2j}, ${il1j}, ${employeId})
         RETURNING id`,
   )) as unknown as Row[];
+  // Preuve de restitution : `LIVRE` sans elle viole l'invariant métier global.
+  await db.execute(
+    sql`INSERT INTO or_restitutions (or_id, kilometrage_sortie, restitue_par, signature_client)
+        VALUES (${Number(orLivre.id)}, 10000, ${userId}, 'Fixture LOT3')`,
+  );
   await db.execute(
     sql`INSERT INTO lignes_ordre_reparation (ordre_id, type, libelle, duree_heures, technicien_id, statut, statut_autorisation)
         VALUES (${Number(orLivre.id)}, 'SERVICE', 'Main-d''œuvre fixture', 7, ${employeId}, 'valide', 'AUTORISE')`,
@@ -293,7 +302,7 @@ describe("Lot 3 — pilotage (dashboard direction)", () => {
       [
         "DELAI_PIECES_JOURS",
         "FIABILITE_APPRO",
-        "FTQ",
+        "FTQ", "MARGE_DOSSIER",
         "PONCTUALITE",
         "PRODUCTIVITE_TECHNICIEN",
         "RAPIDITE_DIAG_JOURS",

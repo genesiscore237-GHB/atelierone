@@ -19,6 +19,7 @@ export function ParametresAtelier() {
   const [emplacements, setEmplacements] = useState<string[]>([]);
   const [raisonsBlocage, setRaisonsBlocage] = useState<string[]>([]);
   const [texteAccuse, setTexteAccuse] = useState("");
+  const [tauxHoraireAtelier, setTauxHoraireAtelier] = useState("");
   const [newEmpl, setNewEmpl] = useState("");
   const [newRaison, setNewRaison] = useState("");
 
@@ -30,6 +31,7 @@ export function ParametresAtelier() {
     setEmplacements(data.emplacements ?? []);
     setRaisonsBlocage(data.raisonsBlocage ?? []);
     setTexteAccuse(data.texteAccuseReception ?? "");
+    setTauxHoraireAtelier(data.tauxHoraireAtelier != null ? String(data.tauxHoraireAtelier) : "");
   }, [data]);
 
   const update = api.or.updateParametresAtelier.useMutation({
@@ -41,6 +43,14 @@ export function ParametresAtelier() {
   if (isLoading) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
 
   const save = () => {
+    const tauxSaisi = tauxHoraireAtelier.trim();
+    if (tauxSaisi !== "") {
+      const taux = Number(tauxSaisi.replace(",", "."));
+      if (!Number.isFinite(taux) || taux < 0) {
+        toast.error("Le taux horaire atelier doit être un nombre positif ou vide.");
+        return;
+      }
+    }
     update.mutate({
       seuilPromesseJours,
       seuilImmobilisationJours,
@@ -48,6 +58,7 @@ export function ParametresAtelier() {
       emplacements,
       raisonsBlocage,
       texteAccuseReception: texteAccuse,
+      tauxHoraireAtelier: tauxSaisi === "" ? null : Number(tauxSaisi.replace(",", ".")),
     });
   };
 
@@ -117,6 +128,27 @@ export function ParametresAtelier() {
               <Button variant="outline" onClick={() => { if (newRaison.trim()) { setRaisonsBlocage([...raisonsBlocage, newRaison.trim()]); setNewRaison(""); } }}>Ajouter</Button>
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-5">
+        <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-foreground">Économie de l'atelier</h2>
+        <div className="max-w-sm">
+          <Label className="text-xs text-muted-foreground">Taux horaire main-d'œuvre (FCFA / heure)</Label>
+          <Input
+            type="number"
+            min={0}
+            step={100}
+            disabled={!canModifier}
+            className="mt-1"
+            value={tauxHoraireAtelier}
+            onChange={(e) => setTauxHoraireAtelier(e.target.value)}
+            placeholder="Non renseigné"
+          />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Sert au calcul de la marge par dossier (CA − pièces − heures × taux). Tant qu'il est vide, le KPI
+            « Marge dossier » reste <strong>SANS_DATA</strong> : aucune valeur n'est supposée à votre place.
+          </p>
         </div>
       </div>
 

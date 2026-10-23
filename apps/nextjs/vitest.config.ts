@@ -38,8 +38,8 @@ const COMMUN = {
   environment: 'node' as const,
   globals: true,
   setupFiles: ['./src/test/setup.ts'],
-  // Tests d'intégration DB : le défaut (5 s) est franchi dès que plusieurs
-  // fichiers tournent en parallèle sous charge (11 s mesuré en local).
+  // Tests d'intégration DB : le défaut (5 s) est franchi sur la base locale
+  // sous charge (11 s mesuré en local), même fichier par fichier.
   testTimeout: 20000,
   hookTimeout: 20000,
   // `*.spec.ts` = Playwright (e2e et variantes e2e-r*) : jamais par vitest.
@@ -67,24 +67,27 @@ const ALIAS = {
  * produis ainsi sur ce lot.
  *
  * D'où deux projets :
- *   - `unites`       : logique pure, aucune base. Parallèles, rapides.
- *   - `integration`  : base réelle. SÉRIALISÉS (`fileParallelism: false`),
- *                      donc plus aucun recouvrement possible entre fichiers.
+ *   - `unites`       : logique pure, aucune base.
+ *   - `integration`  : base réelle.
  *
- * Coût : la suite complète s'allonge (les tests base s'exécutent l'un après
- * l'autre). Gain : plus aucun faux échec, et plus jamais de téléphone de
- * fixture à renommer à la main. La fiabilité prime — un test qui échoue par
- * hasard coûte plus cher qu'une suite un peu plus lente.
+ * `fileParallelism: false` est placé à la RACINE, pas dans le projet
+ * `integration` : Vitest 3 n'applique pas cette option au niveau d'un projet
+ * (et TypeScript la refuse). Elle y était donc décorative — les fichiers
+ * d'intégration continuaient de tourner en parallèle et les plages de registre
+ * se recouvraient encore. La sérialisation globale est le prix de fixtures qui
+ * partagent une seule base ; les tests purs restent rapides.
  */
 export default defineConfig({
   test: {
+    fileParallelism: false,
     projects: [
       {
         resolve: { alias: ALIAS },
         test: {
           ...COMMUN,
           name: 'unites',
-          include: ['**/*.test.ts'],
+          // Les composants React purs se testent en rendu serveur (sans jsdom).
+          include: ['**/*.test.ts', '**/*.test.tsx'],
           exclude: [...COMMUN.exclude, '**/*.integration.test.ts'],
         },
       },
@@ -94,7 +97,6 @@ export default defineConfig({
           ...COMMUN,
           name: 'integration',
           include: ['**/*.integration.test.ts'],
-          fileParallelism: false,
         },
       },
     ],

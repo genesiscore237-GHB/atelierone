@@ -27,6 +27,8 @@ vi.mock("@atelierone/auth", () => ({}));
 
 import postgres from "postgres";
 import { vehiculesRouter } from "~/server/api/routers/vehicules-router";
+import { garageRouter } from "~/server/api/routers/garage-router";
+import { clientsRouter } from "~/server/api/routers/clients-router";
 import { db } from "~/server/db";
 
 const NS = "p1c";
@@ -75,7 +77,7 @@ async function fixture(opts: {
   clientNom?: string | null;
   tel?: string | null;
   km?: number | null;
-  statut?: string | null;
+  statut?: string | null; clientStatut?: string;
   passages?: number;
   orStatut?: string | null;
 }) {
@@ -83,7 +85,7 @@ async function fixture(opts: {
   if (opts.clientNom) {
     const [c] = await client`
       INSERT INTO clients (nom, telephone, agence_id, statut, type_client, is_active)
-      VALUES (${opts.clientNom}, ${opts.tel ?? null}, ${AGENCE}, 'ACTIF', 'PART', true)
+      VALUES (${opts.clientNom}, ${opts.tel ?? null}, ${AGENCE}, ${opts.clientStatut ?? "ACTIF"}, 'PART', true)
       RETURNING id`;
     clientId = c!.id;
   }
@@ -98,7 +100,7 @@ async function fixture(opts: {
     await client`
       INSERT INTO parking_vehicles (agence_id, vehicule_id, num_registre, marque, modele,
                                     immatriculation, statut, client_nom, date_entree)
-      VALUES (${AGENCE}, ${v!.id}, ${9500 + i}, ${opts.marque}, 'ModeleTest',
+      VALUES (${AGENCE}, ${v!.id}, ${100000 + Number(v!.id) * 10 + i}, ${opts.marque}, 'ModeleTest',
               ${opts.immat ?? null}, 'EN_PARKING', ${opts.clientNom ?? null}, now())
     `;
   }
@@ -179,7 +181,7 @@ describe("P1.1 — liste canonique", () => {
     expect(ligne!.position).toHaveProperty("siteNom");
     expect(ligne!.position).toHaveProperty("zoneNom");
     expect(ligne!.position).toHaveProperty("spotCode");
-    expect(ligne!.position!.numRegistre).toBe(9500);
+    expect(ligne!.position!.numRegistre).toBe(100000 + Number(vehiculeId) * 10);
     expect(ligne!.position!.statutParking).toBe("EN_PARKING");
   }, 30000);
 
@@ -237,5 +239,53 @@ describe("P1.1 — liste canonique", () => {
     expect(r.optionsStatut.length).toBeGreaterThan(0);
     // Chaque option porte un libellé : l'UI ne doit plus avoir sa propre table.
     expect(r.optionsStatut.every((o) => typeof o.libelle === "string" && o.libelle.length > 0)).toBe(true);
+  }, 30000);
+});
+/**
+ * A1 — la même vérité dans les trois lectures.
+ *
+ * Un client `PROVISOIRE` lié à un véhicule canonique doit apparaître avec le
+ * MÊME statut client et le MÊME statut atelier dans la liste parking, la fiche
+ * parking et la fiche client. `clients.get` ne doit plus exposer l'ancienne
+ * relation `vehiculesClient` : deux projections de la même relation finissent
+ * toujours par diverger.
+ */
+describe("A1 — cohérence canonique garage / atelier / client", () => {
+  it("11. les trois endpoints lisent le même client, le même véhicule et les deux statuts", async () => {
+    const marque = `${NS}-a1`;
+    const immat = `HH-${NS}-A1`;
+    const f = await fixture({
+      marque,
+      immat,
+      passages: 2,
+      clientNom: `${NS}-A1 Client`,
+      clientStatut: "PROVISOIRE",
+      statut: "en_reception",
+    });
+    if (f.clientId == null) throw new Error("Fixture sans client");
+    const parking = await client`SELECT id FROM parking_vehicles WHERE vehicule_id = ${f.vehiculeId} ORDER BY id`;
+    expect(parking.length).toBe(2);
+
+    const liste = await garageRouter.createCaller(ctx()).vehicles({ search: immat, limit: 10 });
+    expect(liste.total).toBe(2);
+    for (const ligne of liste.vehicules) {
+      expect(ligne.vehiculeId).toBe(f.vehiculeId);
+      // Deux dimensions distinctes, jamais fusionnées.
+      expect(ligne.statut).toBe("EN_PARKING");
+      expect(ligne.statutCanonique).toBe("en_reception");
+      expect(ligne.clientStatut).toBe("PROVISOIRE");
+      expect(ligne.immatriculation).toBe(immat);
+    }
+
+    const fiche = await garageRouter.createCaller(ctx()).vehicule({ id: parking[0]!.id });
+    expect(fiche.vehicule.vehiculeId).toBe(f.vehiculeId);
+    expect(fiche.vehicule.statut).toBe("EN_PARKING");
+    expect(fiche.vehicule.statutCanonique).toBe("en_reception");
+    expect(fiche.vehicule.clientStatut).toBe("PROVISOIRE");
+
+    const detail = await clientsRouter.createCaller(ctx()).get({ id: f.clientId });
+    expect(detail.client.statut).toBe("PROVISOIRE");
+    expect(detail.vehiculesCanoniques.map((v) => v.id)).toContain(f.vehiculeId);
+    expect((detail as Record<string, unknown>).vehiculesClient).toBeUndefined();
   }, 30000);
 });

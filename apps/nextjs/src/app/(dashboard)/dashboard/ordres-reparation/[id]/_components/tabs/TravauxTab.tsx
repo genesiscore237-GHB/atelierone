@@ -7,9 +7,10 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import {
-  Wrench, Play, Square, Timer, Loader2, Plus, Trash2, UserRound, Camera, AlertTriangle, CheckCircle2, Lock,
+  Wrench, Play, Square, Timer, Loader2, Plus, Trash2, UserRound, Camera, AlertTriangle, CheckCircle2, Lock, MessageSquareText,
 } from "lucide-react";
 import { useOrPermissions } from "../../../_hooks/useOrPermissions";
+import { usePermissions } from "~/hooks/usePermissions";
 import { TechnicienSelector } from "../shared/TechnicienSelector";
 import { SelectSearch } from "~/components/ui/select-search";
 
@@ -44,6 +45,8 @@ export function TravauxTab({ or }: { or: any }) {
   const id = Number(or.id);
   const utils = api.useUtils();
   const { flags } = useOrPermissions();
+  const { hasPermission } = usePermissions();
+  const peutCompteRendu = hasPermission("or.intervenir");
   const { data: employes } = api.rh.roster.useQuery({ statut: "actif" });
   const employesList = (employes ?? []) as any[];
   const peutEditer = flags.canTravaux;
@@ -56,6 +59,8 @@ export function TravauxTab({ or }: { or: any }) {
   const [signaler, setSignaler] = useState("");
   const [showPhotos, setShowPhotos] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [crLigneId, setCrLigneId] = useState(0);
+  const [cr, setCr] = useState({ constat: "", intervention: "", suite: "" });
 
   const addLigne = api.or.addLigne.useMutation({
     onSuccess: () => { toast.success("Ligne ajoutée"); setNv({ type: "SERVICE", libelle: "", quantite: "1", prixUnitaire: "", tva: "0", dureeHeures: "" }); utils.or.getById.invalidate(); },
@@ -77,8 +82,19 @@ export function TravauxTab({ or }: { or: any }) {
     onSuccess: () => utils.or.getById.invalidate(),
     onError: (e) => toast.error(e.message),
   });
+  const ecrireCompteRendu = api.interventions.ecrire.useMutation({
+    onSuccess: () => {
+      toast.success("Compte rendu enregistré");
+      setCr({ constat: "", intervention: "", suite: "" });
+      utils.or.getById.invalidate();
+      utils.vehicules.get.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const lignes = or.lignes ?? [];
+  const photosTravaux = (or.photos ?? []).filter((p: any) => p.visite === "TRAVAUX");
+  const comptesRendus = (or.interventions ?? []) as any[];
   const lignesAutorisees = lignes.filter((l: any) => l.statutAutorisation === "AUTORISE");
   const pointagesEnCours = (pointages ?? []).filter((p: any) => p.enCours);
   const optTechniciens = employesList.map((e: any) => ({ value: e.id, label: `${e.prenom ?? ""} ${e.nom}`.trim() }));
@@ -116,6 +132,23 @@ export function TravauxTab({ or }: { or: any }) {
     toast.success("Signalement ajouté — créez une nouvelle version de devis pour l'autoriser (onglet Devis)");
   };
 
+  const enregistrerCompteRendu = () => {
+    if (!crLigneId) {
+      toast.error("Choisissez la ligne de travaux concernée");
+      return;
+    }
+    if (!cr.constat.trim() && !cr.intervention.trim() && !cr.suite.trim()) {
+      toast.error("Un compte rendu vide n'apprend rien.");
+      return;
+    }
+    ecrireCompteRendu.mutate({
+      ligneId: crLigneId,
+      constat: cr.constat.trim() || undefined,
+      intervention: cr.intervention.trim() || undefined,
+      suite: cr.suite.trim() || undefined,
+    });
+  };
+
   const handleUpload = async (files: FileList | null) => {
     if (!files?.length) return;
     setUploading(true);
@@ -128,7 +161,7 @@ export function TravauxTab({ or }: { or: any }) {
         const res = await fetch("/api/uploads", { method: "POST", body: formData });
         if (!res.ok) { const e = await res.json(); throw new Error(e.error); }
         const data = await res.json();
-        await new Promise<void>((resolve) => ajouterPhoto.mutate({ id, url: data.url, type: file.type.startsWith("video") ? "VIDEO" : "PHOTO" }, { onSettled: () => resolve() }));
+        await new Promise<void>((resolve) => ajouterPhoto.mutate({ id, url: data.url, type: file.type.startsWith("video") ? "VIDEO" : "PHOTO", visite: "TRAVAUX" }, { onSettled: () => resolve() }));
         ok++;
       } catch (e: any) {
         toast.error(e.message ?? "Erreur upload");
@@ -319,6 +352,73 @@ export function TravauxTab({ or }: { or: any }) {
         )}
       </div>
 
+      {/* ─── Comptes rendus techniciens ─── */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h3 className="mb-2 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+          <MessageSquareText size={15} className="text-primary" /> Comptes rendus techniciens ({comptesRendus.length})
+        </h3>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Comptes rendus en ajout seul : une correction se fait par un nouveau compte rendu, jamais en effaçant l'ancien.
+        </p>
+
+        {comptesRendus.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucun compte rendu sur ce dossier.</p>
+        ) : (
+          <div className="space-y-2">
+            {comptesRendus.map((c: any) => (
+              <div key={c.id} className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                  <span>{c.createdAt ? new Date(c.createdAt).toLocaleString("fr-FR") : "date inconnue"}</span>
+                  {c.ligneLibelle && <span className="font-semibold text-foreground">· {c.ligneLibelle}</span>}
+                  <span>· {[c.technicienPrenom, c.technicienNom].filter(Boolean).join(" ") || "auteur non rattaché"}</span>
+                </div>
+                {c.constat && <p className="mt-1"><span className="font-semibold">Constat :</span> {c.constat}</p>}
+                {c.intervention && <p><span className="font-semibold">Intervention :</span> {c.intervention}</p>}
+                {c.suite && <p><span className="font-semibold">Suite :</span> {c.suite}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {peutCompteRendu ? (
+          <div className="mt-3 space-y-2 rounded-lg border border-dashed border-border p-3">
+            <SelectSearch
+              value={crLigneId || null}
+              onChange={(v) => setCrLigneId(v ? Number(v) : 0)}
+              options={lignes.map((l: any) => ({ value: l.id, label: l.libelle }))}
+              placeholder="Ligne de travaux concernée…"
+              searchPlaceholder="Rechercher une ligne…"
+              size="sm"
+              className="w-full"
+            />
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Constat</Label>
+                <textarea value={cr.constat} onChange={(e) => setCr({ ...cr, constat: e.target.value })} rows={2} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs" placeholder="Ce que j'ai vu…" />
+              </div>
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Intervention</Label>
+                <textarea value={cr.intervention} onChange={(e) => setCr({ ...cr, intervention: e.target.value })} rows={2} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs" placeholder="Ce que j'ai fait…" />
+              </div>
+              <div>
+                <Label className="text-[10px] text-muted-foreground">Suite</Label>
+                <textarea value={cr.suite} onChange={(e) => setCr({ ...cr, suite: e.target.value })} rows={2} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs" placeholder="Ce qu'il faut pour la suite…" />
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button size="sm" onClick={enregistrerCompteRendu} disabled={ecrireCompteRendu.isPending}>
+                {ecrireCompteRendu.isPending ? <Loader2 size={12} className="mr-1 animate-spin" /> : <Plus size={12} className="mr-1" />}
+                Enregistrer le compte rendu
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+            <Lock size={12} /> Permission `or.intervenir` requise pour écrire un compte rendu.
+          </p>
+        )}
+      </div>
+
       {/* ─── Signalement travaux supplémentaires ─── */}
       {peutEditer && (
         <div className="rounded-xl border border-dashed border-warning/40 bg-warning/5 p-4">
@@ -344,7 +444,7 @@ export function TravauxTab({ or }: { or: any }) {
             <Camera size={15} className="text-primary" /> Photos travaux (avant / pendant / après)
           </h3>
           <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => setShowPhotos(!showPhotos)}>
-            {showPhotos ? "Masquer" : "Voir / ajouter"} ({or.photos?.length ?? 0})
+            {showPhotos ? "Masquer" : "Voir / ajouter"} ({photosTravaux.length})
           </Button>
         </div>
         {showPhotos && (
@@ -353,11 +453,13 @@ export function TravauxTab({ or }: { or: any }) {
               <input type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4" className="mb-2 block text-xs" onChange={(e) => handleUpload(e.target.files)} disabled={uploading} />
             )}
             {uploading && <p className="mb-2 text-xs text-muted-foreground"><Loader2 className="mr-1 inline size-3 animate-spin" />Téléversement…</p>}
-            {(or.photos ?? []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">Aucune photo.</p>
+            {photosTravaux.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Aucune photo de travaux. Les photos d'entrée restent dans l'onglet Réception.
+              </p>
             ) : (
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
-                {(or.photos ?? []).map((p: any) => (
+                {photosTravaux.map((p: any) => (
                   <a key={p.id} href={p.url} target="_blank" rel="noopener noreferrer" className="group relative overflow-hidden rounded-lg border border-border">
                     {p.type === "PHOTO" ? (
                       // eslint-disable-next-line @next/next/no-img-element

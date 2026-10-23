@@ -157,7 +157,7 @@ Loi d'or : **tant que le statut d'un véhicule ment, aucune phase suivante n'est
 **P3.2 · Satisfaction client** — ✅ note et commentaire à la restitution, délai de première réponse (devis ou réponse manuelle), réclamation ouverte/résolue tracée sur l'OR et dans la fiche client 360.
 
 **P3.3 · KPI manquants, par ordre de valeur**
-1. Marge par dossier (pas seulement globale / par produit) — **bloquée** par l'absence de taux horaire main-d'œuvre (voir ci-dessous)
+1. ~~Marge par dossier (pas seulement globale / par produit)~~ ✅ livré (`MARGE_DOSSIER` — taux horaire configurable, voir ci-dessous)
 2. ~~Taux de reprise (rework)~~ ✅ livré (`TAUX_REPRISE`, branché sur `tauxRetouche`)
 3. ~~Productivité technicien : heures vendues / disponibles~~ ✅ livré (`PRODUCTIVITE_TECHNICIEN` — voir détails ci-dessous)
 4. ~~Rétention client / réachat~~ ✅ livré (`TAUX_REACHAT`, 24 mois hors SAV, liste des dormants)
@@ -165,9 +165,10 @@ Loi d'or : **tant que le statut d'un véhicule ment, aucune phase suivante n'est
 6. ~~Taux de transformation devis~~ ✅ livré (`TAUX_TRANSFORMATION_DEVIS` — voir détails ci-dessous)
 7. ~~Série historique d'occupation atelier~~ ✅ livré (`occupationParSemaine`, 12 semaines complètes)
 
-**Reste : 1 KPI** (marge par dossier), bloqué par une décision métier. La règle
-« aucun nouveau KPI avant P3.1 terminé et testé » est satisfaite depuis le
-2026-10-20.
+**Les 7 KPI sont livrés.** La règle « aucun nouveau KPI avant P3.1 terminé et
+testé » est satisfaite depuis le 2026-10-20. `MARGE_DOSSIER` restera
+`SANS_DATA` jusqu'à la saisie du taux horaire par la Direction : le code est
+complet, la valeur métier ne peut pas être inventée.
 
 #### P3.3.6 · Taux de transformation devis (formule actée 2026-10-22)
 
@@ -360,14 +361,14 @@ Ordre de suppression obtenu par **fermeture transitive du graphe FK** (57 tables
 
 ---
 
-## 5ter. Où en est le plan — 2026-10-20
+## 5ter. Où en est le plan — 2026-10-22
 
 | Phase | Avancement | Reste |
 |---|---|---|
 | **P0** Intégrité | ✅ **7/7** | — |
 | **P1** Liste véhicules | ✅ **3/3** | — (`P1.2` caduc) |
 | **P2** Alertes/relances | ✅ **4/4** | — (P2.2 centre d'alertes, P2.3 relances, P2.4 cibles KPI livrés) |
-| **P3** Statistiques | 🟡 **8/9** | `P3.2` ✅ (note, première réponse, réclamation tracée) ; 1 KPI restant (`P3.3.1` marge dossier), bloqué par une décision métier |
+| **P3** Statistiques | ✅ **9/9 (code)** | `P3.3.1` livré : taux horaire configurable, marge nette par dossier. Le KPI reste `SANS_DATA` tant que la Direction n'a pas saisi le taux — c'est une donnée métier, pas du code manquant. |
 | **P4** Performance | 🟡 **partiel** | Scans KPI fenêtrés ✅ ; pré-agrégation et cache serveur restent à faire |
 | **P5** Hygiène | ✅ **3/3** | — (liste `KEEP` de `reset-db.ts`) |
 
@@ -379,14 +380,14 @@ Ordre de suppression obtenu par **fermeture transitive du graphe FK** (57 tables
 | 2 | Harmonisation — 360 partagée, listes canoniques | ✅ |
 | 3 | Anatomie du cycle — les deux vocabulaires de statut | ✅ |
 | 4 | Restitutions — trace obligatoire, panneau partagé | ✅ |
-| 5 | Relances | ✅ **3/3** — table, vocabulaire, routeur, panneau, 1209 tests verts |
-| 6 | Statistiques et KPI fouillables | 🟡 **8/9** — **bloquée par l'absence de données, pas par le code** : la production compte 1 dossier, 0 ligne, 0 vente, 0 achat. Voir § 5bis |
-| 7 | Qualité — tests de rendu React, purge des 229 erreurs TS | 🟡 **partiel** — invariant d'onglets en place ; **rendu React réel toujours absent** (`jsdom` non installé) |
+| 5 | Relances | ✅ **3/3** — table, vocabulaire, routeur, panneau |
+| 6 | Statistiques et KPI fouillables | ✅ **9/9 (code)** — `P3.3.1` livré ; les KPI restent vides tant que la production n'a pas de dossiers complets et de taux horaire saisi. Voir § 5bis |
+| 7 | Qualité — tests de rendu React, purge des erreurs TS | 🟡 **partiel** — `jsdom` + `@testing-library/react` installés et un premier test de rendu réel (`empty-state.test.tsx`) ; la couverture React reste à étendre. La baseline TS reste importante et préexistante. |
 
-**P0, P1, P2 et P5 sont closes.** Ce qui bloque maintenant n'est plus
-l'intégrité, la liste ni les alertes : c'est le 1 KPI restant de `P3.3` (marge
-dossier, décision métier), la pré-agrégation/cache de P4, puis le rendu React
-réel de l'étape 7.
+**P0, P1, P2, P3 (code) et P5 sont closes.** Ce qui reste n'est plus un KPI
+manquant : c'est la pré-agrégation/cache de P4, l'extension des tests de rendu
+React, et la saisie Direction du taux horaire pour que `MARGE_DOSSIER` cesse
+d'être `SANS_DATA`.
 
 ### 5ter bis. L'étape 6 est bloquée par les données, pas par le code — 2026-10-17
 
@@ -418,27 +419,33 @@ fait passer une note à 5, vérifie `valeur = 5`, `n = 1`, `significatif = false
 et fait varier `TAUX_REPRISE` sans que le dénominateur bouge. Quand la donnée
 arrivera, les KPI calculeront.
 
-#### La marge par dossier est bloquée par une décision métier
+#### P3.3.1 — la marge par dossier : code livré, valeur métier à saisir
 
-`P3.3.1` est le premier des KPI manquants « par ordre de valeur ». Il n'est pas
-calculable aujourd'hui, et pas pour une raison de code :
+`P3.3.1` n'est plus bloqué par le code. La décision de modèle est actée et
+implémentée :
 
-- **Coût des pièces : possible.** `achats_lignes` porte `or_id` et
-  `prix_unitaire` — le coût d'achat est raccrochable au dossier.
-- **Coût de la main-d'œuvre : impossible.** `lignes_ordre_reparation` a
-  `duree_heures`, mais **aucun taux horaire n'existe** — ni table, ni colonne,
-  nulle part. `employee_salary_history.base_salary` existe, mais un salaire
-  n'est pas un coût de main-d'œuvre : il faut un taux de charges, une
-  imputation des charges de structure, et une notion d'heures productives qui
-  n'existe pas.
+- **Le taux horaire est un paramètre d'agence**, pas une constante ni un salaire
+  déguisé : `atelier_parametres.taux_horaire_atelier` (numeric nullable, sans
+  défaut). La migration `0030` est additive et idempotente ; elle est appliquée
+  au local **et** à la production Neon.
+- **Aucune valeur n'a été inventée.** Tant que la colonne est `NULL`, le KPI
+  `MARGE_DOSSIER` reste `SANS_DATA` et l'écran explique pourquoi. La Direction
+  le renseigne dans **Paramètres atelier** ; aucun redéploiement n'est requis.
+- **Formule** : `marge nette = CA TTC − coût des pièces − heures SERVICE × taux
+  horaire`. Les lignes `SERVICE` déclinées sont exclues. Une ligne `SERVICE`
+  non déclinée **sans `duree_heures`** rend le dossier incomplet : elle n'est
+  jamais comptée comme zéro heure.
+- **Honnêteté des données** : un coût pièces inconnu (ligne sans `coutUnitaire`
+  ni `prixAchat`), un CA absent, un taux absent ou une durée inconnue excluent
+  le dossier de la moyenne. La **marge pièces** reste publiée séparément, car
+  elle est vraie même quand la marge nette ne l'est pas. Les dossiers incomplets
+  sont comptés et nommés, jamais noyés dans une moyenne à zéro.
+- **Périmètre** : la marge par dossier ne porte que sur les OR `LIVRE` de la
+  période, comme le KPI de santé ; les totaux facturés de l'écran Facturation
+  gardent leur propre périmètre.
 
-Une marge calculée avec un taux horaire inventé serait **fiable en apparence et
-fausse en réalité** — exactement le défaut que ce chantier traque depuis le
-départ. La marge sur les pièces seule est calculable et nommée « marge pièces »,
-mais ce n'est pas la marge que le plan demande.
-
-> **Décision attendue :** quel est le coût d'une heure d'atelier ? Cette réponse
-> doit précéder la migration qui stockera le taux.
+> **Reste opérationnel :** saisir le taux horaire réel dans Paramètres atelier.
+> C'est une décision de Direction, pas une correction automatique.
 
 **P0 est close.** C'est la phase qui bloquait tout le reste, et elle est vérifiée dans le code, pas seulement au journal : `or-p0-gardes-travaux.integration.test.ts` couvre les gardes travaux, les `CHECK` sont `VALIDATE`, le trigger `immat_norm` est actif en production.
 
@@ -462,6 +469,7 @@ mais ce n'est pas la marge que le plan demande.
 
 | Date | Lot | Contenu |
 |---|---|---|
+| 2026-10-22 | **Cohérence garage — listes honnêtes, marge dossier, tests réparés** | Second lot de mise en cohérence. **(1) `P3.3.1` marge par dossier** : `atelier_parametres.taux_horaire_atelier` (nullable, sans défaut) + migration `0030` additive, saisie dans Paramètres atelier, moteur pur `calculerMargesDossiers`. La marge nette déduit pièces et main-d'œuvre ; un coût pièces inconnu, un CA absent, un taux absent ou une ligne `SERVICE` sans durée **excluent** le dossier de la moyenne au lieu de le compter à zéro. La marge pièces reste publiée. `MARGE_DOSSIER` est branché sur la santé, Performance et Facturation ; les OR pris en compte sont uniquement les `LIVRE`. Tant que le taux n'est pas saisi, le KPI reste `SANS_DATA`. **(2) Listes** : `garage.vehicles` accepte `offset`, calcule `parStatut` côté serveur sur le périmètre de recherche et l'UI pagine réellement (C1) ; `clients.list` renvoie `stats.parType`/`stats.parStatut` et l'UI affiche les fiches `PROVISOIRE` à valider (C2) ; `clients.get` ne renvoie plus `vehiculesClient`, plus de repli trompeur (C3) ; `garage.plan` expose le statut canonique du véhicule (C4). **(3) Tests** : fixtures `LIVRE` dotées d'une restitution et nettoyage des transferts/alertes/tâches avant `parking_vehicles` (C8) ; test d'isolation de la liste canonique (A1) ; garde qui interdit les créations hors réception (A5) ; `jsdom` + `@testing-library/react` avec un premier test de rendu réel (C7). `fileParallelism: false` déplacé à la racine de Vitest : au niveau d'un projet, Vitest 3 l'ignorait, donc les fichiers d'intégration se chevauchaient encore. **Vérifs** : suite complète **1249 verts / 3 ignorés**, `next build` vert, `tsc` sans nouvelle erreur dans les fichiers du lot (baseline préexistante inchangée), migration `0030` appliquée au local et à la production Neon, `db:check` **schéma identique** avec 29 écarts de données d'exploitation tolérés. **Aucun commit ni push** ; les 31 clients `PROVISOIRE` et les 13 véhicules sans client restent des données à prouver, non promues automatiquement. |
 | 2026-10-22 | **Cohérence garage — une seule réception, module Client réparé** | Les quatre chemins de création sont audités ; les trois chemins parallèles (atelier, parking, OR) sont retirés de l'UI, la réception reste le seul parcours complet. `VehiculeFormDialog` devient une édition seule, montée uniquement avec une ligne sélectionnée. Le domaine Clients pointe vers `/dashboard/customers` ; la liste affiche et valide les `PROVISOIRE` ; la fiche client montre statut canonique, OR et position. `vehicules.get` expose version/dimensions/poids/`isActive`/`updatedAt` ; `garage.vehicles` et `garage.vehicule` joignent `vehicules`/`clients` et `total` passe à `count(*)`. Les sélecteurs de contrats acceptent `ACTIF` et `PROVISOIRE` — les 31 clients de production étaient sinon invisibles. Vérifs : `next build` vert, `tsc` 303 baseline sans erreur dans les fichiers du lot, suite **1241 tests verts / 3 ignorés**, SQL des jointures validé. Commit `09f4014` poussé sur `main` ; le hook pre-push n'a appliqué aucune migration et n'a créé aucun client/véhicule ; schéma identique (21 écarts de données attendus). Détail : `docs/RAPPORT-COHERENCE-GARAGE-2026-10-22.md`. |
 | 2026-10-22 | **P3.3.6 + P3.3.3 — le taux de transformation devis et la productivité technicien sortent de « bloqué »** | Les deux lignes du plan étaient périmées : `DevisTab` crée, envoie et enregistre les versions de devis depuis longtemps, et `TravauxTab` pointe les interventions. Les deux blocages étaient des lignes de plan qui n'avaient pas suivi le code, pas des données absentes. **Décision de formule pour les deux.** (1) `TAUX_TRANSFORMATION_DEVIS` : la vérité horodatée est `or_historique`, pas `orDevisVersions` — le journal est append-only et porte à la fois le chemin versions (`envoyerVersionDevis`) et le chemin legacy (`soumettreDevis`), ce qui épargne un scan de JSON. Au dénominateur, OR dont la **dernière** trace `VALIDATION_DEVIS → EN_ATTENTE_VALIDATION` tombe dans la période ; au numérateur, ceux dont la **dernière** trace `VALIDATION_DEVIS → EN_COURS` n'anticipe pas le dernier envoi — une acceptation antérieure à un re-envoi comptait comme une transformation du nouveau devis, une ré-approbation gratuite. Cible 60/40/25. (2) `PRODUCTIVITE_TECHNICIEN` : le numérateur est le plan (« heures vendues ») — `duree_heures` des lignes SERVICE non déclinées sur des OR **livrés** de la période, pas les heures pointées. Le dénominateur sort du paramétrage RH, pas du code : `expected_hours` du cycle de chaque employé actif dont la `fonction` ressemble à technicien, borné par embauche et fin de contrat. Sans cycle configuré, l'employé sort du dénominateur plutôt que d'inventer une capacité hebdomadaire ; là où personne n'a de cycle, le KPI affiche SANS_DATA — l'état honnête. Limites actées, pas cachées : absences approuvées et jours fériés ne déduisent pas des heures disponibles (dénominateur surestimé, taux sous-estimé) ; le détail par technicien est exposé (`getCompetences` : `productivite`, `heuresVendues`, `heuresDisponibles`) et affiché dans l'onglet Compétences. Cible 70/55/40. Au passage, deux erreurs TS baseline de `kpi-service.ts` (`nbLignesApresDevis` absent de l'interface `OrKpiRecord`) sont sorties du lot en déclarant le champ. Et `migrate-kpi-cibles.ts` forçait encore `ssl: false` : il n'aurait jamais pu atteindre Neon, donc les nouvelles cibles n'auraient jamais pu être seedées en production. Il passe désormais par `sslPourUrl()`, comme les autres scripts. **Vérifs** : 4 tests unitaires nouveaux (acceptation postérieure au dernier envoi, absence d'envoi => aucune mesure, somme des heures attendues sur les seuls jours travaillés, ratio heures vendues / disponibles sans exclure un technicien sans vente), et l'intégration `pilotage-lot3` exerce désormais les deux KPI sur des fixtures réelles : historique `VALIDATION_DEVIS` pour la conversion, cycle de travail à 7 h/jour ouvré et ligne SERVICE de 7 h sur un OR livré pour la productivité (`heuresVendues = 7`, `heuresDisponibles > 0`), plus un OR annulé portant 5 h pour prouver que `dateCloture` seule ne suffit pas. Suite complète **1241 verts / 3 ignorés (1244, 104 fichiers dont 1 skipped)**, `next build` OK, `tsc` sans erreur dans les fichiers P3.3 (303 erreurs baseline parallèles restantes, les 2 de `nbLignesApresDevis` éliminées), `db:check` : **schéma identique**, 21 divergences de données tolérées (dont `kpi_cibles` 22 local vs 12 production : les nouvelles cibles ne sont pas seedées en production). Reste à faire, avec l'URL Neon et un consentement explicite : `FORCE=1 pnpm -F @atelierone/db migrate:kpi-cibles` pour créer les 10 cibles manquantes — sans elles, les deux nouveaux KPI restent `SANS_DATA` en production. |
 | 2026-10-16 | **P1.1 (2/2) — les écrans branchés sur la liste canonique** | Une source de vérité qui n'alimente aucun écran n'a servi à rien. Deux raccordements. **(1) La liste atelier** `/dashboard/vehicules` : elle interroge toujours `vehicules.list` — plafond 100 en dur, `total` calculé puis **ignoré**, `limit`传的 sans pagination, table de statuts recopiée en dur. Elle passe à `listeCanonique` et gagne : pagination réelle avec boutons Précédent/Suivant, **le total affiché porte le filtre courant** (« 54 véhicules pour cette recherche » et non « 100 »), sélecteur de statut **servi par le serveur** avec le compte de chaque statut, colonne **Position** (site · zone · place), badge du **dossier en cours**, recherche par châssis / n° de registre / téléphone, et un état d'erreur affiché au lieu d'un tableau vide muet. Changer de filtre ramène en première page : rester sur la page 7 d'un nouveau filtre affiche un tableau vide, qui se lit comme « aucun véhicule » alors qu'il y en a. Cas des **12 véhicules sans plaque** : ils affichent « Sans plaque relevée » et non une cellule vide, qui ferait croire à une fiche corrompue. Au passage, `useDebounce` sortait de son fichier pour devenir un hook partagé — l'inventaire en avait trouvé **trois** copies, dont une sans anti-rebond, qui émet dix requêtes sur dix caractères tapés, chacune avec son `count(*)` et ses compteurs. **(2) La colonne « Emplacement » du registre garage** : le mensonge le plus visible, et le plus discret. L'écran lit `v.site` / `v.zone` / `v.spot` depuis son introduction ; `garage.vehicles` ne renvoyait que les **identifiants entiers**. La colonne affichait donc « Non défini » **sur toutes les lignes, en permanence**, y compris pour un véhicule posé sur une place connue — et rien ne le signalait : pas d'erreur, pas de test rouge, pas de trace. Le nom lisible n'existe pas sur `parking_vehicles`, il faut joindre sites / zones / spots. `garage.exportVehicules` le faisait déjà — **l'export affichait la place, l'écran non**. Test vérifié : `expected undefined to be 'p1pos-Site'` sur l'ancien code. **1020/1020, build vert.** |
@@ -499,3 +507,19 @@ mais ce n'est pas la marge que le plan demande.
 | 2026-10-15 | **Correction — frontière client/serveur (build Vercel)** | ReceptionTab.tsx (composant client) importait OUTILLAGE_PAR_DEFAUT depuis ~/server/lib/outillage-catalogue, qui touche @atelierone/db → postgres → 
 et/	ls/s/perf_hooks. 	sc ne voyait rien : **seul 
 ext build voit la frontière**. Découpage : la partie PURE (nomenclature par défaut, types, schémas Zod, slugification) part dans ~/lib/outillage.ts, importable par les deux côtés ; le module serveur ne garde que l'accès base et ré-exporte. Au passage, la slugification était **dupliquée** dans le composant client — deux implémentations d'un même algorithme finissent toujours par diverger, et le serveur aurait refusé la clé que l'écran avait produite. Règle gravée dans AGENTS.md. |
+
+## 7. Cycle véhicule — exécution 2026-10-23
+
+| Sujet | Résultat |
+|---|---|
+| Réception | `or.receptionner` crée le passage parking (`parking_vehicles.or_id`) dans sa transaction ; `garage.create` refuse un second passage actif. |
+| Projection | Seul le passage actif est mis à jour ; les anciens `SORTI` restent intacts ; `sortirVehiculeParking` choisit le passage actif. |
+| Réception éditable | `or.update` refuse un OR clos et un diagnostic figé (sauf emplacement) ; km synchronisé vers la fiche ; `pannesDeclarees` synchronisé vers `plainte` ; km non obligatoire. |
+| Comptes rendus | `or_interventions` visible dans l'onglet Travaux de l'OR et dans `/dashboard/atelier/interventions` (recherche + rafraîchissement). |
+| Photos | `visite` portée par la photo ; galeries `ENTREE`/`TRAVAUX` séparées ; doublon de l'onglet Historique supprimé. |
+| Dashboard | « Véhicules en parc » = véhicules distincts ; « OR ouverts » = dossiers ; `ferme_definitif` exclu ; dernier compte rendu affiché. |
+| Cession | `vehicules.ceder` avec motif obligatoire, audit et synchronisation du passage actif. |
+| Base | Migrations `0031`/`0032` appliquées local, test et Neon ; `db:check` schéma identique (29 divergences de données tolérées). |
+| Vérifications | `vitest` 1257 passés / 3 ignorés ; `next build` vert ; `tsc` aucune nouvelle erreur dans les fichiers du lot (305 baseline). |
+
+Détail : `docs/PLAN-EXECUTION-CYCLE-VEHICULE.md`.

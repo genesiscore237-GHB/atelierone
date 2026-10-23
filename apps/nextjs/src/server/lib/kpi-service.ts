@@ -584,3 +584,139 @@ export function scoreTechnicien(
     recommandation,
   };
 }
+
+// ─── MARGE PAR DOSSIER (P3.3.1) ──────────────────────────────────────────────
+//
+// Une marge d'atelier n'est pas « CA − pièces ». Les heures de main-d'œuvre
+// sont un coût réel, même si elles ne sortent pas de la caisse : les ignorer
+// fait paraître rentable un dossier qui a immobilisé un pont trois jours.
+//
+// Le taux horaire est une DÉCISION d'agence, pas une constante inventée par le
+// code. Il est donc nullable : sans taux, aucune marge n'est calculée. On
+// publie séparément la marge pièces — qui reste vraie — et on exclut les
+// dossiers dont le coût pièces est inconnu, au lieu de le compter à zéro.
+
+export interface DossierMargeInput {
+  id: number;
+  numero: string;
+  /** Montant facturé TTC du dossier, ou null si aucune vente n'est rattachée. */
+  chiffreAffaires: number | null;
+  /** Coût total des pièces, ou null si une ligne n'a ni coût de vente ni prix d'achat. */
+  coutPieces: number | null;
+  /** Somme des heures SERVICE non déclinées. */
+  heuresMainOeuvre: number;
+  /** false si une ligne SERVICE n'a pas de durée : la marge ne peut pas être calculée. */
+  heuresCompletes?: boolean;
+}
+
+export interface MargeDossier extends DossierMargeInput {
+  coutMainOeuvre: number | null;
+  margePieces: number | null;
+  margeNette: number | null;
+  complet: boolean;
+  /** Ce qui manque, en clair, pour que ce dossier entre dans la moyenne. */
+  manques: string[];
+}
+
+export interface SyntheseMarges {
+  tauxHoraireAtelier: number | null;
+  disponible: boolean;
+  dossiers: MargeDossier[];
+  dossiersComplets: number;
+  dossiersIncomplets: number;
+  dossiersPiecesComplets: number;
+  totalChiffreAffaires: number;
+  totalCoutPieces: number;
+  totalCoutMainOeuvre: number;
+  totalMargePieces: number;
+  totalMargeNette: number | null;
+  margeMoyenneDossier: number | null;
+}
+
+const nombrePositif = (v: unknown): number | null => {
+  // `Number(null)` et `Number("")` valent 0 : sans ce garde-fou, une donnée
+  // absente deviendrait un coût nul et gonflerait la marge.
+  if (v == null || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
+const arrondi2 = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * Calcule la marge de chaque dossier et la synthèse de la flotte.
+ *
+ * @param dossiers Dossiers livrés sur la période, avec CA, coût pièces et heures.
+ * @param tauxHoraireAtelier Taux FCFA/heure de l'agence, ou null s'il n'est pas renseigné.
+ */
+export function calculerMargesDossiers(
+  dossiers: DossierMargeInput[],
+  tauxHoraireAtelier: number | null,
+): SyntheseMarges {
+  const taux = nombrePositif(tauxHoraireAtelier);
+
+  let totalChiffreAffaires = 0;
+  let totalCoutPieces = 0;
+  let totalCoutMainOeuvre = 0;
+  let totalMargePieces = 0;
+  let totalMargeNette = 0;
+  let dossiersComplets = 0;
+  let dossiersPiecesComplets = 0;
+
+  const lignes = dossiers.map((d): MargeDossier => {
+    const ca = nombrePositif(d.chiffreAffaires);
+    const pieces = nombrePositif(d.coutPieces);
+    const heures = nombrePositif(d.heuresMainOeuvre) ?? 0;
+    const heuresCompletes = d.heuresCompletes !== false;
+    const manques: string[] = [];
+
+    if (ca == null) manques.push("chiffre d'affaires absent");
+    if (pieces == null) manques.push("coût pièces inconnu");
+    if (taux == null) manques.push("taux horaire atelier non renseigné");
+    if (!heuresCompletes) manques.push("durée main-d'œuvre inconnue");
+
+    const coutMainOeuvre = taux != null && heuresCompletes ? arrondi2(heures * taux) : null;
+    const margePieces = ca != null && pieces != null ? arrondi2(ca - pieces) : null;
+    const complet = ca != null && pieces != null && taux != null && heuresCompletes;
+    const margeNette = complet ? arrondi2(ca! - pieces! - coutMainOeuvre!) : null;
+
+    if (ca != null) totalChiffreAffaires += ca;
+    if (pieces != null) totalCoutPieces += pieces;
+    if (margePieces != null) {
+      totalMargePieces += margePieces;
+      dossiersPiecesComplets++;
+    }
+    if (complet) {
+      totalCoutMainOeuvre += coutMainOeuvre!;
+      totalMargeNette += margeNette!;
+      dossiersComplets++;
+    }
+
+    return {
+      ...d,
+      heuresMainOeuvre: heures,
+      coutMainOeuvre,
+      margePieces,
+      margeNette,
+      complet,
+      manques,
+    };
+  });
+
+  const dossiersIncomplets = lignes.length - dossiersComplets;
+  const margeMoyenneDossier = dossiersComplets > 0 ? arrondi2(totalMargeNette / dossiersComplets) : null;
+
+  return {
+    tauxHoraireAtelier: taux,
+    disponible: taux != null,
+    dossiers: lignes,
+    dossiersComplets,
+    dossiersIncomplets,
+    dossiersPiecesComplets,
+    totalChiffreAffaires: arrondi2(totalChiffreAffaires),
+    totalCoutPieces: arrondi2(totalCoutPieces),
+    totalCoutMainOeuvre: arrondi2(totalCoutMainOeuvre),
+    totalMargePieces: arrondi2(totalMargePieces),
+    totalMargeNette: dossiersComplets > 0 ? arrondi2(totalMargeNette) : null,
+    margeMoyenneDossier,
+  };
+}

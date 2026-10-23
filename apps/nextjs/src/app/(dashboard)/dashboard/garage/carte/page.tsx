@@ -16,6 +16,7 @@ import {
   STATUTS_VEHICULE_LABELS,
   ZONE_TYPE_LABELS,
 } from "../_components/statuts";
+import { STATUT_LABELS as VEH_STATUT_LABELS, STATUT_STYLE as VEH_STATUT_STYLE } from "~/server/lib/vehicule-service";
 
 export default function GarageCartePage() {
   const searchParams = useSearchParams();
@@ -227,7 +228,14 @@ export default function GarageCartePage() {
                     <p className="truncate text-sm font-medium text-foreground">
                       #{v.numRegistre} <span className="text-muted-foreground">{v.marque} {v.modele}</span>
                     </p>
-                    <p className="text-[11px] text-muted-foreground">{STATUTS_VEHICULE_LABELS[v.statut] ?? v.statut}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Parking : {STATUTS_VEHICULE_LABELS[v.statut] ?? v.statut}
+                    </p>
+                    {v.statutCanonique && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Atelier : {VEH_STATUT_LABELS[v.statutCanonique] ?? v.statutCanonique}
+                      </p>
+                    )}
                   </div>
                   {canModifier && (
                     <Button
@@ -260,9 +268,17 @@ export default function GarageCartePage() {
                 #{selectedVehicle.numRegistre} · {selectedVehicle.marque ?? "—"} {selectedVehicle.modele ?? ""}
               </p>
               <p className="text-xs text-muted-foreground">
-                {STATUTS_VEHICULE_LABELS[selectedVehicle.statut] ?? selectedVehicle.statut}
+                Parking : {STATUTS_VEHICULE_LABELS[selectedVehicle.statut] ?? selectedVehicle.statut}
                 {selectedVehicle.spotId ? " · emplacement réservé" : " · position libre"}
               </p>
+              {selectedVehicle.statutCanonique && (
+                <span
+                  className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${VEH_STATUT_STYLE[selectedVehicle.statutCanonique] ?? "bg-muted text-muted-foreground"}`}
+                  title="Statut atelier — dimension distincte du statut parking"
+                >
+                  Atelier : {VEH_STATUT_LABELS[selectedVehicle.statutCanonique] ?? selectedVehicle.statutCanonique}
+                </span>
+              )}
             </div>
             
             {selectedVehicle.photos?.length && (

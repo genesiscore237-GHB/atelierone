@@ -110,8 +110,11 @@ export async function projeterImmoDepuisParking(
 }
 
 /**
- * Après écriture de `vehicules.statut_immobilisation` : pousse vers toutes les
- * lignes du registre parking liées. No-op sans équivalent exact.
+ * Après écriture de `vehicules.statut_immobilisation` : pousse vers le passage
+ * parking ACTIF. Les passages `SORTI` sont de l'histoire, pas des copies du
+ * présent : les réécrire réactivait des places fantômes.
+ *
+ * No-op sans équivalent exact.
  */
 export async function projeterParkingDepuisImmo(
   exec: Exec,
@@ -123,7 +126,16 @@ export async function projeterParkingDepuisImmo(
   await exec.execute(sql`
     UPDATE parking_vehicles
     SET statut = ${statut}, updated_at = now()
-    WHERE vehicule_id = ${vehiculeId} AND statut <> ${statut}`);
+    WHERE vehicule_id = ${vehiculeId}
+      AND statut <> 'SORTI'
+      AND id = (
+        SELECT id FROM parking_vehicles
+        WHERE vehicule_id = ${vehiculeId}
+          AND statut <> 'SORTI'
+        ORDER BY id DESC
+        LIMIT 1
+      )
+      AND statut <> ${statut}`);
 }
 
 // ─── Sortie du parking (source de vérité unique, RD8 / lot S1) ───────────────
@@ -174,7 +186,10 @@ export async function sortirVehiculeParking(
     SELECT id, statut, spot_id, site_id, zone_id, centre_x, centre_y
     FROM parking_vehicles
     WHERE agence_id = ${params.agenceId} AND ${cible}
-    ORDER BY id
+    -- Le passage ACTIF d'abord. L'ancien tri par id choisissait le plus
+    -- ancien passage : une restitution pouvait « sortir » une ligne déjà SORTI
+    -- et laisser la place réellement occupée intacte.
+    ORDER BY CASE WHEN statut <> 'SORTI' THEN 0 ELSE 1 END, id DESC
     LIMIT 1
     FOR UPDATE`)) as unknown as {
       id: number;

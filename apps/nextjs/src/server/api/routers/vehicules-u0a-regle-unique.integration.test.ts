@@ -164,7 +164,10 @@ describe("LOT U0a — règle véhicule unique sur les 3 écrans", () => {
     expect((r3 as any).vehiculeReconcilie).toBe(true);
     expect(r3.vehiculeId).toBe(r1.vehiculeId);
 
-    // 4ᵉ passe : le GARAGE rattache au MÊME véhicule.
+    // 4ᵉ passe : le GARAGE rattache au MÊME véhicule. Depuis la règle « un
+    // passage actif », il faut d'abord clôturer le passage créé par la
+    // réception : un véhicule ne peut pas avoir deux places occupées.
+    await db.execute(sql`UPDATE parking_vehicles SET statut = 'SORTI' WHERE vehicule_id = ${r1.vehiculeId}`);
     const g = await garage.create({ immatriculation: "U0A-PARC-777", numRegistre: NUM_REGISTRE });
     const ligne = ((await db.execute(
       sql`SELECT vehicule_id FROM parking_vehicles WHERE num_registre = ${NUM_REGISTRE}`,
@@ -219,6 +222,7 @@ describe("LOT U0a — règle véhicule unique sur les 3 écrans", () => {
 
     // Le garage saisit un nom de client en texte libre : il ne doit NI
     // remplacer le propriétaire, NI fabriquer de client.
+    await db.execute(sql`UPDATE parking_vehicles SET statut = 'SORTI' WHERE vehicule_id = ${r1.vehiculeId}`);
     await garage.create({
       immatriculation: "U0A-PARC-999",
       numRegistre: NUM_REGISTRE,

@@ -65,6 +65,25 @@ function ctxSuperadmin() {
   } as never;
 }
 
+/**
+ * LIVRE sans restitution est interdit par l'invariant global
+ * (`or-etape4-restitution-preuve`). Une fixture qui écrit `LIVRE` en direct
+ * doit donc produire la même preuve qu'un vrai parcours, sinon elle laisse la
+ * base sale et fait échouer un autre fichier selon l'ordre d'exécution.
+ */
+async function marquerLivre(note?: number) {
+  await db.execute(
+    sql`UPDATE ordres_reparation
+        SET statut = 'LIVRE', date_cloture = now(), satisfaction_note = ${note ?? null}
+        WHERE id = ${orId}`,
+  );
+  await db.execute(
+    sql`INSERT INTO or_restitutions (or_id, kilometrage_sortie, restitue_par, signature_client)
+        SELECT ${orId}, 10000, ${userId}, 'Fixture E6'
+        WHERE NOT EXISTS (SELECT 1 FROM or_restitutions WHERE or_id = ${orId})`,
+  );
+}
+
 async function retirer() {
   await db.execute(
     sql`DELETE FROM or_restitutions
@@ -146,11 +165,7 @@ describe("ÉTAPE 6 — un KPI sans dénominateur n'est pas une mesure", () => {
   });
 
   it("3. une seule note donne une moyenne NON significative", async () => {
-    await db.execute(
-      sql`UPDATE ordres_reparation
-          SET statut = 'LIVRE', date_cloture = now(), satisfaction_note = 5
-          WHERE id = ${orId}`,
-    );
+    await marquerLivre(5);
 
     const caller = atelierKpiRouter.createCaller(ctxSuperadmin());
     const r = await caller.getSanteGarage({ periode: "trimestre" });
@@ -205,7 +220,7 @@ describe("ÉTAPE 6 — un KPI sans dénominateur n'est pas une mesure", () => {
       caller.noterSatisfaction({ orId, note: 5 }),
     ).rejects.toThrow(/livraison|LIVRE/i);
 
-    await db.execute(sql`UPDATE ordres_reparation SET statut = 'LIVRE' WHERE id = ${orId}`);
+    await marquerLivre();
     const ok = await caller.noterSatisfaction({ orId, note: 4, commentaire: "Rapide et propre" });
     expect(ok.success).toBe(true);
 

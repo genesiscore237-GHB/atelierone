@@ -17,6 +17,7 @@ import {
   contratsMaintenanceVehicules,
   orHistorique,
   orPhotos,
+  orInterventions,
   atelierParametres,
   orRapportsDiagnostic,
   orDemandesPieces,
@@ -52,6 +53,7 @@ import {
   marquerDoublonClientTelephone,
 } from "~/server/lib/vehicule-regles";
 import { projeterParkingDepuisImmo, normaliserImmatriculation, sortirVehiculeParking } from "~/server/lib/parking-vehicule-service";
+import { ouvrirPassageReception } from "~/server/lib/parking-passage-service";
 import {
   enregistrerPhotosEtatDesLieu,
   listerPhotosEtatDesLieu,
@@ -391,6 +393,7 @@ export const orRouter = createTRPCRouter({
       return resultats;
     }),
 
+  // IMPORT/TEST ONLY — la réception atelier est l'unique porte UI. Conservé pour les imports et les tests.
   createVehicule: requirePermissionProcedure("or.creer")
     .input(z.object({
       immatriculation: z.string().min(1),
@@ -608,10 +611,28 @@ export const orRouter = createTRPCRouter({
         .where(eq(lignesOrdreReparation.ordreId, input.id))
         .orderBy(lignesOrdreReparation.id);
 
-      const [historique, photos, rapports] = await Promise.all([
+      const [historique, photos, rapports, interventions] = await Promise.all([
         db.select().from(orHistorique).where(eq(orHistorique.orId, input.id)).orderBy(asc(orHistorique.changeLe)),
         db.select().from(orPhotos).where(eq(orPhotos.orId, input.id)).orderBy(asc(orPhotos.createdAt)),
         db.select().from(orRapportsDiagnostic).where(eq(orRapportsDiagnostic.orId, input.id)).orderBy(desc(orRapportsDiagnostic.id)).limit(1),
+        db
+          .select({
+            id: orInterventions.id,
+            ligneId: orInterventions.ligneId,
+            constat: orInterventions.constat,
+            intervention: orInterventions.intervention,
+            suite: orInterventions.suite,
+            createdAt: orInterventions.createdAt,
+            technicienId: orInterventions.technicienId,
+            technicienNom: employes.nom,
+            technicienPrenom: employes.prenom,
+            ligneLibelle: lignesOrdreReparation.libelle,
+          })
+          .from(orInterventions)
+          .leftJoin(employes, eq(orInterventions.technicienId, employes.id))
+          .leftJoin(lignesOrdreReparation, eq(orInterventions.ligneId, lignesOrdreReparation.id))
+          .where(eq(orInterventions.orId, input.id))
+          .orderBy(desc(orInterventions.createdAt)),
       ]);
 
       // Les seuils d'alerte sont lus COLONNE PAR COLONNE, jamais par
@@ -658,6 +679,7 @@ export const orRouter = createTRPCRouter({
         historique,
         suiviRelation: analyserSuiviRelation(or.dateOuverture, historique),
         photos,
+        interventions,
         rapportDiagnostic: rapports?.[0] ?? null,
         joursImmobilisation: joursImmobilisation(dateEntree),
         retardJours: retardJours(or.datePromesse),
@@ -1137,6 +1159,17 @@ kilometrageEntree: input.reception.kilometrageEntree ?? null,
             url: r.url,
             sourceId: r.sourceId,
           })),
+        });
+
+        // PASSAGE PARKING — la réception est une entrée physique. Sans cette
+        // ligne, un véhicule reçu pour la première fois n'existait pas au
+        // registre, et un véhicule déjà passé réutilisait une ligne historique.
+        // L'opération est dans la même transaction : pas d'OR sans passage.
+        await ouvrirPassageReception(tx, {
+          agenceId,
+          vehiculeId: vehiculeId!,
+          orId: or.id,
+          motif: input.reception.pannesDeclarees,
         });
 
         // LOT U2 (RD5) — le kilométrage relevé à l'ENTRÉE devient la référence
@@ -1983,11 +2016,25 @@ if (or.statut !== "PRET_A_LIVRER") {
 
   // ─── Photos / vidéos ───
   ajouterPhoto: requirePermissionProcedure("or.modifier")
-    .input(z.object({ id: z.number().int(), url: z.string().min(1), type: z.enum(["PHOTO", "VIDEO"]).default("PHOTO") }))
+    .input(z.object({
+      id: z.number().int(),
+      url: z.string().min(1),
+      type: z.enum(["PHOTO", "VIDEO"]).default("PHOTO"),
+      // La phase est portée par la photo, pas par l'onglet qui l'affiche.
+      // Sans elle, une photo de travaux ajoutée depuis l'onglet Travaux était
+      // enregistrée en `ENTREE` par défaut et réapparaissait à la réception.
+      visite: z.enum(["ENTREE", "TRAVAUX", "SORTIE"]).default("ENTREE"),
+    }))
     .mutation(async ({ ctx, input }) => {
       const [row] = await db
         .insert(orPhotos)
-        .values({ orId: input.id, url: input.url, type: input.type, creePar: Number(ctx.user.id) } as any)
+        .values({
+          orId: input.id,
+          url: input.url,
+          type: input.type,
+          visite: input.visite,
+          creePar: Number(ctx.user.id),
+        } as any)
         .returning();
       return row;
     }),
@@ -2402,7 +2449,7 @@ if (or.statut !== "PRET_A_LIVRER") {
       motEntree: z.enum(MOTIFS_ENTREE).optional(),
       notes: z.string().nullable().optional(),
       // ─── Réception (onglet 1) ───
-      kilometrageEntree: z.number().int().min(0).optional(),
+      kilometrageEntree: z.number().int().min(0).nullable().optional(),
       niveauCarburantEntree: z.string().optional(),
       pannesDeclarees: z.string().optional(),
       observationsReception: z.string().optional(),
@@ -2421,11 +2468,65 @@ if (or.statut !== "PRET_A_LIVRER") {
     }))
     .mutation(async ({ ctx, input }) => {
       const { id, dateReception, ...rest } = input;
+
+      const [courant] = await db
+        .select({ statut: ordresReparation.statut, vehiculeId: ordresReparation.vehiculeId })
+        .from(ordresReparation)
+        .where(and(eq(ordresReparation.id, id), eq(ordresReparation.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!courant) throw new TRPCError({ code: "NOT_FOUND", message: "Dossier introuvable." });
+      if (["LIVRE", "ANNULE", "ferme_definitif"].includes(courant.statut)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Dossier clos : les données de réception ne sont plus modifiables.",
+        });
+      }
+
+      // Le diagnostic figé est une preuve, pas un brouillon. Seul l'emplacement
+      // reste modifiable (le véhicule peut être déplacé sans réécrire la
+      // réception). Toute autre écriture doit passer par le flux métier.
+      const [diag] = await db
+        .select({ statut: orRapportsDiagnostic.statut })
+        .from(orRapportsDiagnostic)
+        .where(eq(orRapportsDiagnostic.orId, id))
+        .orderBy(desc(orRapportsDiagnostic.id))
+        .limit(1);
+      const champs = Object.entries(rest).filter(([, v]) => v !== undefined).map(([k]) => k);
+      const seulementEmplacement = champs.every((k) => k === "emplacement");
+      if (diag && ["SOUMIS", "VALIDE"].includes(diag.statut) && !seulementEmplacement) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Diagnostic soumis ou validé : la réception est figée. Seul l'emplacement peut encore changer.",
+        });
+      }
+
       const values: any = { ...rest, updatedAt: new Date() };
+      // Une seule saisie à l'écran : « Pannes déclarées ». La colonne
+      // historique `plainte` doit suivre, sinon le dashboard, le planning et
+      // les alertes continuent d'afficher l'ancien énoncé.
+      if (rest.pannesDeclarees !== undefined && rest.plainte === undefined) {
+        values.plainte = rest.pannesDeclarees;
+      }
       if (dateReception) values.dateReception = new Date(dateReception);
       if (rest.datePromesse === null) values.datePromesse = null;
       if (rest.dateFinPrevue === null) values.dateFinPrevue = null;
-      await db.update(ordresReparation).set(values).where(and(eq(ordresReparation.id, id), eq(ordresReparation.agenceId, ctx.user.agenceId)));
+
+      await db.transaction(async (tx) => {
+        await tx
+          .update(ordresReparation)
+          .set(values)
+          .where(and(eq(ordresReparation.id, id), eq(ordresReparation.agenceId, ctx.user.agenceId)));
+
+        // Le km d'entrée est la référence de la fiche véhicule. Une correction
+        // du relevé doit donc corriger les deux, pas seulement l'OR.
+        if (rest.kilometrageEntree != null) {
+          await tx
+            .update(vehicules)
+            .set({ kilometrage: rest.kilometrageEntree, updatedAt: new Date() } as any)
+            .where(and(eq(vehicules.id, courant.vehiculeId), eq(vehicules.agenceId, ctx.user.agenceId)));
+        }
+      });
+
       return { success: true };
     }),
 
@@ -3364,6 +3465,8 @@ modifierDiagnostic: requirePermissionProcedure("or.modifier")
         emplacements: JSON.parse(p.emplacements ?? "[]") as string[],
         raisonsBlocage: JSON.parse(p.raisonsBlocage ?? "[]") as string[],
         texteAccuseReception: p.texteAccuseReception ?? "",
+        // P3.3.1 — NULL signifie « pas encore décidé », jamais « gratuit ».
+        tauxHoraireAtelier: p.tauxHoraireAtelier != null ? Number(p.tauxHoraireAtelier) : null,
       };
     }),
 
@@ -3375,6 +3478,8 @@ modifierDiagnostic: requirePermissionProcedure("or.modifier")
       emplacements: z.array(z.string()).optional(),
       raisonsBlocage: z.array(z.string()).optional(),
       texteAccuseReception: z.string().optional(),
+      // `null` efface explicitement la valeur ; `undefined` ne la touche pas.
+      tauxHoraireAtelier: z.number().min(0).max(99_999_999).nullable().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const values: Record<string, unknown> = { updatedAt: new Date() };
@@ -3384,6 +3489,9 @@ modifierDiagnostic: requirePermissionProcedure("or.modifier")
       if (input.emplacements) values.emplacements = JSON.stringify(input.emplacements);
       if (input.raisonsBlocage) values.raisonsBlocage = JSON.stringify(input.raisonsBlocage);
       if (input.texteAccuseReception !== undefined) values.texteAccuseReception = input.texteAccuseReception;
+      if (input.tauxHoraireAtelier !== undefined) {
+        values.tauxHoraireAtelier = input.tauxHoraireAtelier == null ? null : String(input.tauxHoraireAtelier);
+      }
       const [existing] = await db.select({ id: atelierParametres.id }).from(atelierParametres).where(eq(atelierParametres.agenceId, ctx.user.agenceId)).limit(1);
       if (existing) {
         await db.update(atelierParametres).set(values as any).where(eq(atelierParametres.id, existing.id));
@@ -3474,6 +3582,24 @@ modifierDiagnostic: requirePermissionProcedure("or.modifier")
         interParOr.set(i.ordreId, cur);
       }
 
+      // Dernier compte rendu par OR : le dashboard ne doit pas confondre
+      // « temps pointé » et « ce qui a été constaté ». Les deux sont utiles.
+      const crRows = await db
+        .select({
+          orId: orInterventions.orId,
+          constat: orInterventions.constat,
+          intervention: orInterventions.intervention,
+          suite: orInterventions.suite,
+          createdAt: orInterventions.createdAt,
+          ligneLibelle: lignesOrdreReparation.libelle,
+        })
+        .from(orInterventions)
+        .leftJoin(lignesOrdreReparation, eq(orInterventions.ligneId, lignesOrdreReparation.id))
+        .where(inArray(orInterventions.orId, orIdSet))
+        .orderBy(desc(orInterventions.createdAt));
+      const crParOr = new Map<number, (typeof crRows)[number]>();
+      for (const cr of crRows) if (!crParOr.has(cr.orId)) crParOr.set(cr.orId, cr);
+
       // Demandes de pièces (statuts + lignes par OR)
       const demandes = await db
         .select({ id: orDemandesPieces.id, orId: orDemandesPieces.orId, statut: orDemandesPieces.statut })
@@ -3514,7 +3640,9 @@ modifierDiagnostic: requirePermissionProcedure("or.modifier")
       }
 
       const parc = rows
-        .filter((r) => r.statut !== "LIVRE" && r.statut !== "ANNULE")
+        // `ferme_definitif` est un dossier clos : il ne doit ni compter dans le
+        // parc actif ni produire d'alerte. Seuls LIVRE/ANNULE étaient exclus.
+        .filter((r) => !["LIVRE", "ANNULE", "ferme_definitif"].includes(r.statut))
         .map((r) => {
           const alerte = calculerAlertes({
             statut: r.statut,
@@ -3553,6 +3681,7 @@ modifierDiagnostic: requirePermissionProcedure("or.modifier")
             devis: r.devisAccepte ? "ACCEPTE" : r.statut === "EN_ATTENTE_VALIDATION" ? "EN_ATTENTE" : null,
             techniciens: inter?.techniciens ?? [],
             interventions: inter ? { nb: inter.nb, heures: Math.round(inter.heures * 100) / 100 } : null,
+            dernierCompteRendu: crParOr.get(r.id) ?? null,
             pieces: pieces
               ? { nbDemandes: pieces.nbDemandes, enAttente: pieces.enAttente, manquantes: pieces.manquantes, servies: pieces.servies, bc: bcParOr.get(r.id) ?? [] }
               : null,
@@ -3561,7 +3690,11 @@ modifierDiagnostic: requirePermissionProcedure("or.modifier")
         });
 
       const kpis = {
-        totalParc: parc.length,
+        // Un véhicule peut avoir plusieurs OR ouverts (retour, reprise) :
+        // `parc.length` comptait des dossiers, pas des véhicules. On expose les
+        // deux mesures pour que l'écran ne mente plus sur son titre.
+        totalParc: new Set(parc.map((p) => p.vehiculeId)).size,
+        orOuverts: parc.length,
         p1Ouverts: parc.filter((p) => p.priorite === "P1").length,
         enRetard: parc.filter((p) => p.alerte === "RETARD").length,
         bloques: parc.filter((p) => p.statut === "BLOQUE").length,
@@ -3716,7 +3849,10 @@ modifierDiagnostic: requirePermissionProcedure("or.modifier")
         .innerJoin(vehicules, eq(ordresReparation.vehiculeId, vehicules.id))
         .leftJoin(clients, eq(ordresReparation.clientId, clients.id))
         .leftJoin(employes, eq(ordresReparation.responsableTechnicienId, employes.id))
-        .where(and(eq(ordresReparation.agenceId, ctx.user.agenceId), sql`${ordresReparation.statut} NOT IN ('LIVRE','ANNULE')`));
+        .where(and(
+          eq(ordresReparation.agenceId, ctx.user.agenceId),
+          sql`${ordresReparation.statut} NOT IN ('LIVRE','ANNULE','ferme_definitif')`,
+        ));
 
       const enrichis = rows.map((r) => {
         const a = calculerAlertes({ statut: r.statut, priorite: r.priorite, datePromesse: r.datePromesse, dateEntree: r.dateOuverture ?? new Date(), seuils });

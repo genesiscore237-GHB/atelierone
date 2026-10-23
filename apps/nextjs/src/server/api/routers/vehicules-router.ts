@@ -21,6 +21,7 @@ import {
   orHistorique,
   atelierNotifications,
   produits,
+  auditLogs,
   immatNormaleCondition,
   immatNormPreferenceSql,
 } from "@atelierone/db";
@@ -169,6 +170,9 @@ export const vehiculesRouter = createTRPCRouter({
         FROM parking_vehicles pv
         WHERE pv.vehicule_id = ${input.id}
           AND pv.agence_id = ${ctx.user.agenceId}
+          -- Une réception crée un nouveau passage avec une galerie vide. Sans
+          -- ce filtre, elle masquait les photos du passage précédent.
+          AND jsonb_array_length(coalesce(pv.photos, '[]'::jsonb)) > 0
         ORDER BY pv.id DESC
         LIMIT 1
       `);
@@ -432,10 +436,17 @@ venteId: ordresReparation.venteId,
         lignesTravaux = await db
           .select({
             id: lignesOrdreReparation.id,
+            type: lignesOrdreReparation.type,
             libelle: lignesOrdreReparation.libelle,
             quantite: lignesOrdreReparation.quantite,
             prixUnitaire: lignesOrdreReparation.prixUnitaire,
+            tva: lignesOrdreReparation.tva,
             statut: lignesOrdreReparation.statut,
+            statutAutorisation: lignesOrdreReparation.statutAutorisation,
+            bloque: lignesOrdreReparation.bloque,
+            raisonBlocageLigne: lignesOrdreReparation.raisonBlocageLigne,
+            technicienId: lignesOrdreReparation.technicienId,
+            dureeHeures: lignesOrdreReparation.dureeHeures,
             produitId: lignesOrdreReparation.produitId,
           })
           .from(lignesOrdreReparation)
@@ -525,7 +536,14 @@ venteId: ordresReparation.venteId,
         }
 
         photos = await db
-          .select({ id: orPhotos.id, url: orPhotos.url, type: orPhotos.type, createdAt: orPhotos.createdAt })
+          .select({
+            id: orPhotos.id,
+            url: orPhotos.url,
+            type: orPhotos.type,
+            categorie: orPhotos.categorie,
+            visite: orPhotos.visite,
+            createdAt: orPhotos.createdAt,
+          })
           .from(orPhotos)
           .where(eq(orPhotos.orId, orCourant.id))
           .orderBy(desc(orPhotos.id))
@@ -603,6 +621,7 @@ venteId: ordresReparation.venteId,
     }),
 
   // ─── Création ───
+  // IMPORT/TEST ONLY — la réception atelier est l'unique porte UI. Conservé pour les scripts d'import et les tests.
   create: requirePermissionProcedure("vehicules.creer")
     .input(
       z.object({
@@ -691,7 +710,6 @@ venteId: ordresReparation.venteId,
     .input(
       z.object({
         id: z.number().int(),
-        clientId: z.number().int().optional().nullable(),
         marque: z.string().optional(),
         modele: z.string().optional(),
         annee: z.number().int().min(1900).max(2100).optional(),
@@ -727,6 +745,72 @@ venteId: ordresReparation.venteId,
         vin: rest.numeroChassis,
       });
       return { success: true };
+    }),
+
+  /**
+   * CESSION DE PROPRIÉTAIRE — action métier explicite, jamais un effet de bord
+   * de `update`. Le motif est obligatoire, l'ancien et le nouveau client sont
+   * tracés, et le passage parking actif est synchronisé.
+   */
+  ceder: requirePermissionProcedure("vehicules.modifier")
+    .input(z.object({
+      id: z.number().int(),
+      clientId: z.number().int(),
+      motif: z.string().trim().min(3).max(500),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [vehicule] = await db
+        .select({ id: vehicules.id, clientId: vehicules.clientId, immatriculation: vehicules.immatriculation })
+        .from(vehicules)
+        .where(and(eq(vehicules.id, input.id), eq(vehicules.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!vehicule) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
+      if (vehicule.clientId === input.clientId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Le véhicule appartient déjà à ce client." });
+      }
+
+      const [client] = await db
+        .select({
+          id: clients.id,
+          nom: clients.nom,
+          prenom: clients.prenom,
+          raisonSociale: clients.raisonSociale,
+          telephone: clients.telephone,
+        })
+        .from(clients)
+        .where(and(eq(clients.id, input.clientId), eq(clients.agenceId, ctx.user.agenceId)))
+        .limit(1);
+      if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Client cible introuvable." });
+
+      const nom = String(client.raisonSociale ?? [client.prenom, client.nom].filter(Boolean).join(" ")).trim() || null;
+
+      await db.transaction(async (tx) => {
+        await tx
+          .update(vehicules)
+          .set({ clientId: input.clientId, updatedAt: new Date() } as any)
+          .where(and(eq(vehicules.id, input.id), eq(vehicules.agenceId, ctx.user.agenceId)));
+
+        // Le passage actif porte le nom/telephone du client pour le registre
+        // parking. L'historique des passages reste intact.
+        await tx.execute(sql`
+          UPDATE parking_vehicles
+          SET client_nom = ${nom}, client_telephone = ${client.telephone ?? null}, updated_at = now()
+          WHERE id = (
+            SELECT id FROM parking_vehicles
+            WHERE vehicule_id = ${input.id} AND agence_id = ${ctx.user.agenceId} AND statut <> 'SORTI'
+            ORDER BY id DESC LIMIT 1
+          )`);
+
+        await tx.insert(auditLogs).values({
+          userId: Number(ctx.user.id),
+          action: "VEHICULE_CESSION",
+          entityType: "vehicule",
+          entityId: input.id,
+          details: `Cession ${vehicule.immatriculation ?? "sans plaque"} : client ${vehicule.clientId ?? "aucun"} → ${input.clientId}. Motif : ${input.motif}`,
+        } as any);
+      });
+
+      return { success: true, clientId: input.clientId };
     }),
 
   // ─── Changement de statut d'immobilisation (workflow atelier) ───

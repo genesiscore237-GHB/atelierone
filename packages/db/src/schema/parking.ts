@@ -1,9 +1,11 @@
 import {
-  pgTable, serial, integer, varchar, timestamp, boolean, text, jsonb, doublePrecision, uuid, index,
+  pgTable, serial, integer, varchar, timestamp, boolean, text, jsonb, doublePrecision, uuid, index, uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { agences } from "./agences";
 import { utilisateurs } from "./utilisateurs";
 import { vehicules } from "./vehicules";
+import { ordresReparation } from "./ordres_reparation";
 
 // ─── MODULE PARKING & VÉHICULES IMMOBILISÉS (GPJ) ────────────────────────────
 // Modèle spatial : Site → Zone → Emplacement logique → Véhicule (empreinte + rotation).
@@ -117,6 +119,10 @@ export const parkingVehicles = pgTable("parking_vehicles", {
   // que le véhicule n'a pas d'immatriculation (aucune invention — le registre
   // GPJ contient des véhicules sans plaque).
   vehiculeId: integer("vehicule_id").references(() => vehicules.id, { onDelete: "set null" }),
+  // Passage ↔ dossier d'atelier. Une réception crée le passage dans la même
+  // transaction que l'OR ; le lien permet de retrouver le passage d'un dossier
+  // sans dépendre de la « dernière ligne » (qui peut être un ancien passage).
+  orId: integer("or_id").references(() => ordresReparation.id, { onDelete: "set null" }),
   // Numéro historique du registre (1-48, le 33 n'existe pas).
   numRegistre: integer("num_registre").notNull(),
   marque: varchar("marque", { length: 100 }),
@@ -165,6 +171,10 @@ export const parkingVehicles = pgTable("parking_vehicles", {
 }, (table) => ({
   // Lot 1 — lookup inverse : véhicules canoniques -> lignes du registre parking.
   idxParkingVehiculeId: index("idx_parking_vehicles_vehicule_id").on(table.vehiculeId),
+  // Lien vers le dernier OR qui a ouvert/réutilisé ce passage. Plusieurs OR
+  // peuvent se succéder sur un même passage physique : la colonne n'est donc
+  // pas unique. L'historique des OR reste porté par `ordres_reparation`.
+  idxParkingOrId: index("idx_parking_vehicles_or_id").on(table.orId),
 }));
 
 export type ParkingMovementType = "ENTREE" | "DEPLACEMENT" | "SORTIE" | "TRANSFERT" | "ROTATION" | "PLACEMENT";
@@ -174,7 +184,9 @@ export const parkingMovements = pgTable("parking_movements", {
   agenceId: integer("agence_id").notNull().references(() => agences.id),
   vehicleId: integer("vehicle_id").notNull().references(() => parkingVehicles.id),
   horodatage: timestamp("horodatage").notNull().defaultNow(),
-  userId: integer("user_id").references(() => utilisateurs.id),
+  // L'auteur d'un mouvement peut être supprimé (départ, purge de compte) sans
+  // effacer l'histoire du passage : le mouvement reste, l'auteur devient NULL.
+  userId: integer("user_id").references(() => utilisateurs.id, { onDelete: "set null" }),
   type: varchar("type", { length: 30 }).notNull(),
   siteOrigineId: integer("site_origine_id").references(() => parkingSites.id),
   zoneOrigineId: integer("zone_origine_id").references(() => parkingZones.id),

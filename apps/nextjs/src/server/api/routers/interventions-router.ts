@@ -25,8 +25,8 @@ constatation un privilège de celui qui décide — et c'est exactement la
 import { z } from "zod";
 import { createTRPCRouter, requirePermissionProcedure } from "~/server/api/trpc";
 import { db } from "~/server/db";
-import { orInterventions, ordresReparation, employes, lignesOrdreReparation } from "@atelierone/db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { orInterventions, ordresReparation, employes, lignesOrdreReparation, vehicules } from "@atelierone/db";
+import { eq, and, desc, sql, ilike, or } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { LIBELLES_SOUS_TRAITANCE } from "~/server/lib/revue-parc-service";
 
@@ -166,6 +166,68 @@ export const interventionsRouter = createTRPCRouter({
         )
         .orderBy(desc(orInterventions.createdAt))
         .limit(input.limite ?? 20);
+    }),
+
+  /**
+   * JOURNAL ATELIER — tous les comptes rendus de l'agence, du plus récent au
+   * plus ancien. C'est la vue qui manquait : `parVehicule` oblige à connaître
+   * la plaque, et `parLigne` à ouvrir chaque ligne une par une.
+   */
+  fluxAtelier: requirePermissionProcedure("or.consulter")
+    .input(
+      z.object({
+        search: z.string().trim().optional(),
+        technicienId: z.number().int().optional(),
+        limite: z.number().int().min(1).max(200).default(100),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const conditions: any[] = [
+        eq(ordresReparation.agenceId, ctx.user.agenceId),
+      ];
+      if (input.technicienId) {
+        conditions.push(eq(orInterventions.technicienId, input.technicienId));
+      }
+      const recherche = input.search?.trim();
+      if (recherche) {
+        const q = `%${recherche}%`;
+        conditions.push(
+          or(
+            ilike(vehicules.immatriculation, q),
+            ilike(ordresReparation.numero, q),
+            ilike(lignesOrdreReparation.libelle, q),
+            ilike(orInterventions.constat, q),
+            ilike(orInterventions.intervention, q),
+            ilike(orInterventions.suite, q),
+          )!,
+        );
+      }
+
+      return db
+        .select({
+          id: orInterventions.id,
+          orId: orInterventions.orId,
+          numero: ordresReparation.numero,
+          vehiculeId: orInterventions.vehiculeId,
+          immatriculation: vehicules.immatriculation,
+          ligneId: orInterventions.ligneId,
+          ligneLibelle: lignesOrdreReparation.libelle,
+          constat: orInterventions.constat,
+          intervention: orInterventions.intervention,
+          suite: orInterventions.suite,
+          createdAt: orInterventions.createdAt,
+          technicienId: orInterventions.technicienId,
+          technicienNom: employes.nom,
+          technicienPrenom: employes.prenom,
+        })
+        .from(orInterventions)
+        .innerJoin(ordresReparation, eq(ordresReparation.id, orInterventions.orId))
+        .innerJoin(vehicules, eq(vehicules.id, orInterventions.vehiculeId))
+        .leftJoin(employes, eq(employes.id, orInterventions.technicienId))
+        .leftJoin(lignesOrdreReparation, eq(lignesOrdreReparation.id, orInterventions.ligneId))
+        .where(and(...conditions))
+        .orderBy(desc(orInterventions.createdAt))
+        .limit(input.limite);
     }),
 
   /** Le dernier constat d'un véhicule — ce que la revue du matin lit en premier. */

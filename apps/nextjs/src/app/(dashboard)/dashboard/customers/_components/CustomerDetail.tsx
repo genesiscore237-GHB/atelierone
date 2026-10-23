@@ -113,7 +113,7 @@ export function CustomerDetail({ id }: { id: string }) {
   const contacts = (data.contacts ?? []) as any[];
   const adresses = (data.adresses ?? []) as any[];
   const contrats = (data.contrats ?? []) as any[];
-  const vehicules = ((data as any).vehiculesCanoniques ?? data.vehiculesClient ?? []) as any[];
+  const vehicules = (data.vehiculesCanoniques ?? []) as any[];
   const interactions = (data.interactions ?? []) as any[];
   const historique = (data.historique ?? []) as any[];
   const solde = Number(data.solde ?? 0);

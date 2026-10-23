@@ -88,6 +88,9 @@ async function retirer(): Promise<void> {
     await db.execute(sql`DELETE FROM ventes WHERE id = ${venteId}`);
   }
   if (vehiculeId) {
+    await db.execute(sql`
+      DELETE FROM parking_movements
+      WHERE vehicle_id IN (SELECT id FROM parking_vehicles WHERE vehicule_id = ${vehiculeId})`);
     await db.execute(sql`DELETE FROM parking_vehicles WHERE vehicule_id = ${vehiculeId}`);
     await db.execute(sql`DELETE FROM vehicules WHERE id = ${vehiculeId}`);
   }

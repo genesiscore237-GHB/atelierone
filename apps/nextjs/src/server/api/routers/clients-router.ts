@@ -49,12 +49,14 @@ export const clientsRouter = createTRPCRouter({
     )
     .query(async ({ ctx, input }) => {
       const safe = input ?? {};
-      const conditions: any[] = [eq(clients.agenceId, ctx.user.agenceId), sql`${clients.deletedAt} IS NULL`];
-      if (safe.typeClient) conditions.push(eq(clients.typeClient, safe.typeClient));
-      if (safe.statut) conditions.push(eq(clients.statut, safe.statut));
+      // Le périmètre de recherche sert aux répartitions : il ignore les
+      // filtres type/statut, sinon chaque puce afficherait 0 sauf celle qui
+      // est sélectionnée. Il inclut la recherche, pour que les compteurs
+      // décrivent exactement le sous-ensemble visible.
+      const baseConditions: any[] = [eq(clients.agenceId, ctx.user.agenceId), sql`${clients.deletedAt} IS NULL`];
       if (safe.search?.trim()) {
         const q = `%${safe.search.trim()}%`;
-        conditions.push(
+        baseConditions.push(
           or(
             ilike(clients.nom, q),
             ilike(clients.prenom, q),
@@ -67,6 +69,11 @@ export const clientsRouter = createTRPCRouter({
           )!
         );
       }
+
+      const conditions = [...baseConditions];
+      if (safe.typeClient) conditions.push(eq(clients.typeClient, safe.typeClient));
+      if (safe.statut) conditions.push(eq(clients.statut, safe.statut));
+
       const rows = await db
         .select()
         .from(clients)
@@ -78,7 +85,21 @@ export const clientsRouter = createTRPCRouter({
         .select({ n: sql<number>`count(*)::int` })
         .from(clients)
         .where(and(...conditions));
-      return { clients: rows, total: count?.n ?? 0 };
+
+      const repartition = await db
+        .select({ typeClient: clients.typeClient, statut: clients.statut, n: sql<number>`count(*)::int` })
+        .from(clients)
+        .where(and(...baseConditions))
+        .groupBy(clients.typeClient, clients.statut);
+
+      const parType: Record<string, number> = {};
+      const parStatut: Record<string, number> = {};
+      for (const r of repartition) {
+        parType[r.typeClient] = (parType[r.typeClient] ?? 0) + r.n;
+        parStatut[r.statut] = (parStatut[r.statut] ?? 0) + r.n;
+      }
+
+      return { clients: rows, total: count?.n ?? 0, stats: { parType, parStatut } };
     }),
 
   // ─── Fiche 360° ───
@@ -92,13 +113,12 @@ export const clientsRouter = createTRPCRouter({
         .limit(1);
       if (!client) throw new TRPCError({ code: "NOT_FOUND", message: "Client introuvable." });
 
-      const [contacts, adresses, interactions, historique, contrats, vehiculesClient, factures, canonique] = await Promise.all([
+      const [contacts, adresses, interactions, historique, contrats, factures, canonique] = await Promise.all([
         db.select().from(clientContacts).where(eq(clientContacts.clientId, input.id)).orderBy(desc(clientContacts.estContactPrincipal)),
         db.select().from(clientAdresses).where(eq(clientAdresses.clientId, input.id)).orderBy(desc(clientAdresses.estPrincipale)),
         db.select().from(clientInteractions).where(eq(clientInteractions.clientId, input.id)).orderBy(desc(clientInteractions.dateHeure)),
         db.select().from(clientStatutHistorique).where(eq(clientStatutHistorique.clientId, input.id)).orderBy(desc(clientStatutHistorique.changeLe)),
         db.select().from(contratsMaintenance).where(eq(contratsMaintenance.clientId, input.id)).orderBy(desc(contratsMaintenance.dateDebut)),
-        db.select().from(vehicules).where(and(eq(vehicules.clientId, input.id), eq(vehicules.agenceId, ctx.user.agenceId))),
         db
           .select({ montantTotal: ventes.montantTotal, montantPaye: ventes.montantPaye })
           .from(ventes)
@@ -116,7 +136,10 @@ export const clientsRouter = createTRPCRouter({
 
       const solde = Math.round(factures.reduce((s, v) => s + (Number(v.montantTotal) - Number(v.montantPaye ?? 0)), 0) * 100) / 100;
 
-      return { client, contacts, adresses, interactions, historique, contrats, vehiculesClient, vehiculesCanoniques: canonique.lignes, solde };
+      // Une seule source de véhicules : la liste canonique. `vehiculesClient`
+      // était une seconde projection de la même relation, avec un statut et un
+      // client potentiellement différents de ceux du registre garage.
+      return { client, contacts, adresses, interactions, historique, contrats, vehiculesCanoniques: canonique.lignes, solde };
     }),
 
   // ─── Création (champs dynamiques selon le type) ───

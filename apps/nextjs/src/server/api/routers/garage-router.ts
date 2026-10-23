@@ -302,6 +302,7 @@ const [parStatut, nonPositionnes, alertes, sites, spots, vehParSite, zonesParSit
         db
           .select({
             id: parkingVehicles.id,
+            vehiculeId: parkingVehicles.vehiculeId,
             numRegistre: parkingVehicles.numRegistre,
             marque: parkingVehicles.marque,
             modele: parkingVehicles.modele,
@@ -309,6 +310,9 @@ const [parStatut, nonPositionnes, alertes, sites, spots, vehParSite, zonesParSit
             couleur: parkingVehicles.couleur,
             immatriculation: parkingVehicles.immatriculation,
             statut: parkingVehicles.statut,
+            // Le statut atelier est une seconde dimension : le plan doit
+            // afficher les deux, sans remplacer l'un par l'autre.
+            statutCanonique: vehicules.statutImmobilisation,
             clientNom: parkingVehicles.clientNom,
             siteId: parkingVehicles.siteId,
             zoneId: parkingVehicles.zoneId,
@@ -321,6 +325,7 @@ const [parStatut, nonPositionnes, alertes, sites, spots, vehParSite, zonesParSit
             dimensionsEstimees: parkingVehicles.dimensionsEstimees,
           })
           .from(parkingVehicles)
+          .leftJoin(vehicules, eq(vehicules.id, parkingVehicles.vehiculeId))
           .where(and(eq(parkingVehicles.agenceId, agenceId), eq(parkingVehicles.siteId, input.id), sql`${parkingVehicles.statut} <> 'SORTI'`))
           .orderBy(asc(parkingVehicles.numRegistre)),
       ]);
@@ -350,6 +355,7 @@ const [parStatut, nonPositionnes, alertes, sites, spots, vehParSite, zonesParSit
         couleur: v.couleur,
         immatriculation: v.immatriculation,
         statut: v.statut,
+        statutCanonique: v.statutCanonique ?? null,
         clientNom: v.clientNom,
         siteId: v.siteId,
         zoneId: v.zoneId,
@@ -425,7 +431,14 @@ spots: spots.map((s) => {
         vehicules: vehiclesJson,
         vehiculesNonPositionnes: vehicles
           .filter((v) => v.centreX == null || v.centreY == null)
-          .map((v) => ({ id: v.id, numRegistre: v.numRegistre, marque: v.marque, modele: v.modele, statut: v.statut })),
+          .map((v) => ({
+            id: v.id,
+            numRegistre: v.numRegistre,
+            marque: v.marque,
+            modele: v.modele,
+            statut: v.statut,
+            statutCanonique: v.statutCanonique ?? null,
+          })),
         collisions: Array.from(collisions).map((c) => c.split(":")),
       };
     }),
@@ -446,24 +459,24 @@ spots: spots.map((s) => {
         statut: z.string().optional(),
         siteId: z.number().optional(),
         nonPositionnes: z.boolean().optional(),
-        limit: z.number().min(1).max(200).default(200),
+        limit: z.number().min(1).max(200).default(100),
+        offset: z.number().int().min(0).default(0),
       }),
     )
     .query(async ({ ctx, input }) => {
       const agenceId = ctx.user.agenceId;
-      const conditions = [eq(parkingVehicles.agenceId, agenceId)];
-      if (input.statut && STATUTS_VEHICULE.includes(input.statut as (typeof STATUTS_VEHICULE)[number])) {
-        conditions.push(eq(parkingVehicles.statut, input.statut));
-      } else if (!input.statut) {
-        conditions.push(sql`${parkingVehicles.statut} <> 'SORTI'`);
-      }
-      if (input.siteId) conditions.push(eq(parkingVehicles.siteId, input.siteId));
+      // Le périmètre « base » sert aux compteurs : il ignore le filtre de
+      // statut, sinon chaque compteur vaudrait 0 sauf celui qui est déjà
+      // sélectionné. Il contient en revanche la recherche, le site et le
+      // « non positionné » : les compteurs décrivent ce que l'utilisateur voit.
+      const baseConditions = [eq(parkingVehicles.agenceId, agenceId)];
+      if (input.siteId) baseConditions.push(eq(parkingVehicles.siteId, input.siteId));
       if (input.nonPositionnes && input.nonPositionnes === true) {
-        conditions.push(isNull(parkingVehicles.centreX));
+        baseConditions.push(isNull(parkingVehicles.centreX));
       }
       if (input.search && input.search.trim().length > 0) {
         const q = `%${input.search.trim().toLowerCase()}%`;
-        conditions.push(
+        baseConditions.push(
           sql`(lower(${parkingVehicles.marque}) like ${q} or lower(${parkingVehicles.modele}) like ${q}
             or lower(${parkingVehicles.immatriculation}) like ${q} or lower(${parkingVehicles.clientNom}) like ${q}
             or lower(${vehicules.marque}) like ${q} or lower(${vehicules.modele}) like ${q}
@@ -472,6 +485,13 @@ spots: spots.map((s) => {
             or lower(${clients.raisonSociale}) like ${q}
             or ${parkingVehicles.numRegistre}::text like ${q} or ${parkingVehicles.numRegistre}::text = ${input.search.trim()})`,
         );
+      }
+
+      const conditions = [...baseConditions];
+      if (input.statut && STATUTS_VEHICULE.includes(input.statut as (typeof STATUTS_VEHICULE)[number])) {
+        conditions.push(eq(parkingVehicles.statut, input.statut));
+      } else if (!input.statut) {
+        conditions.push(sql`${parkingVehicles.statut} <> 'SORTI'`);
       }
 
       // Ne jamais charger la colonne `photos` (jsonb base64, jusqu'a ~11 Mo au
@@ -535,7 +555,8 @@ spots: spots.map((s) => {
         .leftJoin(clients, eq(clients.id, vehicules.clientId))
         .where(and(...conditions))
         .orderBy(asc(parkingVehicles.numRegistre))
-        .limit(input.limit);
+        .limit(input.limit)
+        .offset(input.offset);
 
       const [totalRow] = await db
         .select({ n: sql<number>`count(*)::int` })
@@ -543,6 +564,18 @@ spots: spots.map((s) => {
         .leftJoin(vehicules, eq(vehicules.id, parkingVehicles.vehiculeId))
         .leftJoin(clients, eq(clients.id, vehicules.clientId))
         .where(and(...conditions));
+
+      // Les compteurs de statut sont calculés en base sur tout le périmètre,
+      // pas sur la page courante. Avec `limit`, la page ne contient qu'une
+      // tranche : additionner ses lignes donnerait des chiffres faux dès que
+      // le registre dépasse une page.
+      const statutRows = await db
+        .select({ statut: parkingVehicles.statut, n: sql<number>`count(*)::int` })
+        .from(parkingVehicles)
+        .leftJoin(vehicules, eq(vehicules.id, parkingVehicles.vehiculeId))
+        .leftJoin(clients, eq(clients.id, vehicules.clientId))
+        .where(and(...baseConditions))
+        .groupBy(parkingVehicles.statut);
 
       const [alertes] = await Promise.all([
         db
@@ -569,6 +602,9 @@ spots: spots.map((s) => {
 
       return {
         total: totalRow?.n ?? rows.length,
+        limit: input.limit,
+        offset: input.offset,
+        parStatut: Object.fromEntries(statutRows.map((s) => [s.statut, s.n])) as Record<string, number>,
         vehicules: rows.map((v) => {
           const clientCanoniqueNom =
             v.clientCanoniqueRaisonSociale?.trim() ||
@@ -939,6 +975,7 @@ spots: spots.map((s) => {
       return { photos: v.photos ?? [] };
     }),
 
+  // IMPORT/TEST ONLY — aucun écran ne doit appeler cet endpoint. La réception atelier est l'unique porte UI.
   create: requirePermissionProcedure("parking.vehicule.creer")
     .input(
       z.object({
@@ -1032,6 +1069,28 @@ spots: spots.map((s) => {
           if (client) {
             await completerVehiculeSansEcrasement(db, vehiculeId, { clientId: client.clientId });
           }
+        }
+      }
+
+      // Un véhicule ne peut occuper qu'un passage actif à la fois. Sans cette
+      // garde, deux créations manuelles produisaient deux places occupées pour
+      // une seule voiture, et la projection de statut devait choisir laquelle
+      // était « la vraie ».
+      if (vehiculeId) {
+        const [actif] = await db
+          .select({ id: parkingVehicles.id })
+          .from(parkingVehicles)
+          .where(and(
+            eq(parkingVehicles.agenceId, agenceId),
+            eq(parkingVehicles.vehiculeId, vehiculeId),
+            sql`${parkingVehicles.statut} <> 'SORTI'`,
+          ))
+          .limit(1);
+        if (actif) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Ce véhicule a déjà un passage parking actif. Utilisez la fiche existante ou sortez-le avant de créer un nouveau passage.",
+          });
         }
       }
 
@@ -1766,6 +1825,11 @@ spots: spots.map((s) => {
       }),
     )
     .query(async ({ ctx, input }) => {
+      // Le scheduler ne doit pas dépendre d'un clic sur « Analyser » : la
+      // première consultation des alertes suffit à le démarrer. En serverless
+      // il reste un filet, pas une garantie ; le bouton manuel demeure.
+      void ensureAlertesScheduler({ garderLeProcessus: false }).catch(() => undefined);
+
       const conditions = [eq(parkingAlerts.agenceId, ctx.user.agenceId)];
       if (input.statut) conditions.push(eq(parkingAlerts.statut, input.statut));
       if (input.vehiculeId) conditions.push(eq(parkingAlerts.vehicleId, input.vehiculeId));
@@ -1826,7 +1890,7 @@ analyser: requirePermissionProcedure("parking.alertes.gerer")
       //
       // Démarrage différé du scheduler (lazy, une fois par process) : rien ne
       // tourne tant que le parking n'est pas utilisé.
-      void ensureAlertesScheduler().catch(() => undefined);
+      void ensureAlertesScheduler({ garderLeProcessus: false }).catch(() => undefined);
 
       return db.transaction(async (tx) =>
         analyserParkingAlertes(tx, ctx.user.agenceId, {

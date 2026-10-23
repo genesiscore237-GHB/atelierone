@@ -188,10 +188,14 @@ afterAll(async () => {
 
 /** Nettoyage cible du namespace Lot1 (idempotent, avant et après). */
 async function retirer(): Promise<void> {
-  await db.execute(
-    sql`DELETE FROM parking_movements
-        WHERE vehicle_id IN (SELECT id FROM parking_vehicles WHERE num_registre BETWEEN ${NUM_MIN} AND ${NUM_MAX})`,
-  );
+  // Toutes les tables qui pointent vers parking_vehicles doivent partir avant
+  // lui. `parking_transfers` était oublié : un transfert laissé par un autre
+  // test faisait échouer ce nettoyage en afterAll, et la suite entière avec.
+  const cible = sql`SELECT id FROM parking_vehicles WHERE num_registre BETWEEN ${NUM_MIN} AND ${NUM_MAX}`;
+  await db.execute(sql`DELETE FROM parking_transfers WHERE vehicle_id IN (${cible})`);
+  await db.execute(sql`DELETE FROM parking_alerts WHERE vehicle_id IN (${cible})`);
+  await db.execute(sql`DELETE FROM parking_tasks WHERE vehicle_id IN (${cible})`);
+  await db.execute(sql`DELETE FROM parking_movements WHERE vehicle_id IN (${cible})`);
   await db.execute(
     sql`DELETE FROM parking_vehicles WHERE num_registre BETWEEN ${NUM_MIN} AND ${NUM_MAX}`,
   );

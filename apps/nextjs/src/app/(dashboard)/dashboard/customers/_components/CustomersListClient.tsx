@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "~/trpc/react";
 import {
@@ -111,11 +111,9 @@ export function CustomersListClient() {
     telephone: string | null; email: string | null; niuNif: string | null;
   }>;
 
-  const stats = useMemo(() => {
-    const s: Record<string, number> = {};
-    list.forEach((c) => { s[c.typeClient] = (s[c.typeClient] ?? 0) + 1; });
-    return s;
-  }, [list]);
+  // Répartitions calculées par le serveur sur tout le périmètre de recherche,
+  // pas sur la page : avec `limit`, la page ne représente qu'une tranche.
+  const stats = data?.stats?.parType ?? {};
 
   const total = data?.total ?? list.length;
 
@@ -180,6 +178,11 @@ export function CustomersListClient() {
               {TYPE_LABELS[t] ?? t} : {n}
             </span>
           ))}
+          {(data?.stats?.parStatut?.PROVISOIRE ?? 0) > 0 && (
+            <span className="rounded-full bg-warning/10 px-3 py-1 text-xs font-semibold text-warning-foreground">
+              À valider : {data?.stats?.parStatut?.PROVISOIRE}
+            </span>
+          )}
         </div>
       )}
 

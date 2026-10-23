@@ -224,6 +224,7 @@ function VueFacturation({ periode }: { periode: PeriodeId }) {
   const { data, isLoading } = api.atelierKpi.getFacturation.useQuery({ periode });
   if (isLoading || !data) return <div className="h-40 animate-pulse rounded-xl bg-muted" />;
   const fmtFCFA = (n: number | string | null | undefined) => new Intl.NumberFormat("fr-FR").format(Number(n ?? 0));
+  const fcfa = (n: number | string | null | undefined) => n == null ? "—" : `${fmtFCFA(n)} F`;
   const ETATS: Record<string, { label: string; badge: string }> = {
     NON_TRANSMISE: { label: "Non transmise", badge: "bg-muted text-muted-foreground" },
     ATTENTE_BON_COMMANDE: { label: "Attente bon de commande", badge: "bg-violet-500/15 text-violet-400" },
@@ -235,11 +236,32 @@ function VueFacturation({ periode }: { periode: PeriodeId }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <BandeauKpi label="Facturé (période)" value={fmtFCFA(data.totalFacture) + " F"} className="text-foreground" />
-        <BandeauKpi label="Encaissé" value={fmtFCFA(data.totalPaye) + " F"} className="text-success-foreground" />
-        <BandeauKpi label="Restant dû" value={fmtFCFA(data.totalReste) + " F"} className={data.totalReste > 0 ? "text-destructive" : "text-success-foreground"} />
-        <BandeauKpi label="Marge (CMP)" value={fmtFCFA(data.totalMarge) + " F"} className="text-primary" />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        <BandeauKpi label="Facturé (période)" value={fcfa(data.totalFacture)} className="text-foreground" />
+        <BandeauKpi label="Encaissé" value={fcfa(data.totalPaye)} className="text-success-foreground" />
+        <BandeauKpi label="Restant dû" value={fcfa(data.totalReste)} className={data.totalReste > 0 ? "text-destructive" : "text-success-foreground"} />
+        <BandeauKpi
+          label="Marge pièces"
+          value={fcfa(data.totalMargePieces)}
+          className="text-primary"
+          sub="CA − coût des pièces connues"
+        />
+        <BandeauKpi
+          label="Marge nette"
+          value={fcfa(data.totalMargeNette)}
+          className={data.totalMargeNette != null && data.totalMargeNette < 0 ? "text-destructive" : "text-success-foreground"}
+          sub={!data.margeDisponible
+            ? "taux horaire atelier à renseigner"
+            : `${data.dossiersMargeComplets} dossier(s) complet(s)`}
+        />
+        <BandeauKpi
+          label="Marge moyenne / dossier"
+          value={fcfa(data.margeMoyenneDossier)}
+          className="text-foreground"
+          sub={data.dossiersMargeIncomplets > 0
+            ? `${data.dossiersMargeIncomplets} dossier(s) exclu(s)`
+            : "dossiers complets uniquement"}
+        />
         <BandeauKpi label="Taux recouvrement" value={data.tauxRecouvrement != null ? `${data.tauxRecouvrement} %` : "—"} className="text-foreground" />
         <div className="rounded-xl border border-border bg-card p-3">
           <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">États</p>
@@ -249,6 +271,74 @@ function VueFacturation({ periode }: { periode: PeriodeId }) {
             ))}
           </div>
         </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-foreground">Marge par dossier</h3>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {data.tauxHoraireAtelier != null
+              ? `taux horaire : ${fmtFCFA(data.tauxHoraireAtelier)} F/h`
+              : "taux horaire non renseigné"}
+          </span>
+        </div>
+        {!data.margeDisponible ? (
+          <p className="mt-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning-foreground">
+            La marge nette ne peut pas être calculée sans taux horaire. Renseignez-le dans{" "}
+            <Link href="/dashboard/atelier/parametres" className="font-bold underline">
+              Paramètres atelier
+            </Link>{" "}
+            — aucune valeur n'est supposée à votre place.
+          </p>
+        ) : (data.margeParDossier ?? []).length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">Aucun dossier livré sur la période.</p>
+        ) : (
+          <>
+            <p className="mt-1 text-xs text-muted-foreground">
+              CA − pièces − (heures SERVICE × taux). Les dossiers dont le coût pièces est inconnu sont exclus de la moyenne,
+              jamais comptés à zéro.
+            </p>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 text-left text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2">OR</th>
+                    <th className="px-3 py-2 text-right">CA</th>
+                    <th className="px-3 py-2 text-right">Pièces</th>
+                    <th className="px-3 py-2 text-right">MO</th>
+                    <th className="px-3 py-2 text-right">Marge nette</th>
+                    <th className="px-3 py-2">État</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/60">
+                  {(data.margeParDossier ?? []).slice(0, 12).map((d: any) => (
+                    <tr key={d.id}>
+                      <td className="px-3 py-2 font-mono text-xs font-bold">{d.numero}</td>
+                      <td className="px-3 py-2 text-right text-xs">{fcfa(d.chiffreAffaires)}</td>
+                      <td className="px-3 py-2 text-right text-xs">{fcfa(d.coutPieces)}</td>
+                      <td className="px-3 py-2 text-right text-xs">
+                        {d.coutMainOeuvre != null
+                          ? `${fmtFCFA(d.coutMainOeuvre)} F`
+                          : `${d.heuresMainOeuvre ?? 0} h`}
+                      </td>
+                      <td className={`px-3 py-2 text-right text-xs font-bold ${d.margeNette != null && d.margeNette < 0 ? "text-destructive" : "text-foreground"}`}>
+                        {fcfa(d.margeNette)}
+                      </td>
+                      <td className="px-3 py-2 text-[10px] text-muted-foreground">
+                        {d.complet ? "complet" : (d.manques?.join(" · ") ?? "incomplet")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {(data.margeParDossier ?? []).length > 12 && (
+              <p className="mt-2 text-[10px] text-muted-foreground">
+                12 dossiers affichés sur {data.margeParDossier.length}. La synthèse ci-dessus porte sur tous les dossiers de la période.
+              </p>
+            )}
+          </>
+        )}
       </div>
 
       <div className="rounded-xl border border-border bg-card p-4">
@@ -274,11 +364,12 @@ function VueFacturation({ periode }: { periode: PeriodeId }) {
   );
 }
 
-function BandeauKpi({ label, value, className }: { label: string; value: string | number; className?: string }) {
+function BandeauKpi({ label, value, className, sub }: { label: string; value: string | number; className?: string; sub?: string }) {
   return (
     <div className="rounded-xl border border-border bg-card p-3">
       <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
       <p className={`mt-1 text-xl font-black ${className ?? "text-foreground"}`}>{value}</p>
+      {sub && <p className="mt-0.5 text-[9px] text-muted-foreground">{sub}</p>}
     </div>
   );
 }
@@ -298,6 +389,8 @@ const KPI_LABELS: Record<string, string> = {
   TAUX_REACHAT: "Taux de réachat",
   TAUX_TRANSFORMATION_DEVIS: "Taux de transformation devis",
   PRODUCTIVITE_TECHNICIEN: "Productivité technicien",
+  // P3.3.1 — marge nette moyenne par dossier livré (pièces + main-d'œuvre).
+  MARGE_DOSSIER: "Marge par dossier",
 };
 
 /**
@@ -634,6 +727,7 @@ function VueSante({ periode }: { periode: PeriodeId }) {
               </p>
             )}
             {k.cible != null && <p className="text-[10px] text-muted-foreground">cible : {k.cible}{k.unite === "%" ? " %" : k.unite ? ` ${k.unite}` : ""}</p>}
+            {k.raison && <p className="mt-1 text-[10px] text-warning-foreground">{k.raison}</p>}
           </div>
         ))}
       </div>

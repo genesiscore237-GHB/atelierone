@@ -138,6 +138,13 @@ export function ReceptionTab({ or }: { or: any }) {
     onSuccess: () => {
       toast.success("Réception enregistrée");
       utils.or.getById.invalidate();
+      // Le km et la plainte alimentent aussi la fiche véhicule, le dashboard
+      // et les alertes. Sans ces invalidations, l'écran voisin gardait
+      // l'ancienne valeur jusqu'au rechargement.
+      utils.vehicules.get.invalidate();
+      utils.vehicules.list.invalidate();
+      utils.or.getDashboard.invalidate();
+      utils.or.getAlertes.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -172,7 +179,7 @@ export function ReceptionTab({ or }: { or: any }) {
         const data = await res.json();
         const type = file.type.startsWith("video") ? "VIDEO" : "PHOTO";
         await new Promise<void>((resolve, reject) => {
-          ajouter.mutate({ id, url: data.url, type: type as any }, { onSettled: () => resolve() });
+          ajouter.mutate({ id, url: data.url, type: type as any, visite: "ENTREE" }, { onSettled: () => resolve() });
         });
         ok++;
       } catch (e: any) {
@@ -195,15 +202,14 @@ export function ReceptionTab({ or }: { or: any }) {
   };
 
   const save = () => {
-    if (form.kilometrageEntree === "" || form.kilometrageEntree == null) {
-      toast.error("Kilométrage d'entrée requis");
-      return;
-    }
     setSaving(true);
     update.mutate(
       {
         id,
-        kilometrageEntree: Number(form.kilometrageEntree),
+        // Le km est facultatif : une absence reste une absence. L'ancienne
+        // garde obligeait l'agent à inventer une valeur pour corriger le
+        // carburant ou les observations.
+        kilometrageEntree: form.kilometrageEntree === "" ? null : Number(form.kilometrageEntree),
         niveauCarburantEntree: form.niveauCarburantEntree || undefined,
         emplacement: form.emplacement || undefined,
         datePromesse: form.datePromesse || null,
@@ -215,8 +221,8 @@ export function ReceptionTab({ or }: { or: any }) {
         courtoisieDemandee: form.courtoisieDemandee,
         signatureDeposant: form.signatureDeposant || null,
         validationVerbale: form.validationVerbale,
-        pannesDeclarees: form.pannesDeclarees || undefined,
-        observationsReception: form.observationsReception || undefined,
+        pannesDeclarees: form.pannesDeclarees,
+        observationsReception: form.observationsReception,
         outillage: form.outillage,
       },
       { onSettled: () => setSaving(false) }
@@ -228,14 +234,17 @@ export function ReceptionTab({ or }: { or: any }) {
     window.print();
   };
 
-  const photos = or.photos ?? [];
+  // Les photos historiques n'ont pas toujours de `visite` : on les garde dans
+  // l'entrée plutôt que de les faire disparaître. Les nouvelles photos de
+  // travaux sont explicitement `TRAVAUX` et ne polluent plus cette galerie.
+  const photos = (or.photos ?? []).filter((p: any) => !p.visite || p.visite === "ENTREE");
 
   return (
     <div className="space-y-4">
       {figee && (
         <div className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           <Lock size={13} />
-          État des lieux figé : le diagnostic a été soumis. Les données d'entrée sont en lecture seule (emplacement toujours modifiable).
+          État des lieux figé : le diagnostic a été soumis ou validé. Les données d'entrée sont en lecture seule, sauf l'emplacement.
         </div>
       )}
 
@@ -283,12 +292,25 @@ export function ReceptionTab({ or }: { or: any }) {
               value={form.emplacement}
               onChange={(e) => setForm({ ...form, emplacement: e.target.value })}
               className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+              disabled={!editable && !(figee && !cloture && flags.canReception)}
             >
               <option value="">—</option>
               {EMPLACEMENTS_DEFAUT.map((emp) => (
                 <option key={emp} value={emp}>{emp}</option>
               ))}
             </select>
+            {figee && !cloture && flags.canReception && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-1.5 text-[10px]"
+                disabled={update.isPending}
+                onClick={() => update.mutate({ id, emplacement: form.emplacement || undefined })}
+              >
+                {update.isPending ? <Loader2 size={11} className="mr-1 animate-spin" /> : null}
+                Enregistrer l'emplacement
+              </Button>
+            )}
           </div>
           <div>
             <Label className="text-xs text-muted-foreground">Promesse de restitution</Label>

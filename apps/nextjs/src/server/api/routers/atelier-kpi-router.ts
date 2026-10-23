@@ -42,6 +42,8 @@ import {
   tauxTransformationDevis,
   heuresDisponiblesParTechnicien,
   productiviteTechnicien,
+  calculerMargesDossiers,
+  type DossierMargeInput,
 } from "~/server/lib/kpi-service";
 import { analyserSuiviRelation, type SyntheseRelationClient } from "~/lib/suivi-relation";
 
@@ -67,6 +69,17 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
 
   const cibles = await db.select().from(kpiCibles).where(eq(kpiCibles.agenceId, agenceId));
   const cibleMap = new Map(cibles.map((c) => [c.code, c]));
+  // Le taux est nullable : NULL = « la Direction n'a pas encore tranché ».
+  // On ne remplace jamais cette absence par 0, qui ferait croire que la
+  // main-d'œuvre est gratuite et gonflerait toutes les marges.
+  const [parametresAtelier] = await db
+    .select({ tauxHoraireAtelier: atelierParametres.tauxHoraireAtelier })
+    .from(atelierParametres)
+    .where(eq(atelierParametres.agenceId, agenceId))
+    .limit(1);
+  const tauxHoraireAtelier = parametresAtelier?.tauxHoraireAtelier != null
+    ? Number(parametresAtelier.tauxHoraireAtelier)
+    : null;
 
   const records = (await chargerRecords(agenceId)) as any[];
   const actifs = records.filter((o) => o.statut !== "ANNULE" && jourStr(o.dateOuverture) >= debut);
@@ -110,6 +123,13 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
   const devisEnvoyes = records.filter((o) => o.dateDevisEnvoye && jourStr(o.dateDevisEnvoye) >= debut);
   const transformation = tauxTransformationDevis(devisEnvoyes);
   const productivite = await chargerProductivite(agenceId, debut, fin);
+  // P3.3.1 — même calcul que l'onglet Facturation, pour que les deux écrans ne
+  // puissent pas afficher deux marges différentes. Les dossiers sans coût
+  // pièces connu sont exclus de la moyenne, pas comptés à zéro.
+  const marges = await chargerMargesDossiers(
+    livresPeriode.map((o) => ({ id: o.id, numero: o.numero, venteId: o.venteId ?? null })),
+    tauxHoraireAtelier,
+  );
 
   const c = (code: string): any => cibleMap.get(code);
   // ÉTAPE 6 — TAUX_REPRISE. Le calcul existait (`tauxRetouche`) et le champ
@@ -132,6 +152,7 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
     : code === "TAUX_REACHAT" ? retention.taux
     : code === "TAUX_TRANSFORMATION_DEVIS" ? transformation.taux
     : code === "PRODUCTIVITE_TECHNICIEN" ? productivite.taux
+    : code === "MARGE_DOSSIER" ? marges.margeMoyenneDossier
     : null;
 
   // ÉTAPE 6 — LE DÉNOMINATEUR.
@@ -161,9 +182,10 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
     : code === "TAUX_REACHAT" ? retention.clientsActifs
     : code === "TAUX_TRANSFORMATION_DEVIS" ? transformation.envoyes
     : code === "PRODUCTIVITE_TECHNICIEN" ? productivite.parTechnicien.length
+    : code === "MARGE_DOSSIER" ? marges.dossiersComplets
     : 0;
 
-  const kpis = ["PONCTUALITE", "FTQ", "TAUX_RETOUR_SAV", "RAPIDITE_DIAG_JOURS", "FIABILITE_APPRO", "DELAI_PIECES_JOURS", "SATISFACTION_CLIENT", "TAUX_REPRISE", "TAUX_REACHAT", "TAUX_TRANSFORMATION_DEVIS", "PRODUCTIVITE_TECHNICIEN"].map((code) => {
+  const kpis = ["PONCTUALITE", "FTQ", "TAUX_RETOUR_SAV", "RAPIDITE_DIAG_JOURS", "FIABILITE_APPRO", "DELAI_PIECES_JOURS", "SATISFACTION_CLIENT", "TAUX_REPRISE", "TAUX_REACHAT", "TAUX_TRANSFORMATION_DEVIS", "PRODUCTIVITE_TECHNICIEN", "MARGE_DOSSIER"].map((code) => {
     const cb = c(code);
     const valeur = val(code);
     const echantillon = n(code);
@@ -180,6 +202,18 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
     const statut = !cb || echantillon === 0
       ? "SANS_DATA"
       : statutKPI(valeur, Number(cb.cible), cb.seuilOrange != null ? Number(cb.seuilOrange) : null, cb.seuilRouge != null ? Number(cb.seuilRouge) : null, sens);
+    // Un SANS_DATA n'est pas une panne : c'est une donnée qui manque. On dit
+    // laquelle, pour que l'écran ne laisse pas l'utilisateur deviner.
+    const raison = echantillon === 0
+      ? code === "MARGE_DOSSIER"
+        ? tauxHoraireAtelier == null
+          ? "Taux horaire atelier non renseigné (Paramètres atelier)"
+          : "Aucun dossier livré avec un coût pièces, un CA et des heures complets sur la période"
+        : null
+      : code === "MARGE_DOSSIER" && marges.dossiersIncomplets > 0
+        ? `${marges.dossiersIncomplets} dossier(s) exclu(s) : coût pièces, chiffre d'affaires ou durée main-d'œuvre incomplet`
+        : null;
+
     return {
       code,
       valeur,
@@ -193,6 +227,7 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
       unite,
       sens,
       statut,
+      raison,
     };
   });
 
@@ -261,6 +296,13 @@ async function calculerSanteGarage(agenceId: number, periode: string) {
     relationClient,
     clientsDormants: retention.dormants,
     productivite,
+    margeSynthese: {
+      tauxHoraireAtelier: marges.tauxHoraireAtelier,
+      totalMargeNette: marges.totalMargeNette,
+      margeMoyenneDossier: marges.margeMoyenneDossier,
+      dossiersComplets: marges.dossiersComplets,
+      dossiersIncomplets: marges.dossiersIncomplets,
+    },
     totalActifs: actifs.length,
     totalLivrePeriode: livresPeriode.length,
   };
@@ -272,6 +314,7 @@ async function chargerRecords(agenceId: number) {
     .select({
       id: ordresReparation.id,
       numero: ordresReparation.numero,
+      venteId: ordresReparation.venteId,
       statut: ordresReparation.statut,
       priorite: ordresReparation.priorite,
       familleService: ordresReparation.familleService,
@@ -333,6 +376,111 @@ async function chargerRecords(agenceId: number) {
       clientDisplay: r.clientRaisonSociale ?? `${r.clientPrenom ?? ""} ${r.clientNom ?? ""}`.trim(),
     };
   });
+}
+
+/**
+ * Charge les trois coûts d'un dossier (CA, pièces, heures) puis délègue le
+ * calcul pur à `calculerMargesDossiers`.
+ *
+ * Un coût pièces est « inconnu » dès qu'une ligne produit n'a ni `coutUnitaire`
+ * ni `prixAchat` : la traiter comme 0 transformerait une donnée manquante en
+ * marge. Les lignes sans produit (main-d'œuvre, sous-traitance forfaitaire)
+ * ont un coût pièces nul par nature, pas par hypothèse.
+ */
+async function chargerMargesDossiers(
+  ors: Array<{ id: number; numero: string; venteId: number | null }>,
+  tauxHoraireAtelier: number | null,
+) {
+  if (ors.length === 0) return calculerMargesDossiers([], tauxHoraireAtelier);
+
+  const venteIds = [...new Set(ors.map((o) => o.venteId).filter((id): id is number => id != null))];
+  const orIds = ors.map((o) => o.id);
+
+  const [vRows, lRows, hRows] = await Promise.all([
+    venteIds.length
+      ? db
+          .select({ id: ventes.id, montantTotal: ventes.montantTotal })
+          .from(ventes)
+          .where(inArray(ventes.id, venteIds))
+      : Promise.resolve([]),
+    venteIds.length
+      ? db
+          .select({
+            venteId: ventesLignes.venteId,
+            produitId: ventesLignes.produitId,
+            coutUnitaire: ventesLignes.coutUnitaire,
+            quantite: ventesLignes.quantite,
+            prixAchat: produits.prixAchat,
+          })
+          .from(ventesLignes)
+          .leftJoin(produits, eq(ventesLignes.produitId, produits.id))
+          .where(inArray(ventesLignes.venteId, venteIds))
+      : Promise.resolve([]),
+    db
+      .select({
+        ordreId: lignesOrdreReparation.ordreId,
+        heures: sql<string>`coalesce(sum(${lignesOrdreReparation.dureeHeures}), 0)`,
+        // Une ligne SERVICE sans durée rend le coût main-d'œuvre INCONNU. La
+        // compter à zéro ferait apparaître une marge qui n'existe pas.
+        heuresIncompletes: sql<number>`count(*) filter (where ${lignesOrdreReparation.dureeHeures} is null)::int`,
+      })
+      .from(lignesOrdreReparation)
+      .where(and(
+        inArray(lignesOrdreReparation.ordreId, orIds),
+        eq(lignesOrdreReparation.type, "SERVICE"),
+        // Une ligne refusée par le client n'a pas immobilisé l'atelier. Les
+        // statuts NULL/PROPOSE sont conservés : les dossiers antérieurs à
+        // l'autorisation ligne par ligne n'ont pas d'autre information.
+        or(isNull(lignesOrdreReparation.statutAutorisation), ne(lignesOrdreReparation.statutAutorisation, "DECLINE")),
+      ))
+      .groupBy(lignesOrdreReparation.ordreId),
+  ]);
+
+  const venteMap = new Map(vRows.map((v) => [v.id, v]));
+  const lignesParVente = new Map<number, typeof lRows>();
+  for (const l of lRows) {
+    const liste = lignesParVente.get(l.venteId) ?? [];
+    liste.push(l);
+    lignesParVente.set(l.venteId, liste);
+  }
+  const heuresParOr = new Map(
+    hRows.map((h) => [
+      h.ordreId,
+      { heures: Number(h.heures ?? 0), completes: Number(h.heuresIncompletes ?? 0) === 0 },
+    ]),
+  );
+
+  const entrees: DossierMargeInput[] = ors.map((o) => {
+    const vente = o.venteId != null ? venteMap.get(o.venteId) : undefined;
+    const ca = vente?.montantTotal != null ? Number(vente.montantTotal) : null;
+
+    let coutPieces = 0;
+    let coutPiecesComplet = true;
+    for (const l of o.venteId != null ? lignesParVente.get(o.venteId) ?? [] : []) {
+      if (l.produitId == null) continue;
+      const unitaire = l.coutUnitaire != null
+        ? Number(l.coutUnitaire)
+        : l.prixAchat != null
+          ? Number(l.prixAchat)
+          : null;
+      if (unitaire == null || !Number.isFinite(unitaire)) {
+        coutPiecesComplet = false;
+        break;
+      }
+      coutPieces += unitaire * Number(l.quantite ?? 0);
+    }
+
+    return {
+      id: o.id,
+      numero: o.numero,
+      chiffreAffaires: ca != null && Number.isFinite(ca) ? ca : null,
+      coutPieces: coutPiecesComplet ? Math.round(coutPieces * 100) / 100 : null,
+      heuresMainOeuvre: heuresParOr.get(o.id)?.heures ?? 0,
+      heuresCompletes: heuresParOr.get(o.id)?.completes ?? true,
+    };
+  });
+
+  return calculerMargesDossiers(entrees, tauxHoraireAtelier);
 }
 
 async function chargerProductivite(agenceId: number, debut: string, fin: string) {
@@ -685,6 +833,7 @@ export const atelierKpiRouter = createTRPCRouter({
           id: ordresReparation.id,
           numero: ordresReparation.numero,
           venteId: ordresReparation.venteId,
+          statut: ordresReparation.statut,
           totalTTC: ordresReparation.totalTTC,
           factureTransmiseLe: ordresReparation.factureTransmiseLe,
           attenteBonCommande: ordresReparation.attenteBonCommande,
@@ -700,27 +849,17 @@ export const atelierKpiRouter = createTRPCRouter({
         .leftJoin(vehicules, eq(ordresReparation.vehiculeId, vehicules.id))
         .where(and(eq(ordresReparation.agenceId, ctx.user.agenceId), sql`${ordresReparation.dateCloture} >= ${depuis}::date`));
 
-      let totalFacture = 0, totalPaye = 0, totalMarge = 0;
+      let totalFacture = 0, totalPaye = 0;
       const etats = { NON_TRANSMISE: 0, ATTENTE_BON_COMMANDE: 0, ATTENTE_PAIEMENT: 0, AVANCE: 0, PAYEE: 0 };
       const parClient = new Map<number, { client: string; facture: number; paye: number; reste: number; ors: number }>();
-      const lignes: Record<number, { totalLigne: string | null; coutUnitaire: string | null; quantite: number; prixAchat: string | null }[]> = {};
-      const ids = ors.map((o) => o.venteId).filter(Boolean) as number[];
+      const ids = [...new Set(ors.map((o) => o.venteId).filter((id): id is number => id != null))];
 
       if (ids.length) {
-        const vRows = await db.select({ id: ventes.id, montantTotal: ventes.montantTotal, montantPaye: ventes.montantPaye }).from(ventes).where(sql`${ventes.id} IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
+        const vRows = await db
+          .select({ id: ventes.id, montantTotal: ventes.montantTotal, montantPaye: ventes.montantPaye })
+          .from(ventes)
+          .where(inArray(ventes.id, ids));
         const vMap = new Map(vRows.map((v) => [v.id, v]));
-        const lRows = await db
-          .select({ venteId: ventesLignes.venteId, totalLigne: ventesLignes.totalLigne, coutUnitaire: ventesLignes.coutUnitaire, quantite: ventesLignes.quantite, prixAchat: produits.prixAchat })
-          .from(ventesLignes)
-          .leftJoin(produits, eq(ventesLignes.produitId, produits.id))
-          .where(sql`${ventesLignes.venteId} IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
-        for (const l of lRows) (lignes[l.venteId] ??= []).push(l);
-
-        // Coût : coutUnitaire de la vente, sinon fallback prixAchat catalogue (jamais 0 inventé → marge = CA).
-        const coutDe = (l: { coutUnitaire: string | null; prixAchat: string | null; quantite: number }) =>
-          l.coutUnitaire != null ? Number(l.coutUnitaire) * Number(l.quantite)
-          : l.prixAchat != null ? Number(l.prixAchat) * Number(l.quantite)
-          : 0;
 
         for (const o of ors) {
           if (!o.venteId) continue;
@@ -728,9 +867,7 @@ export const atelierKpiRouter = createTRPCRouter({
           if (!v) continue;
           const total = Number(v.montantTotal ?? 0);
           const paye = Number(v.montantPaye ?? 0);
-          const margeLignes = lignes[o.venteId] ?? [];
-          const marge = margeLignes.reduce((s, l) => s + (Number(l.totalLigne ?? 0) - coutDe(l)), 0);
-          totalFacture += total; totalPaye += paye; totalMarge += marge;
+          totalFacture += total; totalPaye += paye;
           let etat: keyof typeof etats;
           if (paye >= total && total > 0) etat = "PAYEE";
           else if (paye > 0) etat = "AVANCE";
@@ -745,13 +882,44 @@ export const atelierKpiRouter = createTRPCRouter({
         }
       }
 
+      // P3.3.1 — le taux vient des paramètres de l'agence, pas d'une constante
+      // d'écran. Sans taux, la marge pièces reste disponible ; la marge nette
+      // et la moyenne par dossier restent nulles et l'UI explique pourquoi.
+      const [parametresAtelier] = await db
+        .select({ tauxHoraireAtelier: atelierParametres.tauxHoraireAtelier })
+        .from(atelierParametres)
+        .where(eq(atelierParametres.agenceId, ctx.user.agenceId))
+        .limit(1);
+      const tauxHoraireAtelier = parametresAtelier?.tauxHoraireAtelier != null
+        ? Number(parametresAtelier.tauxHoraireAtelier)
+        : null;
+      // La marge par dossier ne porte que sur les dossiers LIVRÉS, comme le
+      // KPI de santé. Les totaux facturés, eux, restent ceux de la période.
+      const marges = await chargerMargesDossiers(
+        ors.filter((o) => o.statut === "LIVRE").map((o) => ({ id: o.id, numero: o.numero, venteId: o.venteId })),
+        tauxHoraireAtelier,
+      );
+
       const topClientsRetard = [...parClient.values()]
         .filter((p) => p.reste > 0)
         .sort((a, b) => b.reste - a.reste)
         .slice(0, 8);
 
       return {
-        totalFacture, totalPaye, totalReste: totalFacture - totalPaye, totalMarge,
+        totalFacture, totalPaye, totalReste: totalFacture - totalPaye,
+        // Conservé pour les consommateurs historiques : c'est la marge pièces,
+        // pas la marge nette. Les nouveaux écrans lisent `totalMargeNette`.
+        totalMarge: marges.totalMargePieces,
+        totalMargePieces: marges.totalMargePieces,
+        totalMargeNette: marges.totalMargeNette,
+        margeMoyenneDossier: marges.margeMoyenneDossier,
+        margeDisponible: marges.disponible,
+        tauxHoraireAtelier,
+        totalCoutPieces: marges.totalCoutPieces,
+        totalCoutMainOeuvre: marges.totalCoutMainOeuvre,
+        dossiersMargeComplets: marges.dossiersComplets,
+        dossiersMargeIncomplets: marges.dossiersIncomplets,
+        margeParDossier: marges.dossiers,
         etats, topClientsRetard,
         tauxRecouvrement: totalFacture > 0 ? Math.round((totalPaye / totalFacture) * 1000) / 10 : null,
       };

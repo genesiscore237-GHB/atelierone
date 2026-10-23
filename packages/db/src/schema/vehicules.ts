@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, varchar, text, uniqueIndex, date, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, varchar, text, uniqueIndex, index, date, timestamp, boolean } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { doublePrecision } from "drizzle-orm/pg-core";
 import { agences } from "./agences";
@@ -67,5 +67,7 @@ export const vehicules = pgTable("vehicules", {
   uqImmatNorm: uniqueIndex("uq_vehicules_agence_immat_norm")
     .on(t.agenceId, t.immatNorm)
     .where(sql`immat_norm IS NOT NULL`),
-  idxImmatNorm: uniqueIndex("idx_vehicules_immat_norm").on(t.immatNorm),
+  // Index de recherche, PAS une contrainte métier : la même plaque peut
+  // exister dans deux agences. L'unicité est portée par `uqImmatNorm`.
+  idxImmatNorm: index("idx_vehicules_immat_norm").on(t.immatNorm),
 }));

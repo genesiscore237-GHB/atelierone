@@ -3,6 +3,7 @@
 import { memo, useState } from "react";
 import { MapPin, Image, Car, RotateCcw } from "lucide-react";
 import { STATUTS_VEHICULE_LABELS, STATUTS_VEHICULE_COLORS } from "../../_components/statuts";
+import { STATUT_LABELS as VEH_STATUT_LABELS } from "~/server/lib/vehicule-service";
 
 interface Vehicule {
   id: number;
@@ -10,6 +11,7 @@ interface Vehicule {
   marque: string | null;
   modele: string | null;
   statut: string;
+  statutCanonique?: string | null;
   centreX: number;
   centreY: number;
   rotation: number;
@@ -126,6 +128,15 @@ const VehiculeSvg = memo(function VehiculeSvg({
       style={{ cursor: "grab", touchAction: "none" }}
       data-vehicule-id={vehicule.id}
     >
+      {/* Infobulle native : les deux statuts sont des dimensions distinctes.
+          Le parking dit où est le véhicule, l'atelier dit où en est le dossier. */}
+      <title>
+        {`#${vehicule.numRegistre} · Parking : ${STATUTS_VEHICULE_LABELS[vehicule.statut] ?? vehicule.statut}`}
+        {vehicule.statutCanonique
+          ? ` · Atelier : ${VEH_STATUT_LABELS[vehicule.statutCanonique] ?? vehicule.statutCanonique}`
+          : ""}
+      </title>
+
       {/* Aire de collision (marge) - visible seulement en mode action ou sélectionné */}
       {(isSelected || isAction) && (
         <rect

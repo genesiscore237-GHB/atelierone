@@ -45,7 +45,13 @@ const KPI_LABELS: Record<string, string> = {
   TAUX_RETOUR_SAV: "Retour SAV",
   RAPIDITE_DIAG_JOURS: "Rapidité diagnostic",
   FIABILITE_APPRO: "Fiabilité appro",
+  DELAI_PIECES_JOURS: "Délai pièces",
   SATISFACTION_CLIENT: "Satisfaction",
+  TAUX_REPRISE: "Taux de reprises",
+  TAUX_REACHAT: "Taux de réachat",
+  TAUX_TRANSFORMATION_DEVIS: "Transformation devis",
+  PRODUCTIVITE_TECHNICIEN: "Productivité technicien",
+  MARGE_DOSSIER: "Marge par dossier",
 };
 
 /**
@@ -130,8 +136,17 @@ export default function PilotagePage() {
                   <div key={k.code} className="rounded-xl border border-border bg-card p-3">
                     <span className={`mb-1 inline-block rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${statutKpiColor(k.statut)}`}>{k.statut}</span>
                     <p className="truncate text-xs uppercase tracking-wider text-muted-foreground">{KPI_LABELS[k.code] ?? k.code}</p>
-                    <p className="text-lg font-black">{k.valeur != null ? `${k.valeur}${k.unite === "%" ? " %" : ""}` : "—"}</p>
-                    {k.cible != null && <p className="text-[10px] text-muted-foreground">cible : {k.cible}{k.unite === "%" ? " %" : ""}</p>}
+                    <p className="text-lg font-black">
+                      {k.valeur != null
+                        ? `${new Intl.NumberFormat("fr-FR").format(Number(k.valeur))}${k.unite ? ` ${k.unite}` : ""}`
+                        : "—"}
+                    </p>
+                    {k.cible != null && (
+                      <p className="text-[10px] text-muted-foreground">
+                        cible : {new Intl.NumberFormat("fr-FR").format(Number(k.cible))}{k.unite ? ` ${k.unite}` : ""}
+                      </p>
+                    )}
+                    {k.raison && <p className="mt-1 text-[10px] text-warning-foreground">{k.raison}</p>}
                   </div>
                 ))}
               </div>

@@ -232,6 +232,12 @@ async function dossierPretALivrer(immat: string, avecLigneParking: boolean) {
     vehicule: { id: vehiculeId, immatriculation: immat },
     reception: { kilometrageEntree: 10000, pannesDeclarees: "Freins" },
   });
+  // Depuis le lot « passage parking », la réception crée une ligne. Le test
+  // « sans ligne parking » doit donc la retirer explicitement pour conserver
+  // son scénario : une restitution d'OR sans passage physique.
+  if (!avecLigneParking) {
+    await db.execute(sql`DELETE FROM parking_vehicles WHERE vehicule_id = ${vehiculeId}`);
+  }
   for (const etape of ["EN_COURS", "CONTROLE_QUALITE", "PRET_A_LIVRER"] as const) {
     await orCaller.changerStatut({ id: r.id, nouveauStatut: etape as never, raison: `Lot S1 → ${etape}` });
   }
@@ -333,16 +339,21 @@ describe("LOT S1 — restitution d'OR = vraie sortie du parking (E12, RD8)", () 
     expect((await lireSpot()).bloque).toBe(false);
     expect((await mouvementsSortie(parkingId)).length).toBe(1);
 
-    // Le véhicule REVIENT à l'atelier : la réception réactive sa ligne
-    // parking (projection d'état). C'est le comportement attendu — la sortie
-    // précédente n'est pas définitive.
+    // Le véhicule REVIENT à l'atelier : la réception crée un NOUVEAU passage.
+    // L'ancien reste `SORTI` — c'est l'historique, pas une place réactivée.
     const orCaller = orRouter.createCaller(ctxSuperadmin());
     const r = await orCaller.receptionner({
       client: await clientDuLot(),
       vehicule: { id: vehiculeId, immatriculation: "S1RESTIT-003" },
       reception: { kilometrageEntree: 20000, pannesDeclarees: "Freins" },
     });
-    expect((await lireParking(parkingId)).statut).not.toBe("SORTI");
+    const passages = (await db.execute(
+      sql`SELECT id, statut FROM parking_vehicles WHERE vehicule_id = ${vehiculeId} ORDER BY id`,
+    )) as unknown as Row[];
+    expect(passages).toHaveLength(2);
+    expect(passages[0]!.statut).toBe("SORTI");
+    expect(passages[1]!.statut).not.toBe("SORTI");
+    const nouveauParkingId = Number(passages[1]!.id);
 
     for (const etape of ["EN_COURS", "CONTROLE_QUALITE", "PRET_A_LIVRER"] as const) {
       await orCaller.changerStatut({ id: r.id, nouveauStatut: etape as never, raison: `Lot S1 → ${etape}` });
@@ -358,10 +369,10 @@ describe("LOT S1 — restitution d'OR = vraie sortie du parking (E12, RD8)", () 
       commentaireException: "Sortie exceptionnelle tracée pour le test S1.",
     });
     expect((res as any).success).toBe(true);
-    // La 2ᵉ sortie est un nouvel APPUI, pas un no-op : 2 mouvements SORTIE
-    // (une par présence effective au parking).
+    // La sortie concerne le nouveau passage ; l'ancien garde son mouvement.
     expect((res as any).sortieParking).toBe("sorti");
-    expect((await mouvementsSortie(parkingId)).length).toBe(2);
+    expect((await mouvementsSortie(nouveauParkingId)).length).toBe(1);
+    expect((await mouvementsSortie(parkingId)).length).toBe(1);
   });
 
   it("5b. restitution d'un véhicule déjà sorti SANS nouvelle réception : no-op", async () => {
@@ -384,15 +395,19 @@ describe("LOT S1 — restitution d'OR = vraie sortie du parking (E12, RD8)", () 
       vehicule: { id: vehiculeId, immatriculation: "S1RESTIT-005" },
       reception: { kilometrageEntree: 30000, pannesDeclarees: "Freins" },
     });
-    // On repasse la ligne en SORTI pour simuler l'état « déjà sorti » que la
-    // restitution doit recevoir (la réception l'a remise en atelier).
-    await db.execute(sql`UPDATE parking_vehicles SET statut = 'SORTI' WHERE id = ${parkingId}`);
+    // La réception a créé un nouveau passage. Pour simuler « déjà sorti sans
+    // nouvelle réception », on marque CE passage SORTI avant la restitution.
+    const [nouveau] = (await db.execute(
+      sql`SELECT id FROM parking_vehicles WHERE vehicule_id = ${vehiculeId} ORDER BY id DESC LIMIT 1`,
+    )) as unknown as Row[];
+    const nouveauParkingId = Number(nouveau!.id);
+    await db.execute(sql`UPDATE parking_vehicles SET statut = 'SORTI' WHERE id = ${nouveauParkingId}`);
 
     for (const etape of ["EN_COURS", "CONTROLE_QUALITE", "PRET_A_LIVRER"] as const) {
       await orCaller.changerStatut({ id: r.id, nouveauStatut: etape as never, raison: `Lot S1 → ${etape}` });
     }
     // (changerStatut vers CONTROLE_QUALITE réactive la ligne : on la remet SORTI)
-    await db.execute(sql`UPDATE parking_vehicles SET statut = 'SORTI' WHERE id = ${parkingId}`);
+    await db.execute(sql`UPDATE parking_vehicles SET statut = 'SORTI' WHERE id = ${nouveauParkingId}`);
 
     const res = await orCaller.restituerVehicule({
       orId: r.id,
@@ -406,7 +421,10 @@ describe("LOT S1 — restitution d'OR = vraie sortie du parking (E12, RD8)", () 
     });
     expect((res as any).success).toBe(true);
     expect((res as any).sortieParking).toBe("deja_sorti");
+    // L'ancien passage a son mouvement de sortie ; le nouveau, déjà SORTI,
+    // ne doit pas en produire un second.
     expect((await mouvementsSortie(parkingId)).length).toBe(1);
+    expect((await mouvementsSortie(nouveauParkingId)).length).toBe(0);
   });
 
   it("6. un véhicule sans ligne parking : la restitution réussit quand même", async () => {

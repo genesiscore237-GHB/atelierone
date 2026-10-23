@@ -106,7 +106,7 @@ export function ParcDashboard() {
     const okS = !fStatut || p.statut === fStatut;
     const okA = !fAlerte || p.alerte === fAlerte || (fAlerte === "BLOQUE" && p.statut === "BLOQUE");
     const okPieces = !fPieces || ((p.pieces?.enAttente ?? 0) > 0 || (p.pieces?.manquantes ?? 0) > 0);
-    const okKpi = !kpiFilter || (kpiFilter === "P1" ? p.priorite === "P1" : kpiFilter === "RETARD" ? p.alerte === "RETARD" : kpiFilter === "BLOQUE" ? p.statut === "BLOQUE" : kpiFilter === "PARCTOTAL" ? true : true);
+    const okKpi = !kpiFilter || (kpiFilter === "P1" ? p.priorite === "P1" : kpiFilter === "RETARD" ? p.alerte === "RETARD" : kpiFilter === "BLOQUE" ? p.statut === "BLOQUE" : kpiFilter === "PARCTOTAL" || kpiFilter === "OROUVERTS" ? true : true);
     return okText && okP && okS && okA && okPieces && okKpi;
   });
 
@@ -126,11 +126,12 @@ export function ParcDashboard() {
     a.download = `parc-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
-    toast.success(`${filtered.length} véhicule(s) exportés`);
+    toast.success(`${filtered.length} dossier(s) exporté(s)`);
   };
 
   const kpiCards = [
-    { id: "PARCTOTAL", label: "Véhicules en parc", value: kpis.totalParc, icon: Car, cls: "text-primary bg-primary/10" },
+    { id: "PARCTOTAL", label: "Véhicules en parc", value: kpis.totalParc ?? 0, icon: Car, cls: "text-primary bg-primary/10" },
+    { id: "OROUVERTS", label: "OR ouverts", value: kpis.orOuverts ?? 0, icon: ClipboardCheck, cls: "text-sky-400 bg-sky-500/10" },
     { id: "P1", label: "P1 ouverts", value: kpis.p1Ouverts, icon: AlertTriangle, cls: "text-destructive bg-destructive/10" },
     { id: "RETARD", label: "En retard", value: kpis.enRetard, icon: Clock, cls: "text-destructive bg-destructive/10" },
     { id: "BLOQUE", label: "Bloqués", value: kpis.bloques, icon: Lock, cls: "text-warning-foreground bg-warning/10" },
@@ -176,7 +177,7 @@ export function ParcDashboard() {
       </div>
 
       {/* KPIs cliquables */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         {kpiCards.map((c) => (
           <button
             key={c.id}
@@ -540,6 +541,21 @@ function ParcDetailModal({ orId, onClose }: { orId: number; onClose: () => void 
               </div>
             ) : <p className="mt-1 text-xs text-muted-foreground">Aucune intervention pointée</p>}
             {p.interventions && <p className="mt-1 text-xs text-muted-foreground">{p.interventions.nb} intervention(s) · {p.interventions.heures} h</p>}
+          </div>
+
+          <div className="rounded-lg border border-border/60 bg-muted/10 p-3">
+            <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              <MessageSquareText size={11} /> Dernier compte rendu
+            </p>
+            {p.dernierCompteRendu ? (
+              <div className="mt-1 space-y-0.5 text-xs">
+                {p.dernierCompteRendu.ligneLibelle && <p className="text-[10px] font-semibold text-foreground">{p.dernierCompteRendu.ligneLibelle}</p>}
+                {p.dernierCompteRendu.constat && <p><span className="font-semibold">Constat :</span> {p.dernierCompteRendu.constat}</p>}
+                {p.dernierCompteRendu.intervention && <p><span className="font-semibold">Fait :</span> {p.dernierCompteRendu.intervention}</p>}
+                {p.dernierCompteRendu.suite && <p><span className="font-semibold">Suite :</span> {p.dernierCompteRendu.suite}</p>}
+                {p.dernierCompteRendu.createdAt && <p className="text-[10px] text-muted-foreground">{new Date(p.dernierCompteRendu.createdAt).toLocaleString("fr-FR")}</p>}
+              </div>
+            ) : <p className="mt-1 text-xs text-muted-foreground">Aucun compte rendu écrit.</p>}
           </div>
 
           <div className="rounded-lg border border-border/60 bg-muted/10 p-3">
