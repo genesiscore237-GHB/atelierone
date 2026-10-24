@@ -30,7 +30,7 @@ type Dialogue = "reponse" | "reclamation" | "resolution" | null;
  * visites se tracent ici. Une réclamation ouverte reste visible jusqu'à sa
  * résolution, y compris après la livraison du véhicule.
  */
-export function RelationClient({ or }: { or: any }) {
+export function RelationClient({ or, embedded = false }: { or: any; embedded?: boolean }) {
   const utils = api.useUtils();
   const { flags } = useOrPermissions();
   const id = Number(or.id);
@@ -83,11 +83,13 @@ export function RelationClient({ or }: { or: any }) {
   const ouverte = !!suivi.reclamation && suivi.reclamation.statut !== "RESOLUE";
 
   return (
-    <div className="rounded-xl border border-border bg-card p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
-          <MessageCircle size={15} className="text-primary" /> Relation client
-        </h3>
+    <div className={embedded ? "space-y-3" : "rounded-xl border border-border bg-card p-3"}>
+      <div className={`flex flex-wrap items-center gap-2 ${embedded ? "justify-end" : "justify-between"}`}>
+        {!embedded && (
+          <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+            <MessageCircle size={15} className="text-primary" /> Relation client
+          </h3>
+        )}
         <div className="flex flex-wrap gap-2">
           {!suivi.reponse && editable && (
             <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => setDialogue("reponse")}>

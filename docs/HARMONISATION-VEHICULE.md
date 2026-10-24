@@ -4,7 +4,7 @@
 > (fin de lot, décision produit, blocage). Toute session de travail doit consulter
 > ce document en premier et le mettre à jour en sortie.
 >
-> Dernière mise à jour : **2026-10-14 — Lots 0-4 livrés ; migrations appliquées ; points ouverts §6 clos**.
+> Dernière mise à jour : **2026-10-24 — Lot 0 du socle de la fiche OR livré ; réception corrigée ; prochaine étape : Réception pilote puis Diagnostic**.
 
 ---
 
@@ -195,6 +195,7 @@ Périmètre (D1) : workflow de transfert **intra-agence** entre les 2 sites GPJ-
 | 2026-10-20 | **Guide utilisateur interactif par module + plan de tests réels** | (1) **`docs/PLAN-TESTS-REELS.md`** : plan de tests métier en langage courant — 6 besoins (B1-B6) mappés sur l'existant, 6 chapitres de scénarios (A : articles/variantes/positions/occasion/réfs/compat/pont ; B : aperçu/entrée/rangement/OR/recensement/inventaire/ajustement/transferts/fûts-DLC ; C : POS ; D : prévisions/import ; E : outillage ; F : recherche/aide), **registre à cocher** (24 tests) et points de vigilance (quantité dans le catalogue = bug, stock jamais négatif, PMP, DLC après ouverture, confirmé sans source = avertissement…). (2) **`GuideInteractif.tsx`** : pas-à-pas interactif générique et client-safe — étapes dépliables (quoi / « le contrôle est réussi si » / astuce / lien vers l'écran), progression cochée conservée en `localStorage` par module, barre %, recherche, réinitialisation ; branché dans `HelpCenter` (RH et clients héritent du pas-à-pas dérivé du parcours quand aucun contenu dédié n'est fourni). (3) **Catalogue** : registre neuf `catalogue-help.ts` (8 fiches : articles, variantes/positions, références, compatibilité-exclusion, recherche ×4, outillage, aide à la saisie, import de masse) + pas-à-pas 9 étapes + parcours ; `/dashboard/catalog/aide` devient une page à **deux onglets** (Guide interactif ↔ Aide à la saisie, toujours accessible) ; le bouton **?** du domaine catalogue passe sur `CATALOGUE_HELP_FICHES`. (4) **Stock** : 5 fiches manquantes ajoutées au centre d'aide (recensement, contenants & DLC, déconditionnement, chercher avant de commander, prévisions) + pas-à-pas 11 étapes (`stock-pas-a-pas.ts`). **Vérifications** : tsc **305 total (baseline inchangée), 0 erreur dans les fichiers de la session** ; suite **103 fichiers / 1 237 tests verts** ; **`next build` vert**. **Leçon** : la génération de texte long produit des artefacts, et le retour console PowerShell **ré-encode** ce qu'il affiche (du mojibake peut correspondre à des octets sains, et l'inverse) — la seule vérité est la relecture **octet-octet via Node** (`readFileSync` + recherche de caractères suspects), appliquée à chaque fichier écrit de la session. |
 
 | 2026-10-22 | **Cohérence garage — une seule réception, module Client réparé, fiche/liste alignées** | Audit des quatre chemins de création : réception (seul parcours complet), atelier `vehicules.create`, parking `garage.create`, OR `or.createVehicule`. Les trois derniers sont retirés de l'UI ; `VehiculeFormDialog` devient une édition seule et n'est montée que si une ligne est sélectionnée. Le domaine Clients pointe vers `/dashboard/customers` (redirection depuis `/dashboard/clients`), la liste affiche les `PROVISOIRE`, permet de les valider (`clients.modifier`, invalidation liste + fiche) et la fiche client expose statut canonique, OR et position parking. `vehicules.get` renvoie version, dimensions, poids, `isActive` et `updatedAt` ; la 360 et la liste partagent désormais les mêmes champs. `garage.vehicles` et `garage.vehicule` joignent `vehicules`/`clients` (identité, client et statut canoniques, repli parking), `total` passe à `count(*)`, la recherche couvre le canonique et le client. Le lien « Voir » de la revue utilise `r.id` (ligne parking). Les sélecteurs de contrats acceptent `ACTIF` et `PROVISOIRE` ; sans cela, les 31 clients de production étaient invisibles. Un client créé au parking naît `PROVISOIRE` (`vehicule-regles.ts`). **Vérifs** : `next build` vert ; `tsc` 303 baseline, 0 erreur dans les fichiers du lot ; suite complète 1241 tests verts / 3 ignorés (l'échec ponctuel `or-etape4` n'est pas réapparu ; fichier seul 4/4) ; SQL des nouvelles jointures validé sur la base de test. **Commit `09f4014` poussé sur `main` ; le hook pre-push n'a appliqué aucune migration et n'a créé aucun client/véhicule ; schéma identique (21 écarts de données attendus).** Détail et plan : `docs/RAPPORT-COHERENCE-GARAGE-2026-10-22.md`. |
+| 2026-10-24 | **Lot 0 — socle de la fiche OR** | En-tête compact (identité, prochaine action, alerte, total TTC/reste à facturer) ; `RelationClient` et `Timeline` déplacés en tiroirs ; stepper fondé sur les données réelles (BLOQUE reprend l'étape de l'historique, ANNULE n'est plus « tout terminé », états par étape) ; prochaine action cliquable ; vue par rôle avec « Tout le dossier » ; suppression du bandeau de refonte et du lien vers l'ancienne fiche ; facturation déplacée dans l'onglet Facture ; `useOrQueries` dégonflé (4 requêtes inutiles retirées). **Vérifs** : suite complète **1292 passés / 3 ignorés**, `next build` vert, `tsc` 0 erreur dans les fichiers du lot (904 lignes de baseline), ESLint 0 sur les fichiers modifiés, `db:check` schéma identique (29 écarts de données tolérés). Détail : `docs/RAPPORT-LOT0-SOCLE-OR-2026-10-24.md`. |
 
 ## 6. Risques & points ouverts
 
@@ -230,3 +231,24 @@ Audit complet de la réception, de l’interface jusqu’au passage parking. Les
 Vérifications : suite complète **1270 passés / 3 ignorés**, `next build` vert, `tsc` 305 baseline sans nouvelle erreur dans les fichiers du lot, `db:check` schéma identique (29 divergences de données tolérées).
 
 Détail : `docs/AUDIT-RECEPTION-VEHICULE-2026-10-24.md`, `docs/PLAN-CORRECTION-RECEPTION-2026-10-24.md`, `docs/RAPPORT-CORRECTION-RECEPTION-2026-10-24.md`.
+
+## 9. Fiche OR — Lot 0 du socle (2026-10-24)
+
+Le découpage en 7 onglets est conservé. La refonte commence par le socle commun, pas par un onglet :
+
+- en-tête compact : véhicule, client, OR, statut, prochaine action, alerte, total TTC / reste à facturer ;
+- `RelationClient` et `Timeline` sortis de l'empilement permanent, désormais en tiroirs ;
+- stepper fondé sur les données réelles de chaque étape, avec états `À faire / En cours / En attente / Terminé / Bloqué / Non applicable` ;
+- `BLOQUE` reprend l'étape du statut précédent (historique) au lieu d'être rattaché à Pièces ;
+- `ANNULE` n'affiche plus toutes les étapes comme terminées ;
+- prochaine action cliquable vers l'onglet concerné ;
+- vue par rôle (technicien, magasinier, comptable, secrétariat) avec « Tout le dossier » ;
+- suppression du bandeau « Module en cours de refonte » et du lien « Vue complète (précédente) » ;
+- facturation déplacée dans l'onglet Facture & Restitution ;
+- `useOrQueries` dégonflé : les requêtes catalogue / stock / cores / pièces client, jamais lues par le layout, sont retirées.
+
+Vérifications : suite complète **1292 passés / 3 ignorés**, `next build` vert, `tsc` 0 erreur dans les fichiers du lot (904 lignes de baseline), ESLint 0 sur les fichiers modifiés, `db:check` schéma identique (29 écarts de données tolérés), `graphify update .` exécuté.
+
+Limite connue : l'ancienne fiche reste accessible par URL directe (`?or=`) mais n'est plus exposée ; sa suppression physique attend l'audit de parité onglet par onglet.
+
+Détail : `docs/AUDIT-LOGIQUE-FICHE-OR-2026-10-24.md`, `docs/PLAN-REFONTE-FICHE-OR-2026-10-24.md`, `docs/RAPPORT-LOT0-SOCLE-OR-2026-10-24.md`.

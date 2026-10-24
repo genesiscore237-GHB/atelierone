@@ -2,15 +2,20 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { toast } from "sonner";
-import { ArrowLeft, Car, Receipt, Check, Loader2 } from "lucide-react";
-import { api } from "~/trpc/react";
-import { Button } from "~/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "~/components/ui/dialog";
-import { Label } from "~/components/ui/label";
 import {
-  ALERTE_META,
-} from "~/server/lib/atelier-service";
+  AlertTriangle,
+  ArrowLeft,
+  Car,
+  ChevronDown,
+  ChevronUp,
+  History,
+  MessageCircle,
+  Receipt,
+  Settings2,
+} from "lucide-react";
+import { Button, buttonVariants } from "~/components/ui/button";
+import { ALERTE_META } from "~/server/lib/atelier-service";
+import { analyserSuiviRelation } from "~/lib/suivi-relation";
 import { useOrPermissions } from "../../_hooks/useOrPermissions";
 import { StatutBadge } from "./shared/StatutBadge";
 import { PrioriteBadge } from "./shared/PrioriteBadge";
@@ -18,33 +23,54 @@ import { StatutSelector } from "./shared/StatutSelector";
 import { PrioriteSelector } from "./shared/PrioriteSelector";
 import { TechnicienSelector } from "./shared/TechnicienSelector";
 
-/** En-tête de la fiche OR : identité, dates, tuiles financières, actions globales. */
-export function OrHeader({ or, employes }: { or: any; employes: any[] }) {
-  const utils = api.useUtils();
-  const { flags } = useOrPermissions();
-  const [showFacture, setShowFacture] = useState(false);
-  const [factureForm, setFactureForm] = useState({ modePaiement: "especes", remisePourcent: "", notes: "" });
+interface OrHeaderProps {
+  or: any;
+  employes: any[];
+  onOpenJournal: () => void;
+  onOpenRelation: () => void;
+}
 
-  const facturer = api.or.facturer.useMutation({
-    onSuccess: (r: any) => {
-      toast.success(`OR facturé — ${r.reference} (${Number(r.montantTotal).toLocaleString("fr-FR")} F)`);
-      utils.or.getById.invalidate();
-      utils.or.list.invalidate();
-      setShowFacture(false);
-      setFactureForm({ modePaiement: "especes", remisePourcent: "", notes: "" });
-    },
-    onError: (e) => toast.error(e.message),
-  });
+/**
+ * En-tête compact de la fiche OR.
+ *
+ * Il répond à « quel véhicule, quel client, où en est-on, que faut-il faire ».
+ * Les actions de gestion (statut, priorité, technicien) sont repliées derrière
+ * « Gérer » ; la facturation détaillée vit dans l'onglet Facture.
+ */
+export function OrHeader({ or, employes, onOpenJournal, onOpenRelation }: OrHeaderProps) {
+  const { flags } = useOrPermissions();
+  const [showGestion, setShowGestion] = useState(false);
 
   const id = Number(or.id);
   const hasAlerte = or.alerte && or.alerte !== "OK";
+  const suivi = or.suiviRelation ?? analyserSuiviRelation(or.dateOuverture, or.historique ?? []);
+  const reclamationOuverte = !!suivi.reclamation && suivi.reclamation.statut !== "RESOLUE";
+  const relationAction = !suivi.reponse || reclamationOuverte;
+  const relationLabel = reclamationOuverte
+    ? "Réclamation ouverte"
+    : "Première réponse à tracer";
+
+  const technicien = or.responsablePrenom
+    ? `${or.responsablePrenom} ${or.responsableNom ?? ""}`.trim()
+    : "Non assigné";
+  const dateEntree = or.dateReception ?? or.dateOuverture;
+  const totalTTC = Number(or.totalTTC ?? 0);
+  const totalFacture = Number(or.totalFacture ?? 0);
+  const resteAFacturer = Math.max(0, totalTTC - totalFacture);
+  const canManage =
+    flags.canChangerStatut || flags.modifier || flags.canAssignerTechnicien;
+  const peutFacturer =
+    flags.canFacturation && or.statut === "PRET_A_LIVRER" && !or.venteId;
 
   return (
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <Link href="/dashboard/ordres-reparation" className="mr-1 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground">
+            <Link
+              href="/dashboard/ordres-reparation"
+              className="mr-1 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+            >
               <ArrowLeft size={14} /> Liste
             </Link>
             <h2 className="text-lg font-bold text-foreground">OR {or.numero}</h2>
@@ -59,114 +85,134 @@ export function OrHeader({ or, employes }: { or: any; employes: any[] }) {
 
           <p className="mt-1 text-sm text-muted-foreground">
             <Car size={12} className="inline" /> {or.immatriculation} — {or.marque} {or.modele}
-            {or.clientPrenom && <> · Client : {or.clientPrenom} {or.clientNom}</>}
+            {or.clientPrenom && (
+              <> · Client : {or.clientPrenom} {or.clientNom}</>
+            )}
+            {or.clientTelephone && <> · {or.clientTelephone}</>}
           </p>
-          {or.plainte && <p className="mt-1 text-sm">Plainte : <span className="text-foreground/80">{or.plainte}</span></p>}
 
           <p className="mt-1 text-xs text-muted-foreground">
-            Entrée : {or.dateOuverture ? new Date(or.dateOuverture).toLocaleDateString("fr-FR") : "—"}
+            Entrée : {dateEntree ? new Date(dateEntree).toLocaleDateString("fr-FR") : "—"}
             {or.datePromesse && <> · Promesse : {new Date(or.datePromesse).toLocaleDateString("fr-FR")}</>}
-            {or.joursImmobilisation !== undefined && <> · Immobilisation : <b className="text-warning-foreground">{or.joursImmobilisation} j</b></>}
+            {or.joursImmobilisation !== undefined && (
+              <> · Immobilisation : <b className="text-warning-foreground">{or.joursImmobilisation} j</b></>
+            )}
             {or.retardJours > 0 && <> · <b className="text-destructive">Retard {or.retardJours} j</b></>}
             {or.emplacement && <> · {or.emplacement}</>}
+            <> · Technicien : {technicien}</>
           </p>
+
+          {or.plainte && (
+            <p className="mt-1 truncate text-sm" title={or.plainte}>
+              Plainte : <span className="text-foreground/80">{or.plainte}</span>
+            </p>
+          )}
 
           {or.raisonBlocage && (
             <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-destructive">
-              <span className="inline-block size-1.5 rounded-full bg-destructive" /> Bloqué : {or.raisonBlocage}
+              <AlertTriangle size={12} /> Bloqué : {or.raisonBlocage}
             </p>
           )}
         </div>
 
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex items-center gap-2">
-            <StatutSelector or={or} id={id} />
-            <PrioriteSelector or={or} id={id} />
-          </div>
-          <TechnicienSelector or={or} employes={employes} />
-          <div className="flex items-center gap-2">
-            {flags.canFacturation && or.statut === "PRET_A_LIVRER" && !or.venteId && (
-              <Button onClick={() => setShowFacture(true)} className="gap-1.5 text-xs">
-                <Receipt size={14} /> Facturer
-              </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onOpenJournal}
+            className="gap-1.5 text-xs"
+          >
+            <History size={14} /> Journal
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onOpenRelation}
+            className={`gap-1.5 text-xs ${
+              relationAction ? "border-warning/30 bg-warning/5 text-warning-foreground" : ""
+            }`}
+            title={relationAction ? relationLabel : "Relation client"}
+          >
+            <MessageCircle size={14} /> Relation client
+            {relationAction && (
+              <span className="size-1.5 rounded-full bg-warning" aria-label={relationLabel} />
             )}
-            {or.venteId && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-1 text-[10px] font-bold uppercase text-success-foreground">
-                <Check size={11} /> Facturé
-              </span>
-            )}
-          </div>
+          </Button>
+
+          {peutFacturer && (
+            <Link
+              href={`/dashboard/ordres-reparation/${id}?tab=facture-restitution`}
+              className={buttonVariants({ size: "sm", variant: "outline" })}
+            >
+              <Receipt size={14} className="mr-1.5" /> Facturer
+            </Link>
+          )}
+
+          {or.statut === "BLOQUE" && canManage && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setShowGestion(true)}
+              className="gap-1.5 text-xs"
+            >
+              <AlertTriangle size={14} /> Lever le blocage
+            </Button>
+          )}
+
+          {canManage && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowGestion((v) => !v)}
+              className="gap-1.5 text-xs"
+              aria-expanded={showGestion}
+            >
+              <Settings2 size={14} /> Gérer
+              {showGestion ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </Button>
+          )}
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
-        <div className="rounded-lg bg-muted/50 p-2"><span className="text-muted-foreground">Pièces : </span><b>{Number(or.totalPieces ?? 0).toLocaleString("fr-FR")} F</b></div>
-        <div className="rounded-lg bg-muted/50 p-2"><span className="text-muted-foreground">Main d'œuvre : </span><b>{Number(or.totalMainOeuvre ?? 0).toLocaleString("fr-FR")} F</b></div>
-        <div className="rounded-lg bg-primary/10 p-2"><span className="text-muted-foreground">Total TTC : </span><b>{Number(or.totalTTC ?? 0).toLocaleString("fr-FR")} F</b></div>
-      </div>
-
-      {showFacture && (
-        <Dialog open onOpenChange={(o) => { if (!o) setShowFacture(false); }}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Receipt size={16} className="text-primary" /> Facturer l'OR {or.numero}
-              </DialogTitle>
-            </DialogHeader>
-            <p className="text-sm text-muted-foreground">
-              Total TTC : <b className="text-foreground">{Number(or.totalTTC).toLocaleString("fr-FR")} F</b>
-            </p>
-            <div className="mt-4 space-y-3">
-              <div>
-                <Label className="text-xs text-muted-foreground">Mode de paiement</Label>
-                <select value={factureForm.modePaiement} onChange={(e) => setFactureForm({ ...factureForm, modePaiement: e.target.value })} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                  <option value="especes">Espèces</option>
-                  <option value="om">Orange Money</option>
-                  <option value="momo">MTN MoMo</option>
-                  <option value="carte">Carte</option>
-                  <option value="virement">Virement</option>
-                  <option value="credit">Crédit (créance)</option>
-                </select>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Remise (%) — défaut : contrat ou client</Label>
-                <input
-                  type="number" min={0} max={100} step="0.5"
-                  value={factureForm.remisePourcent}
-                  onChange={(e) => setFactureForm({ ...factureForm, remisePourcent: e.target.value })}
-                  placeholder="0"
-                  className="mt-1 w-full rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
-                />
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground">Notes</Label>
-                <input
-                  value={factureForm.notes}
-                  onChange={(e) => setFactureForm({ ...factureForm, notes: e.target.value })}
-                  placeholder="Optionnel"
-                  className="mt-1 w-full rounded-lg border border-border bg-accent/30 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/50"
-                />
-              </div>
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowFacture(false)}>Annuler</Button>
-              <Button
-                onClick={() => facturer.mutate({
-                  id,
-                  modePaiement: factureForm.modePaiement as any,
-                  remisePourcent: factureForm.remisePourcent ? Number(factureForm.remisePourcent) : undefined,
-                  notes: factureForm.notes || undefined,
-                })}
-                disabled={facturer.isPending}
-                className="gap-2"
-              >
-                {facturer.isPending ? <Loader2 className="size-4 animate-spin" /> : <Receipt size={14} />}
-                Facturer
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+      {relationAction && (
+        <button
+          type="button"
+          onClick={onOpenRelation}
+          className="mt-2 flex w-full items-center gap-2 rounded-lg border border-warning/25 bg-warning/5 px-3 py-1.5 text-left text-xs text-warning-foreground"
+        >
+          <AlertTriangle size={13} className="shrink-0" />
+          <span>
+            <b>Relation client :</b> {relationLabel}. Cliquez pour ouvrir le suivi.
+          </span>
+        </button>
       )}
+
+      {showGestion && canManage && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border bg-muted/20 p-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            Gestion du dossier
+          </span>
+          {flags.canChangerStatut && <StatutSelector or={or} id={id} />}
+          {flags.modifier && <PrioriteSelector or={or} id={id} />}
+          {flags.canAssignerTechnicien && <TechnicienSelector or={or} employes={employes} />}
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-2 text-xs text-muted-foreground">
+        <span>
+          Total TTC : <b className="text-foreground">{totalTTC.toLocaleString("fr-FR")} F</b>
+        </span>
+        {or.venteId ? (
+          <span className="text-success-foreground">
+            Facturé {or.venteReference ? `(${or.venteReference})` : ""}
+          </span>
+        ) : resteAFacturer > 0 ? (
+          <span>
+            Reste à facturer : <b className="text-foreground">{resteAFacturer.toLocaleString("fr-FR")} F</b>
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }

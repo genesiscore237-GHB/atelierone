@@ -1,26 +1,25 @@
 "use client";
 
 import {
-  orStepForStatus,
-  orNextAction,
-  orStepsState,
   OR_STEPS,
-  type OrStepId,
+  orCurrentStep,
+  orCycleFlag,
+  orNextAction,
+  orStepStates,
+  type OrStepSnapshot,
 } from "../_lib/or-status-machine";
 
-/** Calcule l'état du stepper (7 étapes) + la prochaine action recommandée d'un OR. */
-export function useOrStepper(or: {
-  statut?: string | null;
-} | null | undefined) {
-  const statut = or?.statut ?? null;
-  const stepsState = orStepsState(statut);
-  const currentStep: OrStepId = orStepForStatus(statut);
-  const nextAction = orNextAction(statut);
-
+/**
+ * Calcule l'état réel des 7 étapes, l'étape courante et la prochaine action
+ * d'un OR. Les états sont dérivés des données de chaque étape (diagnostic,
+ * devis, pièces, travaux, qualité, facture), pas de l'index du statut global.
+ */
+export function useOrStepper(or: OrStepSnapshot | null | undefined) {
   return {
     steps: OR_STEPS,
-    stepsState,
-    currentStep,
-    nextAction,
+    stepsState: orStepStates(or),
+    currentStep: orCurrentStep(or),
+    nextAction: orNextAction(or),
+    cycle: orCycleFlag(or),
   };
 }

@@ -21,6 +21,7 @@ import { api } from "~/trpc/react";
 import { Button } from "~/components/ui/button";
 import { ReceiptText, ClipboardCopy, MessageCircle, CheckCircle2 } from "lucide-react";
 import { RestituerVehicule } from "~/components/or/RestituerVehicule";
+import { FacturerOR } from "../shared/FacturerOR";
 
 /** Onglet 7 — Facture & Restitution : synthèse, accusé de réception, restitution. */
 export function FactureRestitutionTab({ or }: { or: any }) {
@@ -51,9 +52,12 @@ export function FactureRestitutionTab({ or }: { or: any }) {
     <div className="space-y-4">
       {/* ─── Synthèse financière ─── */}
       <div className="rounded-xl border border-border bg-card p-4">
-        <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
-          <ReceiptText size={15} className="text-primary" /> Synthèse financière
-        </h3>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-foreground">
+            <ReceiptText size={15} className="text-primary" /> Synthèse financière
+          </h3>
+          <FacturerOR or={or} />
+        </div>
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
           <div className="rounded-lg bg-muted/50 p-2"><span className="text-muted-foreground">Pièces : </span><b>{totalPieces.toLocaleString("fr-FR")} F</b></div>
           <div className="rounded-lg bg-muted/50 p-2"><span className="text-muted-foreground">Main d'œuvre : </span><b>{totalMO.toLocaleString("fr-FR")} F</b></div>
@@ -61,11 +65,6 @@ export function FactureRestitutionTab({ or }: { or: any }) {
           <div className="rounded-lg bg-muted/50 p-2"><span className="text-muted-foreground">Déjà facturé : </span><b>{dejaFacture.toLocaleString("fr-FR")} F</b></div>
           <div className="rounded-lg bg-success/10 p-2"><span className="text-muted-foreground">Reste à facturer : </span><b className="text-success-foreground">{resteAFacturer.toLocaleString("fr-FR")} F</b></div>
         </div>
-        {or.venteId && (
-          <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-[10px] font-bold uppercase text-success-foreground">
-            <CheckCircle2 size={11} /> Facturé (réf. {or.venteReference ?? `#${or.venteId}`})
-          </p>
-        )}
       </div>
 
       {/* ─── Accusé de réception ─── */}
