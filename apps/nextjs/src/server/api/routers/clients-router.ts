@@ -822,12 +822,15 @@ export const clientsRouter = createTRPCRouter({
     .input(z.object({ telephone: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
       const telNorm = normaliserTelephone(input.telephone);
-      if (!telNorm) return { client: null as null | { id: number; nom: string; prenom: string | null; telephone: string | null; codeClient: string | null } };
+      if (!telNorm) return { client: null };
       const rows = await db
         .select({
           id: clients.id,
           nom: clients.nom,
           prenom: clients.prenom,
+          raisonSociale: clients.raisonSociale,
+          typeClient: clients.typeClient,
+          statut: clients.statut,
           telephone: clients.telephone,
           codeClient: clients.codeClient,
           telNorm: sql<string>`regexp_replace(substring(regexp_replace(coalesce(${clients.telephone}, ''), '[^0-9]', '', 'g') from '^(?:237)?([0-9]{9})$'), '[^0-9]', '', 'g')`,
@@ -838,7 +841,16 @@ export const clientsRouter = createTRPCRouter({
       const match = rows.find((r) => (r.telNorm ?? "").trim() === telNorm);
       return {
         client: match
-          ? { id: match.id, nom: match.nom, prenom: match.prenom, telephone: match.telephone, codeClient: match.codeClient }
+          ? {
+              id: match.id,
+              nom: match.nom,
+              prenom: match.prenom,
+              raisonSociale: match.raisonSociale,
+              typeClient: match.typeClient,
+              statut: match.statut,
+              telephone: match.telephone,
+              codeClient: match.codeClient,
+            }
           : null,
       };
     }),

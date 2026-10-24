@@ -45,6 +45,8 @@ export type PassageReception = {
   vehiculeId: number;
   orId: number;
   motif?: string | null;
+  /** Date réelle d'entrée (celle de l'OR), pas l'instant du traitement. */
+  dateEntree?: Date | null;
 };
 
 /**
@@ -62,8 +64,15 @@ export async function ouvrirPassageReception(
   exec: Exec,
   params: PassageReception,
 ): Promise<number | null> {
-  const { agenceId, vehiculeId, orId, motif } = params;
+  const { agenceId, vehiculeId, orId, motif, dateEntree } = params;
   if (!vehiculeId || !orId) return null;
+
+  // Sérialise les réceptions concurrentes du MÊME véhicule. Sans ce verrou,
+  // deux transactions peuvent toutes deux constater « aucun passage actif »
+  // avant que l'une ait inséré le sien.
+  await exec.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext(${`passage_${agenceId}_${vehiculeId}`})::bigint)`,
+  );
 
   const actifs = (await exec.execute(
     sql`SELECT id
@@ -124,7 +133,7 @@ export async function ouvrirPassageReception(
            ${vehicule.marque ?? null}, ${vehicule.modele ?? null}, ${vehicule.version ?? null},
            ${vehicule.couleur ?? null}, ${vehicule.immatriculation ?? null}, ${vehicule.numero_chassis ?? null},
            ${clientNom}, ${clientTelephone}, 'EN_PARKING', ${motif ?? null},
-           now(), now(), '[]'::jsonb, false)
+           ${(dateEntree ?? new Date()).toISOString()}::timestamp, now(), '[]'::jsonb, false)
         RETURNING id`,
   )) as unknown as Row[];
 

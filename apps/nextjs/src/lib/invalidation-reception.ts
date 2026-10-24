@@ -22,12 +22,17 @@ type Utils = any;
 export const INVALIDATIONS_RECEPTION: { chemin: string; motif: string }[] = [
   { chemin: "or.list", motif: "un dossier d'intervention vient d'être ouvert" },
   { chemin: "or.getDashboard", motif: "le tableau de bord atelier compte les dossiers ouverts" },
+  { chemin: "or.getAlertes", motif: "une réception peut créer un retard ou une alerte de dossier" },
   { chemin: "or.rechercherReception", motif: "la recherche réception doit voir le véhicule et le client créés" },
   { chemin: "vehicules.list", motif: "véhicule créé ou réconcilié" },
+  { chemin: "vehicules.listeCanonique", motif: "la liste canonique du parc doit voir le véhicule et sa position" },
+  { chemin: "vehicules.get", motif: "la fiche véhicule peut avoir reçu un km ou un propriétaire" },
   { chemin: "vehicules.typesUtilises", motif: "un type de véhicule libre peut avoir été ajouté" },
   { chemin: "clients.list", motif: "un client a pu être créé" },
   { chemin: "clients.suggestionsClients", motif: "le dédoublonnage (R5) peut avoir marqué un doublon" },
   { chemin: "garage.overview", motif: "le registre parking a été projeté (statut du véhicule modifié)" },
+  { chemin: "garage.vehicles", motif: "la liste du registre parking doit voir le nouveau passage" },
+  { chemin: "garage.vehicule", motif: "la fiche parking du véhicule peut avoir changé" },
   { chemin: "garage.alertes", motif: "le véhicule entre au garage : les alertes de retard changent" },
   { chemin: "atelierKpi.getSanteGarage", motif: "les indicateurs de santé intègrent l'immobilisation" },
 ];

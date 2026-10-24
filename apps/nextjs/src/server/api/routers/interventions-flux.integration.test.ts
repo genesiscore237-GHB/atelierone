@@ -124,6 +124,7 @@ describe("Comptes rendus techniciens — trois lectures cohérentes", () => {
       client: { id: r.clientId },
       vehicule: { id: r.vehiculeId, immatriculation: IMMAT },
       reception: { kilometrageEntree: 5100, pannesDeclarees: "Deuxième passage" },
+      confirmerNouvelleIntervention: true,
     });
     const dash = await or().getDashboard();
     const dossiers = (dash as any).parc.filter((p: any) => p.vehiculeId === r.vehiculeId);

@@ -41,7 +41,7 @@ import {
   clientStatutHistorique,
   clientInteractions,
  } from "@atelierone/db";
-import { eq, and, desc, sql, gte, lte, asc, inArray, ilike, or } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lte, asc, inArray, ilike, or, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { employeDeUtilisateur } from "~/server/lib/auteur";
 import { tracerPieceClient, remettrePieceClient, listerPiecesClient as listerPiecesClientService } from "~/server/lib/piece-client-service";
@@ -180,23 +180,35 @@ const verifierProprietaireNonModifiable = async (
   exec: typeof db | any,
   vehiculeId: number,
   clientIdDemandé: number | null,
-): Promise<void> => {
-  if (clientIdDemandé == null) return;
+  agenceId: number,
+): Promise<{ clientId: number | null; isActive: boolean; immatriculation: string | null; kilometrage: number | null }> => {
   const [v] = await exec
-    .select({ clientId: vehicules.clientId, immatriculation: vehicules.immatriculation })
+    .select({
+      clientId: vehicules.clientId,
+      isActive: vehicules.isActive,
+      immatriculation: vehicules.immatriculation,
+      kilometrage: vehicules.kilometrage,
+    })
     .from(vehicules)
-    .where(eq(vehicules.id, vehiculeId))
+    .where(and(eq(vehicules.id, vehiculeId), eq(vehicules.agenceId, agenceId)))
     .limit(1);
-  if (!v) return;
-  if (v.clientId == null || v.clientId === clientIdDemandé) return;
-  throw new TRPCError({
-    code: "BAD_REQUEST",
-    message:
-      `Ce véhicule (${v.immatriculation}) est déjà rattaché à un autre client. ` +
-      `Le garage ne peut pas changer le propriétaire d'un véhicule : passez par la ` +
-      `procédure de cession. Si c'est bien le même client, sélectionnez sa fiche ` +
-      `existante au lieu d'en créer une seconde.`,
-  });
+  if (!v) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable dans cette agence." });
+  if (v.clientId != null && clientIdDemandé != null && v.clientId !== clientIdDemandé) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        `Ce véhicule (${v.immatriculation ?? "sans plaque"}) est déjà rattaché à un autre client. ` +
+        `Le garage ne peut pas changer le propriétaire d'un véhicule : passez par la ` +
+        `procédure de cession. Si c'est bien le même client, sélectionnez sa fiche ` +
+        `existante au lieu d'en créer une seconde.`,
+    });
+  }
+  return {
+    clientId: v.clientId ?? null,
+    isActive: v.isActive !== false,
+    immatriculation: v.immatriculation ?? null,
+    kilometrage: v.kilometrage != null ? Number(v.kilometrage) : null,
+  };
 };
 
 /**
@@ -812,6 +824,8 @@ export const orRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const q = input.q.trim();
       const like = `%${q}%`;
+      const immatNorm = normaliserImmatriculation(q);
+      const telNorm = normaliserTelephone(q);
       const [vehs, clis] = await Promise.all([
         db
           .select({
@@ -826,22 +840,64 @@ export const orRouter = createTRPCRouter({
             carburant: vehicules.carburant,
             typeVehicule: vehicules.typeVehicule,
             kilometrage: vehicules.kilometrage,
+            isActive: vehicules.isActive,
             clientId: vehicules.clientId,
             clientNom: clients.nom,
             clientPrenom: clients.prenom,
+            clientRaisonSociale: clients.raisonSociale,
+            clientType: clients.typeClient,
             clientTelephone: clients.telephone,
             chauffeurNom: vehicules.chauffeurNom,
             chauffeurTelephone: vehicules.chauffeurTelephone,
           })
           .from(vehicules)
           .leftJoin(clients, eq(vehicules.clientId, clients.id))
-          .where(and(eq(vehicules.agenceId, ctx.user.agenceId), sql`(${vehicules.immatriculation} ILIKE ${like} OR ${vehicules.numeroChassis} ILIKE ${like} OR ${vehicules.marque} ILIKE ${like} OR ${vehicules.modele} ILIKE ${like} OR ${clients.nom} ILIKE ${like} OR ${clients.telephone} ILIKE ${like})`))
+          .where(and(
+            eq(vehicules.agenceId, ctx.user.agenceId),
+            eq(vehicules.isActive, true),
+            sql`(
+              ${vehicules.immatriculation} ILIKE ${like}
+              OR ${vehicules.immatNorm} = ${immatNorm}
+              OR ${vehicules.numeroChassis} ILIKE ${like}
+              OR ${vehicules.marque} ILIKE ${like}
+              OR ${vehicules.modele} ILIKE ${like}
+              OR ${vehicules.version} ILIKE ${like}
+              OR ${clients.nom} ILIKE ${like}
+              OR ${clients.raisonSociale} ILIKE ${like}
+              OR ${clients.telephone} ILIKE ${like}
+              ${telNorm ? sql`OR regexp_replace(coalesce(${clients.telephone}, ''), '[^0-9]', '', 'g') = ${telNorm}` : sql``}
+            )`,
+          ))
           .orderBy(vehicules.immatriculation)
           .limit(10),
         db
-          .select({ id: clients.id, nom: clients.nom, prenom: clients.prenom, telephone: clients.telephone, email: clients.email, adresse: clients.adresse, ville: clients.ville })
+          .select({
+            id: clients.id,
+            nom: clients.nom,
+            prenom: clients.prenom,
+            raisonSociale: clients.raisonSociale,
+            typeClient: clients.typeClient,
+            telephone: clients.telephone,
+            email: clients.email,
+            adresse: clients.adresse,
+            ville: clients.ville,
+            codeClient: clients.codeClient,
+            statut: clients.statut,
+          })
           .from(clients)
-          .where(and(eq(clients.agenceId, ctx.user.agenceId), sql`(${clients.nom} ILIKE ${like} OR ${clients.telephone} ILIKE ${like} OR ${clients.email} ILIKE ${like} OR ${clients.codeClient} ILIKE ${like})`))
+          .where(and(
+            eq(clients.agenceId, ctx.user.agenceId),
+            isNull(clients.deletedAt),
+            sql`${clients.statut} <> 'ARCHIVE'`,
+            sql`(
+              ${clients.nom} ILIKE ${like}
+              OR ${clients.raisonSociale} ILIKE ${like}
+              OR ${clients.telephone} ILIKE ${like}
+              OR ${clients.email} ILIKE ${like}
+              OR ${clients.codeClient} ILIKE ${like}
+              ${telNorm ? sql`OR regexp_replace(coalesce(${clients.telephone}, ''), '[^0-9]', '', 'g') = ${telNorm}` : sql``}
+            )`,
+          ))
           .orderBy(clients.nom)
           .limit(10),
       ]);
@@ -859,6 +915,8 @@ export const orRouter = createTRPCRouter({
         // pour décrire ce qu'il ne sait pas.
         nom: z.string().min(1).optional(),
         prenom: z.string().optional(),
+        raisonSociale: z.string().max(255).optional(),
+        typeClient: z.enum(["PART", "ENTR", "ADMIN", "ASSUR", "FLOTTE"]).optional(),
         telephone: z.string().optional(),
         email: z.string().optional(),
         adresse: z.string().optional(),
@@ -869,6 +927,9 @@ export const orRouter = createTRPCRouter({
       // régulier qui ramène un second véhicule obtient une deuxième fiche, et
       // son historique se fracture en deux.
       confirmerClientDoublon: z.boolean().default(false),
+      // Un véhicule peut revenir pour une nouvelle intervention, mais cela ne
+      // doit pas être un effet de bord silencieux : l'agent confirme.
+      confirmerNouvelleIntervention: z.boolean().default(false),
       vehicule: z.object({
         id: z.number().int().optional(),
         immatriculation: z.string().min(1),
@@ -957,9 +1018,28 @@ export const orRouter = createTRPCRouter({
         let clientId = input.client.id ?? null;
         let clientSansProprietaire = false;
 
+        // Un téléphone sans nom n'est pas un client identifiable : sans cette
+        // garde, le numéro était saisi puis silencieusement perdu dans un
+        // dossier « à wartier ».
+        if (!clientId && !input.client.nom?.trim() && input.client.telephone?.trim()) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Indiquez le nom du client ou laissez le téléphone vide : un numéro seul ne permet pas d'identifier le propriétaire.",
+          });
+        }
+
         if (clientId) {
-          const [cli] = await tx.select({ id: clients.id }).from(clients).where(and(eq(clients.id, clientId), eq(clients.agenceId, agenceId))).limit(1);
-          if (!cli) throw new TRPCError({ code: "BAD_REQUEST", message: "Client introuvable." });
+          const [cli] = await tx
+            .select({ id: clients.id })
+            .from(clients)
+            .where(and(
+              eq(clients.id, clientId),
+              eq(clients.agenceId, agenceId),
+              isNull(clients.deletedAt),
+              sql`${clients.statut} <> 'ARCHIVE'`,
+            ))
+            .limit(1);
+          if (!cli) throw new TRPCError({ code: "BAD_REQUEST", message: "Client introuvable ou archivé." });
         } else if (!input.client.nom?.trim()) {
           clientSansProprietaire = true;
         } else {
@@ -970,7 +1050,12 @@ export const orRouter = createTRPCRouter({
             const homonymes = await tx
               .select({ id: clients.id, nom: clients.nom, telephone: clients.telephone })
               .from(clients)
-              .where(and(eq(clients.agenceId, agenceId), sql`${clients.telephone} IS NOT NULL`));
+              .where(and(
+                eq(clients.agenceId, agenceId),
+                sql`${clients.telephone} IS NOT NULL`,
+                isNull(clients.deletedAt),
+                sql`${clients.statut} <> 'ARCHIVE'`,
+              ));
             const conflit = homonymes.filter((c) => normaliserTelephone(c.telephone) === tel);
             if (conflit.length > 0 && !input.confirmerClientDoublon) {
               throw new TRPCError({
@@ -987,16 +1072,18 @@ export const orRouter = createTRPCRouter({
           // Séquence verrouillée + calculée en MAX : `count(*)+1` faisait
           // collision sur `clients_code_client_unique` en réception concurrente.
           const codeClient = await genCodeClient(tx);
+          const typeClient = input.client.typeClient ?? "PART";
           const [cli] = await tx.insert(clients).values({
             agenceId,
             nom: input.client.nom.trim(),
             prenom: input.client.prenom?.trim() || null,
+            raisonSociale: input.client.raisonSociale?.trim() || (typeClient !== "PART" ? input.client.nom.trim() : null),
             telephone: input.client.telephone?.trim() || null,
             email: input.client.email?.trim() || null,
             adresse: input.client.adresse?.trim() || null,
             ville: input.client.ville?.trim() || null,
             codeClient,
-            typeClient: "PART",
+            typeClient,
             statut: "ACTIF",
         } as any).returning();
 
@@ -1023,16 +1110,41 @@ export const orRouter = createTRPCRouter({
         // par plaque normalisée plutôt que créé à la volée.
         let vehiculeReconcilie = false;
 
+        type InfosVehicule = {
+          clientId: number | null;
+          isActive: boolean;
+          immatriculation: string | null;
+          kilometrage: number | null;
+        };
+        let infosVehicule: InfosVehicule | null = null;
+
         if (vehiculeId) {
           // Verrou de propriété (décision métier) : le garage n'a PAS le
           // droit de changer le propriétaire d'un véhicule. Avant tout, on
           // refuse explicitement — sinon `completerVehiculeSansEcrasement`
           // conserverait l'ancien propriétaire en silence, et l'agent croirait
           // avoir enregistré la réception pour le bon client.
-          await verifierProprietaireNonModifiable(tx, vehiculeId, clientId);
+          infosVehicule = await verifierProprietaireNonModifiable(tx, vehiculeId, clientId, agenceId);
+          if (!infosVehicule.isActive) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Ce véhicule est inactif : réactivez sa fiche avant de le réceptionner." });
+          }
+          if (normaliserImmatriculation(infosVehicule.immatriculation ?? "") !== normaliserImmatriculation(input.vehicule.immatriculation)) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "La plaque saisie ne correspond pas au véhicule sélectionné. Rechargez la fiche ou corrigez la plaque dans le registre.",
+            });
+          }
+
+          // Un véhicule possédé ne doit pas produire un dossier sans client
+          // parce que l'agent a seulement tapé la plaque sans sélectionner la
+          // fiche. On adopte le propriétaire historique.
+          if (clientId == null && infosVehicule.clientId != null) {
+            clientId = infosVehicule.clientId;
+            clientSansProprietaire = false;
+          }
 
           // D4 — la réception est le moment où une fiche `PROVISOIRE`
-          // devient vérifiée : quelqu'un a identifier la personne sur le
+          // devient vérifiée : quelqu'un a identifié la personne sur le
           // véhicule. Sans cela, un client parking reste « non confirmé »
           // indéfiniment alors qu'il vient de rentrer pour un travail.
           if (clientId) await promouvoirClientReception(tx, clientId);
@@ -1048,32 +1160,139 @@ export const orRouter = createTRPCRouter({
           // « ab 123 cd ») : le véhicule existant est RÉUTILISÉ et ses données
           // ne sont pas écrasées. Mêmes règles qu'au-dessus : le propriétaire
           // historique est intouchable.
-          const resolution = await resoudreOuCreerVehicule(tx, {
-            agenceId,
-            immatriculation: input.vehicule.immatriculation,
-            clientId: clientId,
-            statutImmobilisation: "en_reception",
-            fiche: {
-              numeroChassis: input.vehicule.numeroChassis?.trim() || null,
-              typeVehicule: input.vehicule.typeVehicule,
-              marque: input.vehicule.marque?.trim() || null,
-              modele: input.vehicule.modele?.trim() || null,
-              version: input.vehicule.version?.trim() || null,
-              annee: input.vehicule.annee ?? null,
-              couleur: input.vehicule.couleur?.trim() || null,
-              carburant: input.vehicule.carburant || null,
-              kilometrage: input.vehicule.kilometrage ?? null,
-              longueur: input.vehicule.longueur ?? null,
-              largeur: input.vehicule.largeur ?? null,
-              hauteur: input.vehicule.hauteur ?? null,
-              poids: input.vehicule.poids ?? null,
-              dimensionsEstimees: !!input.vehicule.dimensionsEstimees,
-              chauffeurNom: input.chauffeur?.nom?.trim() || null,
-              chauffeurTelephone: input.chauffeur?.telephone?.trim() || null,
-            },
-          });
+          let resolution: Awaited<ReturnType<typeof resoudreOuCreerVehicule>>;
+          try {
+            resolution = await resoudreOuCreerVehicule(tx, {
+              agenceId,
+              immatriculation: input.vehicule.immatriculation,
+              clientId: clientId,
+              statutImmobilisation: "en_reception",
+              fiche: {
+                numeroChassis: input.vehicule.numeroChassis?.trim() || null,
+                typeVehicule: input.vehicule.typeVehicule,
+                marque: input.vehicule.marque?.trim() || null,
+                modele: input.vehicule.modele?.trim() || null,
+                version: input.vehicule.version?.trim() || null,
+                annee: input.vehicule.annee ?? null,
+                couleur: input.vehicule.couleur?.trim() || null,
+                carburant: input.vehicule.carburant || null,
+                kilometrage: input.vehicule.kilometrage ?? null,
+                longueur: input.vehicule.longueur ?? null,
+                largeur: input.vehicule.largeur ?? null,
+                hauteur: input.vehicule.hauteur ?? null,
+                poids: input.vehicule.poids ?? null,
+                dimensionsEstimees: !!input.vehicule.dimensionsEstimees,
+                chauffeurNom: input.chauffeur?.nom?.trim() || null,
+                chauffeurTelephone: input.chauffeur?.telephone?.trim() || null,
+              },
+            });
+          } catch (e) {
+            if (e instanceof Error && e.message.startsWith("CHANGEMENT_DE_PROPRIETAIRE_REFUSE")) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: e.message.replace("CHANGEMENT_DE_PROPRIETAIRE_REFUSE : ", ""),
+              });
+            }
+            throw e;
+          }
           vehiculeId = resolution.vehiculeId;
           vehiculeReconcilie = !resolution.cree;
+
+          const [info] = await tx
+            .select({
+              clientId: vehicules.clientId,
+              isActive: vehicules.isActive,
+              immatriculation: vehicules.immatriculation,
+              kilometrage: vehicules.kilometrage,
+            })
+            .from(vehicules)
+            .where(and(eq(vehicules.id, vehiculeId), eq(vehicules.agenceId, agenceId)))
+            .limit(1);
+          if (!info) throw new TRPCError({ code: "NOT_FOUND", message: "Véhicule introuvable." });
+          infosVehicule = {
+            clientId: info.clientId ?? null,
+            isActive: info.isActive !== false,
+            immatriculation: info.immatriculation ?? null,
+            kilometrage: info.kilometrage != null ? Number(info.kilometrage) : null,
+          };
+          if (!infosVehicule.isActive) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Ce véhicule est inactif : réactivez sa fiche avant de le réceptionner." });
+          }
+          if (clientId == null && resolution.clientIdHistorique != null) {
+            clientId = resolution.clientIdHistorique;
+            clientSansProprietaire = false;
+          }
+          if (clientId) await promouvoirClientReception(tx, clientId);
+        }
+
+        // Un relevé inférieur au dernier km connu est presque toujours une
+        // coquille (12 000 au lieu de 120 000). On refuse avant d'écrire, au
+        // lieu d'écraser la référence de la fiche véhicule.
+        const kmReleve = input.reception.kilometrageEntree ?? null;
+        if (
+          kmReleve != null &&
+          infosVehicule?.kilometrage != null &&
+          infosVehicule.kilometrage > 0 &&
+          kmReleve < infosVehicule.kilometrage
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              `Kilométrage inférieur au dernier connu (${infosVehicule.kilometrage.toLocaleString("fr-FR")} km). ` +
+              `Corrigez le relevé ou mettez à jour la fiche véhicule si le compteur a été remplacé.`,
+          });
+        }
+
+        // Un dossier déjà ouvert ne doit pas être dupliqué en silence. La
+        // confirmation est explicite côté UI et contrôlée ici pour les appels
+        // directs.
+        const [dossierOuvert] = await tx
+          .select({ id: ordresReparation.id, numero: ordresReparation.numero })
+          .from(ordresReparation)
+          .where(and(
+            eq(ordresReparation.vehiculeId, vehiculeId),
+            eq(ordresReparation.agenceId, agenceId),
+            sql`${ordresReparation.statut} NOT IN ('LIVRE','ANNULE','ferme_definitif')`,
+          ))
+          .orderBy(desc(ordresReparation.id))
+          .limit(1);
+        if (dossierOuvert && !input.confirmerNouvelleIntervention) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message:
+              `Un dossier est déjà ouvert sur ce véhicule (${dossierOuvert.numero}). ` +
+              `Cochez « Nouvelle intervention » pour confirmer que ce passage est distinct.`,
+          });
+        }
+
+        if (input.reception.typeIntervention === "DEPANNAGE" && !input.reception.lieuDepannage?.trim()) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Le lieu d'intervention est requis pour un dépannage sur site." });
+        }
+
+        // Date de réception : une seule valeur pour l'OR, l'ancienneté et le
+        // passage parking. Une date future est refusée ; une date passée reste
+        // possible pour une saisie différée.
+        const dateReceptionValue = input.reception.dateReception
+          ? new Date(input.reception.dateReception)
+          : new Date();
+        if (Number.isNaN(dateReceptionValue.getTime())) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Date de réception invalide." });
+        }
+        if (dateReceptionValue.getTime() > Date.now() + 5 * 60_000) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "La date de réception ne peut pas être dans le futur." });
+        }
+        const jourLocal = (d: Date) =>
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        if (input.reception.datePromesse) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(input.reception.datePromesse)) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Date de promesse invalide." });
+          }
+          if (input.reception.datePromesse < jourLocal(dateReceptionValue)) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "La promesse de restitution ne peut pas précéder la date de réception.",
+            });
+          }
         }
 
         // 3. Dossier d'intervention (OR) complet — T0.5 : genNumero porte le
@@ -1100,9 +1319,9 @@ export const orRouter = createTRPCRouter({
           diagnostic: null,
           motEntree: input.reception.motEntree,
           priorite: input.reception.priorite,
-          dateOuverture: new Date(),
-          dateReception: input.reception.dateReception ? new Date(input.reception.dateReception) : new Date(),
-          datePromesse: input.reception.datePromesse ?? null,
+          dateOuverture: dateReceptionValue,
+          dateReception: dateReceptionValue,
+          datePromesse: input.reception.datePromesse?.trim() || null,
           // « À wartier » : sans client identifié, le véhicule n'entre pas en atelier
           // sous un responsable — il attend. L'emplacement le dit, pour que
           // l'écran d'accueil sache qu'il doit en rechercher un propriétaire
@@ -1165,12 +1384,18 @@ kilometrageEntree: input.reception.kilometrageEntree ?? null,
         // ligne, un véhicule reçu pour la première fois n'existait pas au
         // registre, et un véhicule déjà passé réutilisait une ligne historique.
         // L'opération est dans la même transaction : pas d'OR sans passage.
-        await ouvrirPassageReception(tx, {
-          agenceId,
-          vehiculeId: vehiculeId!,
-          orId: or.id,
-          motif: input.reception.pannesDeclarees,
-        });
+        // Un dépannage sur site n'occupe pas une place au garage. Il crée un
+        // OR suivi, mais pas de passage parking tant que le véhicule n'est pas
+        // physiquement ramené.
+        if (input.reception.typeIntervention !== "DEPANNAGE") {
+          await ouvrirPassageReception(tx, {
+            agenceId,
+            vehiculeId: vehiculeId!,
+            orId: or.id,
+            motif: input.reception.pannesDeclarees,
+            dateEntree: dateReceptionValue,
+          });
+        }
 
         // LOT U2 (RD5) — le kilométrage relevé à l'ENTRÉE devient la référence
         // de la fiche véhicule. Avant, le km de la fiche et celui de l'entrée
@@ -2480,6 +2705,20 @@ if (or.statut !== "PRET_A_LIVRER") {
           code: "BAD_REQUEST",
           message: "Dossier clos : les données de réception ne sont plus modifiables.",
         });
+      }
+
+      if (rest.kilometrageEntree != null) {
+        const [v] = await db
+          .select({ kilometrage: vehicules.kilometrage })
+          .from(vehicules)
+          .where(and(eq(vehicules.id, courant.vehiculeId), eq(vehicules.agenceId, ctx.user.agenceId)))
+          .limit(1);
+        if (v?.kilometrage != null && Number(v.kilometrage) > 0 && rest.kilometrageEntree < Number(v.kilometrage)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Kilométrage inférieur au dernier connu (${Number(v.kilometrage).toLocaleString("fr-FR")} km).`,
+          });
+        }
       }
 
       // Le diagnostic figé est une preuve, pas un brouillon. Seul l'emplacement

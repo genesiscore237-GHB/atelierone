@@ -245,6 +245,7 @@ describe("Matrice de réception — les 9 combinaisons", () => {
       client: { id: or1.clientId },
       vehicule: { immatriculation: "MXVEH05" },
       reception: { kilometrageEntree: 14_000, pannesDeclarees: "Test M5" },
+      confirmerNouvelleIntervention: true,
     });
     expect(or2.vehiculeId).toBe(or1.vehiculeId);
     const v = await vehiculeParImmat("MXVEH05");
@@ -273,22 +274,24 @@ describe("Matrice de réception — les 9 combinaisons", () => {
     expect(Number(v!.client_id)).toBe(or1.clientId);
   });
 
-  // ── M7 / M9 : « à wartier » ────────────────────────────────────────────
-  it("M7 — véhicule connu SANS client : dossier ouvert a wartier, aucun proprietaire invente", async () => {
+  // ── M7 / M9 : propriétaire historique et « à wartier » ──────────────────
+  it("M7 — véhicule connu avec propriétaire, aucun client saisi : le propriétaire est conservé", async () => {
     const caller = orRouter.createCaller(ctx());
     const or1 = await caller.receptionner(await reception("MXVEH07"));
 
-    // Ni nom ni téléphone : l'agent n'invente pas de fiche.
+    // Ni nom ni téléphone : l'agent n'invente pas de fiche, mais le véhicule
+    // a déjà un propriétaire — le dossier doit le conserver.
     const r = await caller.receptionner({
       client: {},
       vehicule: { immatriculation: "MXVEH07" },
       reception: { kilometrageEntree: 16_000, pannesDeclarees: "Test M7" },
+      confirmerNouvelleIntervention: true,
     });
 
     expect(r.vehiculeId).toBe(or1.vehiculeId);
     const or = await orParImmat("MXVEH07");
-    expect(or!.client_id ?? null).toBeNull();
-    expect(String(or!.emplacement ?? "").toUpperCase()).toContain("WARTIER");
+    expect(Number(or!.client_id)).toBe(or1.clientId);
+    expect(String(or!.emplacement ?? "").toUpperCase()).not.toContain("WARTIER");
   });
 
   it("M9 — véhicule nouveau SANS client : fiche creee, sans proprietaire", async () => {

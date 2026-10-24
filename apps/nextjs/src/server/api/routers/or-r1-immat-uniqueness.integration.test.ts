@@ -264,6 +264,7 @@ describe("LOT R1 — unicité de la plaque par agence (immat_norm)", () => {
     const or2 = await caller.receptionner({
       ...reception("  lotr1veh01  "),
       client: { id: or1.clientId },
+      confirmerNouvelleIntervention: true,
     });
 
     // Les deux OR pointent vers le MÊME véhicule (réutilisation, pas de doublon).
@@ -320,6 +321,7 @@ describe("LOT R1 — unicité de la plaque par agence (immat_norm)", () => {
       client: { id: clientIdA },
       vehicule: { immatriculation: immat },
       reception: { kilometrageEntree: 12000, pannesDeclarees: "Alternateur" },
+      confirmerNouvelleIntervention: true,
     });
     expect(orA2.vehiculeId).toBe(orA.vehiculeId);
     const v3 = await vehiculeByImmatNorm(immat);

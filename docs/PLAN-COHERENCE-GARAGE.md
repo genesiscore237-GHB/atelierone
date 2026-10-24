@@ -523,3 +523,11 @@ ext build voit la frontière**. Découpage : la partie PURE (nomenclature par d�
 | Vérifications | `vitest` 1257 passés / 3 ignorés ; `next build` vert ; `tsc` aucune nouvelle erreur dans les fichiers du lot (305 baseline). |
 
 Détail : `docs/PLAN-EXECUTION-CYCLE-VEHICULE.md`.
+
+## 8. Réception véhicule — corrections de conception (2026-10-24)
+
+Audit complet de la réception, de l’interface jusqu’au passage parking. Les défauts d’état React, d’identité, de permissions, de doublons, de dates, de kilométrage et de photos ont été corrigés. Décisions : km facultatif mais non régressif ; identité véhicule/client existante verrouillée ; propriétaire historique adopté ; téléphone sans nom refusé ; type de client et raison sociale ; dépannage sans passage parking ; confirmation explicite d’une nouvelle intervention ; brouillon local sans photos ; photos recommandées mais non bloquantes.
+
+Vérifications : suite complète **1270 passés / 3 ignorés**, `next build` vert, `tsc` 305 baseline sans nouvelle erreur dans les fichiers du lot, `db:check` schéma identique (29 divergences de données tolérées).
+
+Détail : `docs/AUDIT-RECEPTION-VEHICULE-2026-10-24.md`, `docs/PLAN-CORRECTION-RECEPTION-2026-10-24.md`, `docs/RAPPORT-CORRECTION-RECEPTION-2026-10-24.md`.

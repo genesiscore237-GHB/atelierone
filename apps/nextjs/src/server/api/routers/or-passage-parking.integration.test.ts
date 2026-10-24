@@ -126,6 +126,7 @@ describe("Passage parking créé par la réception", () => {
     const r2 = await caller().receptionner({
       ...reception(IMMAT, "Second"),
       client: { id: r1.clientId },
+      confirmerNouvelleIntervention: true,
     });
     const rows = await parkingRows(r1.vehiculeId);
     expect(rows).toHaveLength(1);
@@ -141,6 +142,7 @@ describe("Passage parking créé par la réception", () => {
     const r2 = await caller().receptionner({
       ...reception(IMMAT, "Retour"),
       client: { id: r1.clientId },
+      confirmerNouvelleIntervention: true,
     });
     const rows = await parkingRows(r1.vehiculeId);
     expect(rows).toHaveLength(2);
@@ -195,5 +197,170 @@ describe("Passage parking créé par la réception", () => {
     await expect(
       caller().update({ id: r.id, emplacement: "Zone B" }),
     ).resolves.toEqual({ success: true });
+  });
+
+  it("7. un dossier déjà ouvert exige une confirmation explicite", async () => {
+    const r1 = await caller().receptionner(reception(IMMAT, "Premier"));
+    await expect(
+      caller().receptionner({ ...reception(IMMAT, "Doublon"), client: { id: r1.clientId } }),
+    ).rejects.toThrow(/déjà ouvert|nouvelle intervention/i);
+
+    const r2 = await caller().receptionner({
+      ...reception(IMMAT, "Nouvelle intervention"),
+      client: { id: r1.clientId },
+      confirmerNouvelleIntervention: true,
+    });
+    expect(r2.id).not.toBe(r1.id);
+  });
+
+  it("8. un véhicule possédé sans client saisi conserve son propriétaire", async () => {
+    const r1 = await caller().receptionner(reception(IMMAT, "Premier"));
+    const r2 = await caller().receptionner({
+      client: {},
+      vehicule: { immatriculation: IMMAT },
+      reception: { kilometrageEntree: 10_100, pannesDeclarees: "Retour" },
+      confirmerNouvelleIntervention: true,
+    });
+    const [or] = (await db.execute(sql`
+      SELECT client_id FROM ordres_reparation WHERE id = ${r2.id}`)) as unknown as { client_id: number | null }[];
+    expect(Number(or!.client_id)).toBe(r1.clientId);
+  });
+
+  it("9. un téléphone seul est refusé", async () => {
+    await expect(
+      caller().receptionner({
+        client: { telephone: "699000109" },
+        vehicule: { immatriculation: IMMAT, marque: "Passage" },
+        reception: { pannesDeclarees: "Sans nom" },
+      }),
+    ).rejects.toThrow(/nom|téléphone/i);
+  });
+
+  it("10. un km inférieur au dernier connu est refusé", async () => {
+    const r1 = await caller().receptionner(reception(IMMAT, "Premier"));
+    await expect(
+      caller().receptionner({
+        ...reception(IMMAT, "Km faux"),
+        client: { id: r1.clientId },
+        reception: { kilometrageEntree: 9_000, pannesDeclarees: "Km faux" },
+        confirmerNouvelleIntervention: true,
+      }),
+    ).rejects.toThrow(/inférieur|kilométrage/i);
+  });
+
+  it("11. date future et promesse antérieure sont refusées", async () => {
+    await expect(
+      caller().receptionner({
+        ...reception(IMMAT),
+        reception: {
+          kilometrageEntree: 10_000,
+          pannesDeclarees: "Date future",
+          dateReception: "2099-01-01T10:00",
+        },
+      }),
+    ).rejects.toThrow(/futur|date/i);
+
+    await expect(
+      caller().receptionner({
+        ...reception(IMMAT),
+        reception: {
+          kilometrageEntree: 10_000,
+          pannesDeclarees: "Promesse",
+          dateReception: "2026-10-23T10:00",
+          datePromesse: "2026-10-22",
+        },
+      }),
+    ).rejects.toThrow(/promesse|précéder/i);
+  });
+
+  it("12. un dépannage ne crée pas de passage parking", async () => {
+    const r = await caller().receptionner({
+      ...reception(IMMAT),
+      reception: {
+        kilometrageEntree: 10_000,
+        pannesDeclarees: "Dépannage",
+        typeIntervention: "DEPANNAGE",
+        lieuDepannage: "Carrefour Bastos",
+      },
+    });
+    expect(await parkingRows(r.vehiculeId)).toHaveLength(0);
+  });
+
+  it("13. un client entreprise conserve son type et sa raison sociale", async () => {
+    const r = await caller().receptionner({
+      ...reception(IMMAT),
+      client: {
+        nom: "Client passage entreprise",
+        raisonSociale: "GPJ Trans",
+        typeClient: "ENTR",
+        telephone: "699000113",
+      },
+    });
+    const [cli] = (await db.execute(sql`
+      SELECT type_client, raison_sociale FROM clients WHERE id = ${r.clientId}`)) as unknown as {
+        type_client: string;
+        raison_sociale: string | null;
+      }[];
+    expect(cli!.type_client).toBe("ENTR");
+    expect(cli!.raison_sociale).toBe("GPJ Trans");
+  });
+
+  it("14. un véhicule inactif ou une plaque incohérente est refusé", async () => {
+    const r1 = await caller().receptionner(reception(IMMAT));
+    await db.execute(sql`UPDATE vehicules SET is_active = false WHERE id = ${r1.vehiculeId}`);
+    await expect(
+      caller().receptionner({
+        client: { id: r1.clientId },
+        vehicule: { id: r1.vehiculeId, immatriculation: IMMAT },
+        reception: { pannesDeclarees: "Inactif" },
+        confirmerNouvelleIntervention: true,
+      }),
+    ).rejects.toThrow(/inactif/i);
+
+    await db.execute(sql`UPDATE vehicules SET is_active = true WHERE id = ${r1.vehiculeId}`);
+    await expect(
+      caller().receptionner({
+        client: { id: r1.clientId },
+        vehicule: { id: r1.vehiculeId, immatriculation: "AUTRE-PLAQUE" },
+        reception: { pannesDeclarees: "Plaque" },
+        confirmerNouvelleIntervention: true,
+      }),
+    ).rejects.toThrow(/plaque|correspond/i);
+  });
+
+  it("15. un client supprimé ne bloque pas la création d'un nouveau client", async () => {
+    await db.execute(sql`
+      INSERT INTO clients (nom, telephone, agence_id, statut, type_client, is_active, deleted_at)
+      VALUES ('Client passage supprimé', '699000112', 1, 'ACTIF', 'PART', false, now())`);
+
+    const r = await caller().receptionner({
+      client: { nom: "Client passage neuf", telephone: "699000112" },
+      vehicule: { immatriculation: IMMAT, marque: "Passage" },
+      reception: { pannesDeclarees: "Nouveau client" },
+    });
+    expect(r.clientId).toBeGreaterThan(0);
+    const [cli] = (await db.execute(sql`
+      SELECT nom, deleted_at FROM clients WHERE id = ${r.clientId}`)) as unknown as {
+        nom: string;
+        deleted_at: string | null;
+      }[];
+    expect(cli!.nom).toBe("Client passage neuf");
+    expect(cli!.deleted_at).toBeNull();
+  });
+
+  it("16. la recherche réception normalise le téléphone et exclut les clients supprimés", async () => {
+    const r = await caller().receptionner({
+      client: { nom: "Client passage search", telephone: "699 000 114" },
+      vehicule: { immatriculation: IMMAT, marque: "Passage" },
+      reception: { pannesDeclarees: "Recherche" },
+    });
+    const trouve = await caller().rechercherReception({ q: "699000114" });
+    expect(trouve.clients.some((c) => c.id === r.clientId)).toBe(true);
+
+    await db.execute(sql`
+      INSERT INTO clients (nom, telephone, agence_id, statut, type_client, is_active, deleted_at)
+      VALUES ('Client passage supprimé search', '699 000 115', 1, 'ACTIF', 'PART', false, now())`);
+    const supprime = await caller().rechercherReception({ q: "699000115" });
+    expect(supprime.clients).toHaveLength(0);
   });
 });

@@ -91,6 +91,8 @@ interface FormulaireVehiculeProps {
    * fiche. Le parc, lui, garde le champ (c'est sa référence courante).
    */
   avecKilometrage?: boolean;
+  /** La marque est-elle obligatoire sur cet écran ? (réception : non). */
+  marqueRequise?: boolean;
   desactive?: boolean;
 }
 
@@ -100,6 +102,7 @@ export function FormulaireVehicule({
   erreurs = {},
   avecDimensions = false,
   avecKilometrage = true,
+  marqueRequise = true,
   desactive = false,
 }: FormulaireVehiculeProps) {
   // Liste de référence + types réellement rencontrés par l'agence (U1).
@@ -151,7 +154,7 @@ export function FormulaireVehicule({
           searchPlaceholder="Rechercher ou saisir un type…"
         />
       </Field>
-      <Field label="Marque" required error={erreurs.marque} anchor="marque">
+      <Field label="Marque" required={marqueRequise} error={erreurs.marque} anchor="marque">
         <Input
           value={value.marque ?? ""}
           onChange={(e) => onChange("marque", e.target.value)}

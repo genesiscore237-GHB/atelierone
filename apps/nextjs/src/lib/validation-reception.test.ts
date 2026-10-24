@@ -37,13 +37,8 @@ describe("LOT U4 â€” validation de la rÃ©ception (E10)", () => {
     // et Â« tÃ©lÃ©phone Â» ne l'Ã©taient pas.
     const champsExiges: [string, () => DonneesReception][] = [
       ["immatriculation", () => ({ ...complet(), vehicule: { marque: "X", typeVehicule: "voiture" } })],
-      ["marque", () => ({ ...complet(), vehicule: { immatriculation: "AB-123-CD", typeVehicule: "voiture" } })],
       ["typeVehicule", () => ({ ...complet(), vehicule: { immatriculation: "AB-123-CD", marque: "X" } })],
       ["clientTelephone", () => ({ ...complet(), client: { nom: "Dupont" } })],
-      [
-        "kilometrageEntree",
-        () => ({ ...complet(), reception: { pannesDeclarees: "X", signatureDeposant: "A" } }),
-      ],
       ["pannesDeclarees", () => ({ ...complet(), reception: { kilometrageEntree: 1, signatureDeposant: "A" } })],
       ["signature", () => ({ ...complet(), reception: { kilometrageEntree: 1, pannesDeclarees: "X" } })],
     ];
@@ -72,10 +67,30 @@ describe("LOT U4 â€” validation de la rÃ©ception (E10)", () => {
     expect(validerReception(bon).clientEmail).toBeUndefined();
   });
 
-  it("5. le kilomÃ©trage 0 est VALIDE (vÃ©hicule neuf, pas une erreur)", () => {
+  it("5. le kilométrage 0 est VALIDE (véhicule neuf, pas une erreur)", () => {
     const d = complet();
     d.reception = { ...d.reception, kilometrageEntree: 0 };
     expect(validerReception(d).kilometrageEntree).toBeUndefined();
+  });
+
+  it("5-bis. le kilométrage vide est VALIDE : une absence n'est pas 0", () => {
+    const d = complet();
+    d.reception = { ...d.reception, kilometrageEntree: "" };
+    expect(validerReception(d).kilometrageEntree).toBeUndefined();
+  });
+
+  it("5-ter. un téléphone sans nom est refusé, pas transformé en dossier sans client", () => {
+    const d = complet();
+    d.client = { telephone: "06 12 34 56 78" };
+    expect(validerReception(d).clientNom).toBeTruthy();
+  });
+
+  it("5-quater. un dépannage exige un lieu, une promesse ne peut pas précéder la réception", () => {
+    const d = complet();
+    d.reception = { ...d.reception, typeIntervention: "DEPANNAGE", dateReception: "2026-10-24T10:00", datePromesse: "2026-10-23" };
+    const e = validerReception(d);
+    expect(e.lieuDepannage).toBeTruthy();
+    expect(e.datePromesse).toBeTruthy();
   });
 
   it("6. l'ORDRE des erreurs suit l'ordre du formulaire", () => {
@@ -83,7 +98,8 @@ describe("LOT U4 â€” validation de la rÃ©ception (E10)", () => {
     const vide: DonneesReception = {};
     const cles = Object.keys(validerReception(vide));
     expect(cles[0]).toBe("immatriculation");
-    expect(cles).toContain("marque");
+    // `marque` n'est plus obligatoire : la plaque et le type suffisent.
+    expect(cles).not.toContain("marque");
     // `clientNom` n'est plus contrôlé : sans client, le véhicule part à
     // wartier. Le téléphone ne l'est qu'APRÈS un nom saisi.
     expect(cles).not.toContain("clientNom");

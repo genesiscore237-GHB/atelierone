@@ -130,6 +130,7 @@ async function receptionnerAvecPhotos(immat: string, photos: { categorie: string
   const caller = orRouter.createCaller(ctxSuperadmin());
   const r = await caller.receptionner({
     client: await clientDuLot(),
+    confirmerNouvelleIntervention: true,
     vehicule: { immatriculation: immat, marque: "LotU0c" },
     reception: {
       kilometrageEntree: 1000,
@@ -165,6 +166,7 @@ describe("LOT U0c — état des lieux versionné par visite", () => {
     const caller = orRouter.createCaller(ctxSuperadmin());
     const r2 = await caller.receptionner({
       client: await clientDuLot(),
+    confirmerNouvelleIntervention: true,
       vehicule: { immatriculation: "U0CPHOTOS-002", marque: "LotU0c" },
       reception: {
         kilometrageEntree: 2000,
@@ -198,6 +200,7 @@ describe("LOT U0c — état des lieux versionné par visite", () => {
     // Nouvelle visite : on reprend une face, on en prend une nouvelle.
     const r2 = await caller.receptionner({
       client: await clientDuLot(),
+    confirmerNouvelleIntervention: true,
       vehicule: { immatriculation: "U0CPHOTOS-003", marque: "LotU0c" },
       reception: {
         kilometrageEntree: 2000,
@@ -232,6 +235,7 @@ describe("LOT U0c — état des lieux versionné par visite", () => {
     // On crée une 2ᵉ visite entièrement reprise de la 1ʳᵉ.
     const r2 = await caller.receptionner({
       client: await clientDuLot(),
+    confirmerNouvelleIntervention: true,
       vehicule: { immatriculation: "U0CPHOTOS-003B", marque: "LotU0c" },
       reception: {
         kilometrageEntree: 2000,

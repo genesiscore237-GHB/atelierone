@@ -79,9 +79,9 @@ export function validerReception(d: DonneesReception): Erreurs {
     e.immatriculation = "Immatriculation invalide (3 caractères minimum, sans espaces multiples)";
   }
 
-  if (!v.marque?.trim()) {
-    e.marque = "Marque requise";
-  }
+  // La marque est facultative : une plaque et un type suffisent à ouvrir un
+  // dossier. Le serveur accepte aussi l'absence de marque (imports, véhicules
+  // dont le badge est illisible).
 
   if (!v.typeVehicule?.trim()) {
     e.typeVehicule = "Type de véhicule requis";
@@ -105,7 +105,11 @@ export function validerReception(d: DonneesReception): Erreurs {
   // principal du garage.
   const clientSaisi = !!c.nom?.trim();
 
-  if (clientSaisi && !c.telephone?.trim()) {
+  // Un numéro seul n'identifie personne : il serait perdu dans un dossier
+  // « à wartier ». On exige le nom dès qu'un téléphone est saisi.
+  if (!clientSaisi && c.telephone?.trim()) {
+    e.clientNom = "Nom requis dès qu'un téléphone est saisi";
+  } else if (clientSaisi && !c.telephone?.trim()) {
     e.clientTelephone = "Téléphone requis";
   } else if (c.telephone?.trim() && !telephoneSaisissable(c.telephone)) {
     e.clientTelephone = "Téléphone incomplet (6 chiffres minimum)";
@@ -116,15 +120,25 @@ export function validerReception(d: DonneesReception): Erreurs {
   }
 
   // ── Entrée ──
+  // Le km est FACULTATIF : un véhicule peut arriver sans compteur lisible.
+  // Une absence reste une absence ; on ne la remplace jamais par 0.
   const km = r.kilometrageEntree;
-  if (km == null || km === "") {
-    e.kilometrageEntree = "Kilométrage d'entrée requis";
-  } else if (!Number.isFinite(Number(km)) || Number(km) < 0) {
+  if (km != null && km !== "" && (!Number.isFinite(Number(km)) || Number(km) < 0)) {
     e.kilometrageEntree = "Kilométrage invalide (0 ou positif)";
   }
 
   if (!r.pannesDeclarees?.trim()) {
     e.pannesDeclarees = "Pannes déclarées requises";
+  }
+
+  if (String(r.typeIntervention ?? "") === "DEPANNAGE" && !String(r.lieuDepannage ?? "").trim()) {
+    e.lieuDepannage = "Lieu d'intervention requis pour un dépannage sur site";
+  }
+
+  const dateReception = typeof r.dateReception === "string" ? r.dateReception : "";
+  const datePromesse = typeof r.datePromesse === "string" ? r.datePromesse : "";
+  if (dateReception && datePromesse && datePromesse < dateReception.slice(0, 10)) {
+    e.datePromesse = "La promesse ne peut pas précéder la réception";
   }
 
   // ── Validation du déposant ──

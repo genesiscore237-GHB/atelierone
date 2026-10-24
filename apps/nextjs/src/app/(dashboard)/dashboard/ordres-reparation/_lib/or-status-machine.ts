@@ -120,9 +120,10 @@ export function buildOrPermissions(hasPermission: (action: string) => boolean): 
     valider,
     facturer,
     servirPieces,
-    // Derivation raisonnable : qui peut modifier peut (dans l'UI) gérer réception,
-    // travaux, pointage, technicien, statut. La validation fine reste côté serveur.
-    canReception: modifier || creer,
+    // La réception est une écriture métier : le serveur exige `or.modifier`.
+    // `or.creer` seul ne suffit pas — l'afficher comme autorisé produisait un
+    // formulaire rempli puis refusé au clic final.
+    canReception: modifier,
     canDiagnostiquer: modifier,
     canDeviser: valider || modifier,
     canPieces: modifier || servirPieces,
